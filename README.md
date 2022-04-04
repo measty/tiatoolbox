@@ -42,6 +42,15 @@
 
 Computational Pathology Toolbox developed at the TIA Centre
 
+## Fork to make overlay available
+
+Build an overlay using overlay-from-json --img-input path/to/slide --output-path path/to/save --json-path path/to/json --score-path path/to/scores 
+
+path/to/json should be either a .geojson file or a .dat file with hovernet-style outputs.
+score-path (optional) should point to a .npy or .npz with an array containing scores to use to colour objects in overlay, of same length as number of objects
+
+show overlay using show-overlay --img-input path/to/slide --overlay path/to/overlay
+
 ## Getting Started
 
 ### All Users
