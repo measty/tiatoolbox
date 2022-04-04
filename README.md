@@ -44,6 +44,8 @@ Computational Pathology Toolbox developed at the TIA Centre
 
 ## Fork to make overlay available
 
+**This is a minimally tested temporary fork of tiatoolbox to make creation of overlays available. Will eventually be added into tiatoolbox proper**
+
 Build an overlay using tiatoolbox overlay-from-json --img-input path/to/slide --output-path path/to/save --json-path path/to/json --score-path path/to/scores 
 
 path/to/json should be either a .geojson file or a .dat file with hovernet-style outputs.
