@@ -46,12 +46,19 @@ Computational Pathology Toolbox developed at the TIA Centre
 
 **This is a minimally tested temporary fork of tiatoolbox to make creation of overlays available. Will eventually be added into tiatoolbox proper**
 
-Build an overlay using tiatoolbox overlay-from-json --img-input path/to/slide --output-path path/to/save --json-path path/to/json --score-path path/to/scores 
+To set up tiatoolbox and use the overlay tool, first follow the instructions to set up the tiatoolbox fork in the 'getting started' section below. 
+If the data to be visualised is in the form of segmented objects, perhaps with associated scores, it can be visualised as follows.
+
+1. Save the segmented objects in the geojson format
+
+2. Build an overlay using tiatoolbox overlay-from-json --img-input path/to/slide --output-path path/to/save --json-path path/to/json --score-path path/to/scores 
 
 path/to/json should be either a .geojson file or a .dat file with hovernet-style outputs.
-score-path (optional) should point to a .npy or .npz with an array containing scores to use to colour objects in overlay, of same length as number of objects
+score-path (optional) should be a path to a .npy or .npz with an array containing scores to use to colour objects in overlay, of same length as number of objects. They should be in the range [0,1].
 
-show overlay using tiatoolbox show-overlay --img-input path/to/slide --overlay path/to/overlay
+3. show overlay using tiatoolbox show-overlay --img-input path/to/slide --overlay path/to/overlay
+
+If data to be visualised is a low-res heatmap saved as a .jpg or .png, it can be passed directly to show overlay. This is the best way to visualise patch-score outputs.
 
 ## Getting Started
 
