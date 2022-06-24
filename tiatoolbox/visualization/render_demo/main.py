@@ -289,7 +289,7 @@ def run_app():
         state=vstate,
         )
     CORS(app, send_wildcard=True)   
-    app.run(threaded=False)
+    app.run(host='0.0.0.0', threaded=False)
 
 #start tile server
 proc=Thread(target=run_app, daemon=True)

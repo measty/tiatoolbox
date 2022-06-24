@@ -14,6 +14,10 @@ RUN pip3 install flask-cors
 
 COPY . .
 RUN python setup.py install
+EXPOSE 5000 5006
 
-CMD [ "bokeh", "serve", "--show", "./tiatoolbox/visualization/render_demo" ]
+FROM nginx
+COPY ./nginx.conf /etc/nginx/conf.d/default.conf
+
+CMD [ "bokeh", "serve", "./tiatoolbox/visualization/render_demo" ]
 
