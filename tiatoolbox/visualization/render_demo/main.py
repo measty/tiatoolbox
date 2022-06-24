@@ -44,6 +44,7 @@ from pathlib import Path
 from bokeh.io import curdoc
 from bokeh.models.widgets import Tabs
 
+host = '127.0.0.1:5000'
 #Define helper functions
 
 def make_ts(route,mpp=0.2525):
@@ -219,11 +220,11 @@ def change_tiles(layer_name='overlay'):
             if layer_key in ['rect', 'pts', 'graph']:
                 continue
             grp=tg.get_grp()
-            ts=make_ts(f'http://127.0.0.1:5000/layer/{layer_key}/zoomify/TileGroup{grp}' +r'/{z}-{x}-{y}.jpg', mpp=vstate.mpp)
+            ts=make_ts(f'http://{host}/layer/{layer_key}/zoomify/TileGroup{grp}' +r'/{z}-{x}-{y}.jpg', mpp=vstate.mpp)
             p.renderers[vstate.layer_dict[layer_key]].tile_source=ts
         return
 
-    ts=make_ts(f'http://127.0.0.1:5000/layer/{layer_name}/zoomify/TileGroup{grp}' +r'/{z}-{x}-{y}.jpg', mpp=vstate.mpp)
+    ts=make_ts(f'http://{host}/layer/{layer_name}/zoomify/TileGroup{grp}' +r'/{z}-{x}-{y}.jpg', mpp=vstate.mpp)
     if layer_name in vstate.layer_dict.keys():
         p.renderers[vstate.layer_dict[layer_name]].tile_source=ts
     else:
@@ -232,7 +233,7 @@ def change_tiles(layer_name='overlay'):
             if layer_key in ['rect', 'pts', 'graph']:
                 continue
             grp=tg.get_grp()
-            ts=make_ts(f'http://127.0.0.1:5000/layer/{layer_key}/zoomify/TileGroup{grp}' +r'/{z}-{x}-{y}.jpg', mpp=vstate.mpp)
+            ts=make_ts(f'http://{host}/layer/{layer_key}/zoomify/TileGroup{grp}' +r'/{z}-{x}-{y}.jpg', mpp=vstate.mpp)
             p.renderers[vstate.layer_dict[layer_key]].tile_source=ts
         vstate.layer_dict[layer_name]=len(p.renderers)-1
 
@@ -259,14 +260,14 @@ class ViewerState():
 
 vstate=ViewerState()
 
-base_folder='E:\TTB_vis_folder'
-#base_folder='/tiatoolbox/app_data'
+#base_folder='E:\TTB_vis_folder'
+base_folder='/tiatoolbox/app_data'
 if len(sys.argv)>1 and sys.argv[1]!='None':
     base_folder=sys.argv[1]
 #geo_path=Path(r'E:\TTB_vis_test\ff7d5488-60e1-4c6e-9eb4-d495bb7565b1\TCGA-SC-AA5Z-01Z-00-DX1-2.geojson')
 #slide_path=Path(r'E:\TTB_vis_test\ff7d5488-60e1-4c6e-9eb4-d495bb7565b1\TCGA-SC-AA5Z-01Z-00-DX1.svs')
-vstate.slide_path=Path(r'E:\TTB_vis_test\a654c733-cd9a-424c-b60f-56f6afc6a620\TCGA-SC-A6LN-01Z-00-DX1.svs')
-#vstate.slide_path=Path(r'/tiatoolbox/app_data/slides/TCGA-SC-A6LN-01Z-00-DX1.svs')
+#vstate.slide_path=Path(r'E:\TTB_vis_test\a654c733-cd9a-424c-b60f-56f6afc6a620\TCGA-SC-A6LN-01Z-00-DX1.svs')
+vstate.slide_path=Path(r'/tiatoolbox/app_data/slides/TCGA-SC-A6LN-01Z-00-DX1.svs')
 
 wsi = [WSIReader.open(vstate.slide_path)]
 renderer=AnnotationRenderer('type', {'class1': (1,0,0,1), 'class2': (0,0,1,1), 'class3': (0,1,0,1)}, thickness=-1, edge_thickness=1)
@@ -307,7 +308,7 @@ vstate.micron_formatter = FuncTickFormatter(args={'mpp': 0.1}, code="""
 p = figure(x_range=(0, vstate.dims[0]), y_range=(0,-vstate.dims[1]),x_axis_type="linear", y_axis_type="linear",
 width=1700,height=1000, tooltips=TOOLTIPS, output_backend="canvas", hidpi=False, match_aspect=False, lod_factor=100, lod_interval=500, lod_threshold=10, lod_timeout=200)
 initialise_slide()
-ts1=make_ts(r'http://127.0.0.1:5000/layer/slide/zoomify/TileGroup1/{z}-{x}-{y}.jpg', vstate.mpp)
+ts1=make_ts(f'http://{host}/layer/slide/zoomify/TileGroup1' +r'/{z}-{x}-{y}.jpg', vstate.mpp)
 print(p.renderers)
 print(p.y_range)
 p.add_tile(ts1, smoothing = True, level='image', render_parents=False)
@@ -401,20 +402,20 @@ def overlay_toggle_cb(attr):
 def folder_input_cb(attr, old, new):
     file_list=[]
     for ext in ['*.svs','*ndpi','*.tiff','*.mrxs']:#,'*.png','*.jpg']:
-        file_list.extend(list(Path(new).glob('*\\'+ext)))
+        file_list.extend(list(Path(new).glob('*/'+ext)))
     file_list=[(str(p),str(p)) for p in file_list]
     file_drop.menu=file_list
     
     file_list=[]
     for ext in ['*.db','*.dat','*.geojson','*.png','*.jpg','*.tiff','*.pkl']:
-        file_list.extend(list(Path(new).glob('*\\'+ext)))
+        file_list.extend(list(Path(new).glob('*/'+ext)))
     file_list=[(str(p),str(p)) for p in file_list]
     layer_drop.menu=file_list
 
 def populate_layer_list(slide_name, folder_path):
     file_list=[]
     for ext in ['*.db','*.dat','*.geojson','*.png','*.jpg','*.pkl']:   #and '*.tiff'?
-        file_list.extend(list(folder_path.glob('*\\'+ext)))
+        file_list.extend(list(folder_path.glob('*/'+ext)))
     file_list=[(str(p),str(p)) for p in file_list if slide_name in str(p)]
     layer_drop.menu=file_list
 
@@ -422,7 +423,7 @@ def layer_folder_input_cb(attr, old, new):
     #unused at the moment
     file_list=[]
     for ext in ['*.db','*.dat','*.geojson','*.png','*.jpg','.tiff']:
-        file_list.extend(list(Path(new).glob('*\\'+ext)))
+        file_list.extend(list(Path(new).glob('*/'+ext)))
     file_list=[(str(p),str(p)) for p in file_list]
     layer_drop.menu=file_list
     return file_list
@@ -514,7 +515,7 @@ def file_drop_cb(attr):
     populate_layer_list(Path(attr.item).stem, Path(vstate.slide_path).parents[1])
     wsi[0] = WSIReader.open(attr.item)
     initialise_slide()
-    fname='-*-'.join(attr.item.split('\\'))
+    fname='-*-'.join(attr.item.split('/'))
     print(fname)
     print(vstate.mpp)
     resp = requests.get(f'http://127.0.0.1:5000/changeslide/slide/{fname}')
@@ -539,7 +540,7 @@ def layer_drop_cb(attr):
         return
 
     print(attr.item)
-    fname='-*-'.join(attr.item.split('\\'))
+    fname='-*-'.join(attr.item.split('/'))
     print(fname)
     resp = requests.get(f'http://127.0.0.1:5000/changeoverlay/{fname}')
     print(vstate.types)
