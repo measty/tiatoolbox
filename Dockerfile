@@ -16,5 +16,5 @@ COPY . .
 RUN python setup.py install
 EXPOSE 5006 5000
 
-CMD [ "bokeh", "serve", "./tiatoolbox/visualization/render_demo" ]
+CMD [ "bokeh", "serve", "./tiatoolbox/visualization/render_demo", "--use-xheaders" ]
 
