@@ -529,6 +529,7 @@ def file_drop_cb(attr):
 def layer_drop_cb(attr):
     """setup the newly chosen overlay"""
     if Path(attr.item).suffix=='.pkl':
+        #assume it is a graph
         with open(attr.item,'rb') as f:
             graph_dict=pickle.load(f)
         node_source.data={'index': list(range(graph_dict['x'].shape[0]))}
