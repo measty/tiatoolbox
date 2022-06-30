@@ -35,6 +35,7 @@ import sys
 from tiatoolbox.visualization.ui_utils import get_level_by_extent
 import pickle
 import torch
+import urllib
 
 # Pandas for data management
 import pandas as pd
@@ -50,15 +51,17 @@ host = '127.0.0.1:5000'
 def make_ts(route,mpp=0.2525):
     #crs = CRS.from_epsg(3857)
     #proj = Transformer.from_crs(crs,crs.geodetic_crs)
-    sf=1.00301
+    #sf=1.00301
     #sf=sf/mpp
-    sf=(sf/0.5015)*2**(vstate.num_zoom_levels-10)    #*(vstate.maxds/32.0063)
+    #sf=(sf/0.5015)*2**(vstate.num_zoom_levels-10)    #*(vstate.maxds/32.0063)
+    sf=2**(vstate.num_zoom_levels-9)
     ts=WMTSTileSource(name="WSI provider", url=route, attribution="", snap_to_zoom=False, min_zoom=0, max_zoom=vstate.num_zoom_levels-1)
     ts.tile_size=256
     ts.initial_resolution=40211.5*sf*(2/(100*pi))   #156543.03392804097    40030 great circ
     ts.x_origin_offset=0#5000000
     #ts.y_origin_offset=-2500000
-    ts.y_origin_offset=sf*(10247680*(2/(100*pi))  + 438.715 +38.997+13-195.728+0.82)  #10160000,   509.3
+    #ts.y_origin_offset=sf*(10247680*(2/(100*pi))  + 438.715 +38.997+13-195.728+0.82)  #10160000,   509.3, 46464.7837
+    ts.y_origin_offset=sf*10294144.78*(2/(100*pi))
     ts.wrap_around=False
     #ts.max_zoom=10
     #ts.min_zoom=10
@@ -516,6 +519,7 @@ def file_drop_cb(attr):
     wsi[0] = WSIReader.open(attr.item)
     initialise_slide()
     fname='-*-'.join(attr.item.split('/'))
+    #fname=urllib.parse.quote(attr.item, safe='')
     print(fname)
     print(vstate.mpp)
     resp = requests.get(f'http://127.0.0.1:5000/changeslide/slide/{fname}')
@@ -542,6 +546,7 @@ def layer_drop_cb(attr):
 
     print(attr.item)
     fname='-*-'.join(attr.item.split('/'))
+    #fname=urllib.parse.quote(attr.item, safe='')
     print(fname)
     resp = requests.get(f'http://127.0.0.1:5000/changeoverlay/{fname}')
     print(vstate.types)
@@ -665,7 +670,8 @@ def segment_on_box(attr):
         crash_on_exception=True,
     )
 
-    fname='-*-'.join('.\\sample_tile_results\\0.dat'.split('\\'))
+    fname='-*-'.join('.\\sample_tile_results\\0.dat'.split('/'))
+    #fname=urllib.parse.quote('.\\sample_tile_results\\0.dat', safe='')
     print(fname)
     resp = requests.get(f'http://127.0.0.1:5000/loadannotations/{fname}')
 
@@ -713,7 +719,8 @@ def nuclick_on_pts(attr):
     )
     print(nuclick_output)
 
-    fname='-*-'.join('.\\sample_tile_results\\0.dat'.split('\\'))
+    fname='-*-'.join('.\\sample_tile_results\\0.dat'.split('/'))
+    #fname=urllib.parse.quote('.\\sample_tile_results\\0.dat', safe='')
     print(fname)
     resp = requests.get(f'http://127.0.0.1:5000/loadannotations/{fname}')
     update_mapper()
@@ -740,6 +747,7 @@ node_source.selected.on_change('indices', node_select_cb)
 
 folder_input_cb(None, None, base_folder)
 populate_layer_list(Path(vstate.slide_path).stem, Path(vstate.slide_path).parents[1])
+#populate_layer_list(Path(attr.item).stem, Path(vstate.slide_path).parents[1])
 
 box_column=column(children=layer_boxes)
 color_column=column(children=lcolors)
@@ -768,7 +776,7 @@ l=layout(
 
 def cleanup_session(session_context):
     # If present, this function executes when the server closes a session.
-    print('cleaning up..')
+    sys.exit()
     
 #script = server_document("http://127.0.0.1:5006/render_demo")
 #print(script)
@@ -782,4 +790,4 @@ def update():
 
 curdoc().add_periodic_callback(update, 220)
 curdoc().add_root(l)
-curdoc().on_session_destroyed(cleanup_session)
+#curdoc().on_session_destroyed(cleanup_session)
