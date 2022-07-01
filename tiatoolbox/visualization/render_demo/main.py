@@ -273,7 +273,7 @@ if len(sys.argv)>1 and sys.argv[1]!='None':
 vstate.slide_path=Path(r'/tiatoolbox/app_data/slides/TCGA-SC-A6LN-01Z-00-DX1.svs')
 
 wsi = [WSIReader.open(vstate.slide_path)]
-renderer=AnnotationRenderer('type', {'class1': (1,0,0,1), 'class2': (0,0,1,1), 'class3': (0,1,0,1)}, thickness=-1, edge_thickness=1)
+renderer=AnnotationRenderer('type', {'class1': (1,0,0,1), 'class2': (0,0,1,1), 'class3': (0,1,0,1)}, thickness=-1, edge_thickness=1, zoomed_out_strat='scale')
 vstate.renderer=renderer
 
 vstate.dims=wsi[0].info.slide_dimensions
