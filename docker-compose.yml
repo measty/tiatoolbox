@@ -9,3 +9,4 @@ services:
       - ./app_data/:/app_data
     ports:
       - "20.0.0.9:8080:5100"
+      - "5000:5000"
