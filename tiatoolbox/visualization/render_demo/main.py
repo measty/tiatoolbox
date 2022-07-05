@@ -1,6 +1,6 @@
 from shutil import rmtree
 from bokeh.models import Selection, TileRenderer
-from tiatoolbox.wsicore.wsireader import VirtualWSIReader, get_wsireader
+from tiatoolbox.wsicore.wsireader import VirtualWSIReader
 from PIL import Image
 from bokeh.models import Plot, BasicTickFormatter, FuncTickFormatter, CheckboxButtonGroup, CustomJS, ColumnDataSource, Panel, Slider, Toggle, FileInput, DataRange1d, TextInput, Button, Dropdown, BoxEditTool, CheckboxGroup, ColorPicker, Range1d
 from bokeh.models import GraphRenderer, Circle, StaticLayoutProvider, TapTool, PointDrawTool
@@ -397,6 +397,9 @@ def node_select_cb(attr, old, new):
 def overlay_toggle_cb(attr):
     print('meep')
     for i in range(3,len(p.renderers)):
+        if isinstance(p.renderers[i], GraphRenderer):
+            #set_graph_alpha(p.renderers[i], new)
+            continue
         if p.renderers[i].alpha==0:
             p.renderers[i].alpha=overlay_alpha.value
         else:
