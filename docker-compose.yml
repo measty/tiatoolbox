@@ -4,4 +4,4 @@ services:
     image: bokeh_app
     ports:
       - "5000:5000"
-      - "5006:5006"
+      - "5100:5100"
