@@ -1,7 +1,11 @@
 version: '3'
 services:
   bokeh_app:
-    image: bokeh_app
+    build: .
+    container_name: bokeh_app
+    restart: always
+    volumes:
+      - ./bokeh/:/bokeh
+      - ./app_data/:/app_data
     ports:
-      - "5000:5000"
-      - "5100:5100"
+      - "20.0.0.9:8080:5100"
