@@ -621,7 +621,7 @@ def file_drop_cb(attr):
         if "_slider" in c.name:
             color_column.children.remove(c)
     for b in box_column.children.copy():
-        if "layer" in b.label:
+        if "layer" in b.label or "graph" in b.label:
             box_column.children.remove(b)
     print(p.renderers)
     print(attr.item)

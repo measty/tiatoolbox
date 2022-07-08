@@ -15,6 +15,8 @@ import openslide
 import pandas as pd
 import tifffile
 import zarr
+from PIL import Image
+from shapely.geometry import Polygon
 
 from tiatoolbox import utils
 from tiatoolbox.tools import tissuemask
@@ -22,6 +24,8 @@ from tiatoolbox.utils.env_detection import pixman_warning
 from tiatoolbox.utils.exceptions import FileNotSupported
 from tiatoolbox.wsicore.metadata.ngff import Multiscales
 from tiatoolbox.wsicore.wsimeta import WSIMeta
+from tiatoolbox.annotation.storage import AnnotationStore, SQLiteStore
+from tiatoolbox.utils.visualization import AnnotationRenderer
 
 pixman_warning()
 
@@ -4340,3 +4344,259 @@ class NGFFWSIReader(WSIReader):
             )
 
         return im_region
+
+
+
+
+class AnnotationStoreReader(WSIReader):
+    """Reader for Annotation store.
+
+    Support is currently experimental. 
+
+    """
+
+    def __init__(self, path, info: WSIMeta,
+        store: AnnotationStore,
+        renderer: AnnotationRenderer = None,
+        **kwargs):
+        super().__init__(path, **kwargs)
+        self.info = info
+        self.store = store
+        if renderer is None:
+            renderer = AnnotationRenderer()
+        self.renderer = renderer
+
+        
+
+    def _info(self):
+        return self.info
+
+    def read_rect(
+        self,
+        location,
+        size,
+        resolution=0,
+        units="level",
+        interpolation="optimise",
+        pad_mode="constant",
+        pad_constant_values=0,
+        coord_space="baseline",
+        **kwargs,
+    ):
+        if coord_space == "resolution":
+            im_region = self._read_rect_at_resolution(
+                location,
+                size,
+                resolution=resolution,
+                units=units,
+                interpolation=interpolation,
+                pad_mode=pad_mode,
+                pad_constant_values=pad_constant_values,
+            )
+            return utils.transforms.background_composite(image=im_region)
+
+        # Find parameters for optimal read
+        (
+            read_level,
+            _,
+            _,
+            post_read_scale,
+            baseline_read_size,
+        ) = self.find_read_rect_params(
+            location=location,
+            size=size,
+            resolution=resolution,
+            units=units,
+        )
+
+        bounds = utils.transforms.locsize2bounds(
+            location=location, size=baseline_read_size
+        )
+        bound_geom = Polygon.from_bounds(*bounds)
+        im_region = self.render_annotations(bound_geom, 1, location)
+
+        im_region = utils.transforms.imresize(
+            img=im_region,
+            scale_factor=post_read_scale,
+            output_size=size,
+            interpolation=interpolation,
+        )
+
+        return utils.transforms.background_composite(image=im_region)
+
+    def read_bounds(
+        self,
+        bounds,
+        resolution=0,
+        units="level",
+        interpolation="optimise",
+        pad_mode="constant",
+        pad_constant_values=0,
+        coord_space="baseline",
+        **kwargs,
+    ):
+        bounds_at_baseline = bounds
+        if coord_space == "resolution":
+            bounds_at_baseline = self._bounds_at_resolution_to_baseline(
+                bounds, resolution, units
+            )
+            _, size_at_requested = utils.transforms.bounds2locsize(bounds)
+            # don't use the `output_size` (`size_at_requested`) here
+            # because the rounding error at `bounds_at_baseline` leads to
+            # different `size_at_requested` (keeping same read resolution
+            # but base image is of different scale)
+            (read_level, _, _, post_read_scale,) = self._find_read_bounds_params(
+                bounds_at_baseline, resolution=resolution, units=units
+            )
+        else:  # duplicated portion with VirtualReader, factoring out ?
+            # Find parameters for optimal read
+            (
+                read_level,
+                _,
+                size_at_requested,
+                post_read_scale,
+            ) = self._find_read_bounds_params(
+                bounds_at_baseline, resolution=resolution, units=units
+            )
+
+        bound_geom = Polygon.from_bounds(*bounds_at_baseline)
+        im_region = self.render_annotations(bound_geom, 1, bounds_at_baseline[:2])
+
+        if coord_space == "resolution":
+            # do this to enforce output size is as defined by input bounds
+            im_region = utils.transforms.imresize(
+                img=im_region, output_size=size_at_requested
+            )
+        else:
+            im_region = utils.transforms.imresize(
+                img=im_region,
+                scale_factor=post_read_scale,
+                output_size=size_at_requested,
+            )
+
+        return im_region
+
+    def render_annotations(self, bound_geom, scale, tl):
+        """get annotations as bbox or geometry according to zoom level,
+        and decimate large collections of small annotations if appropriate"""
+        # clip_bound_geom=bound_geom.buffer(scale)
+        r = self.renderer
+        output_size = [self.output_tile_size] * 2
+        if r.zoomed_out_strat == "scale" or r.zoomed_out_strat == "decimate":
+            min_area = 0.0004 * (self.tile_size * scale) ** 2
+        else:
+            min_area = r.zoomed_out_strat
+
+        if r.zoomed_out_strat == "decimate":
+            decimate = int(scale / self.renderer.max_scale) + 1
+            if scale > 100:
+                decimate = decimate * 2
+
+            if scale > self.renderer.max_scale:
+                anns_dict = self.store.cached_bquery(
+                    bound_geom.bounds,
+                    self.renderer.where,
+                )
+                if len(anns_dict) == 0:
+                    return self.empty_img
+                rgb = np.zeros((output_size[0], output_size[1], 4), dtype=np.uint8)
+                print(f"len annotations dict is: {len(anns_dict)}")
+                if len(anns_dict) < 40:
+                    decimate = int(len(anns_dict) / 20) + 1
+                i = 0
+                for key, ann in anns_dict.items():
+                    i += 1
+                    if ann.geometry.area > min_area:
+                        ann = self.store[key]
+                        # ann_bounded = r.get_bounded(ann, clip_bound_geom)
+                        ann_bounded = ann.geometry
+                        if ann_bounded.is_empty:
+                            # only bbox not actual geom was inside the tile, so ignore
+                            continue
+                        if ann_bounded.geom_type == "Polygon":
+                            r.render_poly(rgb, ann, ann_bounded, tl, scale)
+                        elif ann_bounded.geom_type == "LineString":
+                            r.render_line(rgb, ann, ann_bounded, tl, scale)
+                        elif ann_bounded.geom_type == "MultiPolygon":
+                            r.render_multipoly(rgb, ann, ann_bounded, tl, scale)
+                        else:
+                            print(f"unknown geometry: {ann_bounded.geom_type}")
+                        continue
+                    if i % decimate == 0:
+                        if ann.geometry.geom_type == "Point":
+                            r.render_pt(rgb, ann, tl, scale)
+                            continue
+                        # ann_bounded = r.get_bounded(ann, clip_bound_geom)
+                        ann_bounded = ann.geometry
+                        if ann_bounded.geom_type == "Polygon":
+                            if ann_bounded.is_empty:
+                                print("why is this empty?")
+                                continue
+                            r.render_rect(rgb, ann, ann_bounded, tl, scale)
+                        elif ann_bounded.geom_type == "LineString":
+                            # ann_bounded = ann.geometry.intersection(bound_geom)
+                            r.render_line(rgb, ann, ann_bounded, tl, scale)
+                        else:
+                            print(f"unknown geometry: {ann_bounded.geom_type}")
+            else:
+                anns = self.store.cached_query(bound_geom.bounds, self.renderer.where)
+                if len(anns) == 0:
+                    return self.empty_img
+                rgb = np.zeros((output_size[0], output_size[1], 4), dtype=np.uint8)
+                for ann in anns:
+                    if ann.geometry.geom_type == "Point":
+                        r.render_pt(rgb, ann, tl, scale)
+                        continue
+                    # ann_bounded = r.get_bounded(ann, clip_bound_geom)
+                    ann_bounded = ann.geometry
+                    if ann_bounded.is_empty:
+                        # print('why is this empty?')
+                        continue
+                    if ann_bounded.geom_type == "Polygon":
+                        r.render_poly(rgb, ann, ann_bounded, tl, scale)
+                    elif ann_bounded.geom_type == "LineString":
+                        r.render_line(rgb, ann, ann_bounded, tl, scale)
+                    elif ann_bounded.geom_type == "MultiPolygon":
+                        r.render_multipoly(rgb, ann, ann_bounded, tl, scale)
+                    elif ann_bounded.geom_type == "GeometryCollection":
+                        # print(f"unknown geometry: {ann_bounded.geom_type}: {[g.geom_type for g in ann_bounded.geoms]}")
+                        pass
+                    else:
+                        print(f"unknown geometry: {ann_bounded.geom_type}")
+
+            return Image.fromarray(rgb)
+        else:
+            if scale > self.renderer.max_scale:
+                anns = self.store.cached_query(
+                    bound_geom.bounds,
+                    self.renderer.where,
+                    min_area=min_area,
+                )
+            else:
+                anns = self.store.cached_query(bound_geom.bounds, self.renderer.where)
+            if len(anns) == 0:
+                return self.empty_img
+
+            rgb = np.zeros((output_size[0], output_size[1], 4), dtype=np.uint8)
+            for ann in anns:
+                if ann.geometry.geom_type == "Point":
+                    r.render_pt(rgb, ann, tl, scale)
+                    continue
+                # ann_bounded = r.get_bounded(ann, clip_bound_geom)
+                ann_bounded = ann.geometry
+                if ann_bounded.is_empty:
+                    # print('why is this empty?')
+                    continue
+                if ann_bounded.geom_type == "Polygon":
+                    r.render_poly(rgb, ann, ann_bounded, tl, scale)
+                elif ann_bounded.geom_type == "LineString":
+                    r.render_line(rgb, ann, ann_bounded, tl, scale)
+                elif ann_bounded.geom_type == "MultiPolygon":
+                    r.render_multipoly(rgb, ann, ann_bounded, tl, scale)
+                elif ann_bounded.geom_type == "GeometryCollection":
+                    # print(f"unknown geometry: {ann_bounded.geom_type}: {[g.geom_type for g in ann_bounded.geoms]}")
+                    pass
+                else:
+                    warnings.warn(f"Unknown geometry: {ann_bounded.geom_type}")
+
+        return Image.fromarray(rgb)
