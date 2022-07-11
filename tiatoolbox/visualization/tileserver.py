@@ -1,22 +1,20 @@
 """Simple Flask WSGI apps to display tiles as slippery maps."""
 import io
 import json
-import os
-import urllib
 from pathlib import Path
 from typing import Dict, List, Union
-
-import matplotlib.cm as cm
 import numpy as np
+import matplotlib.cm as cm
 from flask import Flask, Response, send_file
 from flask.templating import render_template
-from PIL import Image
-
+import urllib
+import os
 from tiatoolbox import data
 from tiatoolbox.annotation.storage import SQLiteStore
 from tiatoolbox.tools.pyramid import AnnotationTileGenerator, ZoomifyGenerator
+from tiatoolbox.wsicore.wsireader import VirtualWSIReader, WSIReader, OpenSlideWSIReader
+from PIL import Image
 from tiatoolbox.utils.visualization import colourise_image
-from tiatoolbox.wsicore.wsireader import OpenSlideWSIReader, VirtualWSIReader, WSIReader
 
 
 class TileServer(Flask):
@@ -156,11 +154,10 @@ class TileServer(Flask):
         self.state.types = SQ.pquery("props['type']")
         if None in self.state.types:
             self.state.types.remove(None)
-        print(f'updated types to: {self.state.types}')
 
     @staticmethod
     def decode_safe_name(name):
-        return Path(urllib.parse.unquote(name).replace("\\", os.sep))
+        return Path(urllib.parse.unquote(name).replace('\\', os.sep))
 
     def index(self) -> Response:
         """Serve the index page.

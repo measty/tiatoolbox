@@ -1,6 +1,7 @@
 import operator
 import pickle
 import sys
+import os
 import urllib
 from cmath import pi
 from pathlib import Path, PureWindowsPath
@@ -49,9 +50,8 @@ from tiatoolbox.visualization.tileserver import TileServer
 from tiatoolbox.visualization.ui_utils import get_level_by_extent
 from tiatoolbox.wsicore.wsireader import WSIReader
 
+host = os.environ.get('HOST')
 # Define helper functions
-host = "127.0.0.1:5000"
-
 
 def make_ts(route):
     sf = 2 ** (vstate.num_zoom_levels - 9)
@@ -280,14 +280,14 @@ def change_tiles(layer_name="overlay"):
                 continue
             grp = tg.get_grp()
             ts = make_ts(
-                f"http://127.0.0.1:5000/layer/{layer_key}/zoomify/TileGroup{grp}"
+                f"http://{host}:5000/layer/{layer_key}/zoomify/TileGroup{grp}"
                 + r"/{z}-{x}-{y}.jpg",
             )
             p.renderers[vstate.layer_dict[layer_key]].tile_source = ts
         return
 
     ts = make_ts(
-        f"http://127.0.0.1:5000/layer/{layer_name}/zoomify/TileGroup{grp}"
+        f"http://{host}:5000/layer/{layer_name}/zoomify/TileGroup{grp}"
         + r"/{z}-{x}-{y}.jpg",
     )
     if layer_name in vstate.layer_dict:
@@ -305,7 +305,7 @@ def change_tiles(layer_name="overlay"):
                 continue
             grp = tg.get_grp()
             ts = make_ts(
-                f"http://127.0.0.1:5000/layer/{layer_key}/zoomify/TileGroup{grp}"
+                f"http://{host}:5000/layer/{layer_key}/zoomify/TileGroup{grp}"
                 + r"/{z}-{x}-{y}.jpg",
             )
             p.renderers[vstate.layer_dict[layer_key]].tile_source = ts
@@ -335,7 +335,7 @@ class ViewerState:
 vstate = ViewerState()
 
 # base_folder = r"E:\TTB_vis_folder"
-base_folder = "/tiatoolbox/app_data"
+base_folder = "/app_data"
 if len(sys.argv) > 1 and sys.argv[1] != "None":
     base_folder = sys.argv[1]
 # vstate.slide_path = r"E:\\TTB_vis_folder\\slides\\TCGA-SC-A6LN-01Z-00-DX1.svs"
@@ -410,7 +410,7 @@ p = figure(
 )
 initialise_slide()
 ts1 = make_ts(
-    f"http://{host}/layer/slide/zoomify/TileGroup1" + r"/{z}-{x}-{y}.jpg",
+    f"http://{host}:5000/layer/slide/zoomify/TileGroup1" + r"/{z}-{x}-{y}.jpg",
 )
 print(p.renderers)
 print(p.y_range)
@@ -545,13 +545,13 @@ def layer_folder_input_cb(attr, old, new):
 
 def filter_input_cb(attr, old, new):
     """Change predicate to be used to filter annotations"""
-    requests.get(f"http://127.0.0.1:5000/changepredicate/{new}")
+    requests.get(f"http://{host}:5000/changepredicate/{new}")
     vstate.update_state = 1
 
 
 def cprop_input_cb(attr, old, new):
     """Change property to colour by"""
-    requests.get(f"http://127.0.0.1:5000/changeprop/{new}")
+    requests.get(f"http://{host}:5000/changeprop/{new}")
     vstate.update_state = 1
 
 
@@ -606,7 +606,7 @@ def opt_buttons_cb(attr, old, new):
 
 
 def cmap_drop_cb(attr):
-    resp = requests.get(f"http://127.0.0.1:5000/changecmap/{attr.item}")
+    resp = requests.get(f"http://{host}:5000/changecmap/{attr.item}")
     # change_tiles('overlay')
     vstate.update_state = 1
 
@@ -635,7 +635,7 @@ def file_drop_cb(attr):
     fname = make_safe_name(attr.item)
     print(fname)
     print(vstate.mpp)
-    requests.get(f"http://127.0.0.1:5000/changeslide/slide/{fname}")
+    requests.get(f"http://{host}:5000/changeslide/slide/{fname}")
     change_tiles("slide")
     # if len(p.renderers)==1:
     # r=p.rect('x', 'y', 'width', 'height', source=box_source, fill_alpha=0)
@@ -671,7 +671,7 @@ def layer_drop_cb(attr):
 
     # fname='-*-'.join(attr.item.split('\\'))
     fname = make_safe_name(attr.item)
-    resp = requests.get(f"http://{host}/changeoverlay/{fname}")
+    resp = requests.get(f"http://{host}:5000/changeoverlay/{fname}")
     print(f'types is now: {vstate.types}')
     if resp.text == "overlay":
         update_mapper()
@@ -752,7 +752,7 @@ def to_model_cb(attr):
 
 
 def save_cb(attr):
-    requests.get("http://127.0.0.1:5000/commit")
+    requests.get("http://{host}:5000/commit")
 
 
 # run NucleusInstanceSegmentor on a region of wsi defined by the box in box_source
@@ -797,7 +797,7 @@ def segment_on_box(attr):
     # fname='-*-'.join('.\\sample_tile_results\\0.dat'.split('\\'))
     fname = make_safe_name(".\\sample_tile_results\\0.dat")
     print(fname)
-    requests.get(f"http://{host}/loadannotations/{fname}")
+    requests.get(f"http://{host}:5000/loadannotations/{fname}")
     update_mapper()
     # type_drop.menu=[(str(t),str(t)) for t in vstate.types]
     rmtree(r"./sample_tile_results")
@@ -845,7 +845,7 @@ def nuclick_on_pts(attr):
     # fname='-*-'.join('.\\sample_tile_results\\0.dat'.split('\\'))
     fname = make_safe_name(".\\sample_tile_results\\0.dat")
     print(fname)
-    requests.get(f"http://{host}/loadannotations/{fname}")
+    requests.get(f"http://{host}:5000/loadannotations/{fname}")
     update_mapper()
     rmtree(r"./sample_tile_results")
     initialise_overlay()

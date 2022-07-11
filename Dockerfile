@@ -3,7 +3,7 @@ FROM python:3.8-slim-buster
 
 WORKDIR /tiatoolbox
 RUN apt-get update && apt-get -y install gcc
-RUN apt-get install -y python3-opencv
+RUN apt-get install -y python3-opencv curl
 RUN apt-get -y install libopenjp2-7-dev libopenjp2-tools openslide-tools
 
 COPY requirements.txt requirements.txt
