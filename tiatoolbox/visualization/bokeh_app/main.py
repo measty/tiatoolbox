@@ -3,6 +3,7 @@ import os
 import pickle
 import sys
 import urllib
+import json
 from cmath import pi
 from pathlib import Path, PureWindowsPath
 from shutil import rmtree
@@ -52,6 +53,7 @@ from tiatoolbox.visualization.ui_utils import get_level_by_extent
 from tiatoolbox.wsicore.wsireader import WSIReader
 
 host = os.environ.get("HOST")
+#host = "127.0.0.1"
 # Define helper functions
 
 
@@ -109,6 +111,13 @@ def update_mapper():
     colors = random_colors(len(vstate.types))
     vstate.mapper = {key: (*color, 1) for key, color in zip(vstate.types, colors)}
     renderer.mapper = lambda x: vstate.mapper[x]
+    update_renderer("mapper", vstate.mapper)
+
+
+def update_renderer(prop, value):
+    if prop == "mapper":
+        return requests.get(f"http://{host}:5000/changecmap/{value}")
+    return requests.get(f"http://{host}:5000/updaterenderer/{prop}/{value}")
 
 
 def build_predicate():
@@ -133,6 +142,7 @@ def build_predicate():
         )
 
     vstate.renderer.where = combo
+    update_renderer("where", json.dumps(combo))
     return combo
 
 
@@ -141,6 +151,7 @@ def build_predicate_callable():
     if len(get_types) == len(box_column.children):
         if filter_input.value == "None":
             vstate.renderer.where = None
+            update_renderer("where", "None")
             return None
 
     if filter_input.value == "None":
@@ -154,6 +165,7 @@ def build_predicate_callable():
             return eval(filter_input.value) and props["type"] in get_types
 
     vstate.renderer.where = pred
+    update_renderer("where", json.dumps(pred))
     return pred
 
 
@@ -385,8 +397,8 @@ def run_app():
 
 
 # start tile server
-proc = Thread(target=run_app, daemon=True)
-proc.start()
+#proc = Thread(target=run_app, daemon=True)
+#proc.start()
 
 TOOLTIPS = [
     ("index", "$index"),
@@ -499,9 +511,11 @@ def slide_toggle_cb(attr):
 
 
 def node_select_cb(attr, old, new):
+    #only used for old slidegraph clustering
     print(f"selected is: {new}")
     vstate.mapper = {new[0]: (1, 0, 0, 1)}
     vstate.renderer.mapper = lambda x: vstate.mapper[x]
+    update_renderer("mapper", vstate.mapper)
     vstate.update_state = 1
 
 
@@ -608,8 +622,10 @@ def opt_buttons_cb(attr, old, new):
     old_thickness = vstate.renderer.thickness
     if 0 in new:
         vstate.renderer.thickness = -1
+        update_renderer("thickness", -1)
     else:
         vstate.renderer.thickness = 1
+        update_renderer("thickness", 1)
     if old_thickness != vstate.renderer.thickness:
         vstate.update_state = 1
     if 1 in new:
@@ -631,7 +647,7 @@ def opt_buttons_cb(attr, old, new):
 
 
 def cmap_drop_cb(attr):
-    resp = requests.get(f"http://{host}:5000/changecmap/{attr.item}")
+    update_renderer("mapper", attr.item)
     # change_tiles('overlay')
     vstate.update_state = 1
 
@@ -701,13 +717,15 @@ def layer_drop_cb(attr):
     # fname='-*-'.join(attr.item.split('\\'))
     fname = make_safe_name(attr.item)
     resp = requests.get(f"http://{host}:5000/changeoverlay/{fname}")
+    vstate.types = json.loads(resp.text)
     print(f"types is now: {vstate.types}")
-    if resp.text == "overlay":
+    if Path(attr.item).suffix in [".db", ".dat", ".geojson"]:
         update_mapper()
         initialise_overlay()
+        change_tiles("overlay")
     else:
         add_layer(resp.text)
-    change_tiles(resp.text)
+        change_tiles(resp.text)
 
 
 def layer_select_cb(attr):
@@ -749,6 +767,7 @@ def color_input_cb(obj, attr, old, new):
     vstate.mapper[name2type_key(obj.name)] = (*hex2rgb(new), 1)
     if vstate.renderer.score_prop == "type":
         vstate.renderer.mapper = lambda x: vstate.mapper[x]
+        update_renderer("mapper", vstate.mapper)
     # change_tiles('overlay')
     vstate.update_state = 1
 
@@ -829,7 +848,8 @@ def segment_on_box(attr):
     # fname='-*-'.join('.\\sample_tile_results\\0.dat'.split('\\'))
     fname = make_safe_name(".\\sample_tile_results\\0.dat")
     print(fname)
-    requests.get(f"http://{host}:5000/loadannotations/{fname}")
+    resp = requests.get(f"http://{host}:5000/loadannotations/{fname}")
+    vstate.types = json.load(resp.text)
     update_mapper()
     # type_drop.menu=[(str(t),str(t)) for t in vstate.types]
     rmtree(r"./sample_tile_results")
@@ -877,7 +897,8 @@ def nuclick_on_pts(attr):
     # fname='-*-'.join('.\\sample_tile_results\\0.dat'.split('\\'))
     fname = make_safe_name(".\\sample_tile_results\\0.dat")
     print(fname)
-    requests.get(f"http://{host}:5000/loadannotations/{fname}")
+    resp = requests.get(f"http://{host}:5000/loadannotations/{fname}")
+    vstate.types = json.load(resp.text)
     update_mapper()
     rmtree(r"./sample_tile_results")
     initialise_overlay()

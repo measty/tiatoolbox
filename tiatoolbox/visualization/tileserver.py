@@ -15,7 +15,7 @@ from PIL import Image
 from tiatoolbox import data
 from tiatoolbox.annotation.storage import SQLiteStore
 from tiatoolbox.tools.pyramid import AnnotationTileGenerator, ZoomifyGenerator
-from tiatoolbox.utils.visualization import colourise_image
+from tiatoolbox.utils.visualization import colourise_image, AnnotationRenderer
 from tiatoolbox.wsicore.wsireader import OpenSlideWSIReader, VirtualWSIReader, WSIReader
 
 
@@ -64,7 +64,15 @@ class TileServer(Flask):
         self.tia_title = title
         self.tia_layers = {}
         self.tia_pyramids = {}
-        self.state = state
+        self.slide_mpp = None
+        self.renderer = AnnotationRenderer(
+            "type",
+            {"class1": (1, 0, 0, 1), "class2": (0, 0, 1, 1), "class3": (0, 1, 0, 1)},
+            thickness=-1,
+            edge_thickness=1,
+            zoomed_out_strat="scale",
+            max_scale=8,
+        )
 
         # Generic layer names if none provided.
         if isinstance(layers, list):
@@ -112,6 +120,8 @@ class TileServer(Flask):
         self.route("/loadannotations/<file_path>")(self.load_annotations)
         self.route("/changeoverlay/<overlay_path>")(self.change_overlay)
         self.route("/commit/<save_path>")(self.commit_db)
+        self.route("/updaterenderer/<prop>/<val>")(self.update_renderer)
+        self.route("/reset")(self.reset)
 
     def zoomify(
         self, layer: str, tile_group: int, z: int, x: int, y: int  # skipcq: PYL-w0613
@@ -153,9 +163,11 @@ class TileServer(Flask):
         return send_file(image_io, mimetype="image/webp")
 
     def update_types(self, SQ):
-        self.state.types = SQ.pquery("props['type']")
-        if None in self.state.types:
-            self.state.types.remove(None)
+        types = SQ.pquery("props['type']")
+        if None in types:
+            types.remove(None)
+
+        return types
 
     @staticmethod
     def decode_safe_name(name):
@@ -202,6 +214,12 @@ class TileServer(Flask):
 
         return "done"
 
+    def reset(self):
+        self.tia_layers = {}
+        self.tia_pyramids = {}
+        self.slide_mpp = None
+        return "done"
+
     def change_slide(self, layer, layer_path):
         # layer_path='\\'.join(layer_path.split('-*-'))
         layer_path = self.decode_safe_name(layer_path)
@@ -239,7 +257,12 @@ class TileServer(Flask):
 
         return "done"
 
-    def load_annotations(self, file_path):
+    def update_renderer(self, prop, val):
+        if val == "None" or val == "null":
+            val = None
+        self.renderer.__setattr__(prop, val)
+
+    def load_annotations(self, file_path, model_mpp):
         # file_path='\\'.join(file_path.split('-*-'))
         file_path = self.decode_safe_name(file_path)
         print(file_path)
@@ -247,20 +270,20 @@ class TileServer(Flask):
         for layer in self.tia_pyramids.values():
             if isinstance(layer, AnnotationTileGenerator):
                 layer.store.add_from(
-                    file_path, saved_res=self.state.model_mpp, slide_res=self.state.mpp
+                    file_path, saved_res=model_mpp, slide_res=self.slide_mpp,
                 )
-                self.update_types(layer.store)
-                return "overlay"
+                types = self.update_types(layer.store)
+                return json.dumps(types)
 
         SQ = SQLiteStore(auto_commit=False)
-        SQ.add_from(file_path, saved_res=self.state.model_mpp, slide_res=self.state.mpp)
+        SQ.add_from(file_path, saved_res=model_mpp, slide_res=self.slide_mpp)
         self.tia_pyramids["overlay"] = AnnotationTileGenerator(
-            self.tia_layers["slide"].info, SQ, self.state.renderer
+            self.tia_layers["slide"].info, SQ, self.renderer
         )
         self.tia_layers["overlay"] = self.tia_pyramids["overlay"]
-        self.update_types(SQ)
-        print(self.state.types)
-        return "overlay"
+        types = self.update_types(SQ)
+        print(types)
+        return json.dumps(types)#"overlay"
 
     def change_overlay(self, overlay_path):
         # overlay_path='\\'.join(overlay_path.split('-*-'))
@@ -270,7 +293,7 @@ class TileServer(Flask):
             SQ = SQLiteStore.from_geojson(overlay_path)
         elif overlay_path.suffix == ".dat":
             SQ = SQLiteStore(auto_commit=False)
-            SQ.add_from(overlay_path, slide_res=self.state.mpp[0])
+            SQ.add_from(overlay_path, slide_res=self.slide_mpp)
         elif overlay_path.suffix in [".jpg", ".png", ".tiff"]:
             layer = f"layer{len(self.tia_pyramids)}"
             if overlay_path.suffix == ".tiff":
@@ -289,14 +312,14 @@ class TileServer(Flask):
         for key, layer in self.tia_pyramids.items():
             if isinstance(layer, AnnotationTileGenerator):
                 layer.store = SQ
-                self.update_types(SQ)
-                return key
+                types = self.update_types(SQ)
+                return json.dumps(types)
         self.tia_pyramids["overlay"] = AnnotationTileGenerator(
-            self.tia_layers["slide"].info, SQ, self.state.renderer
+            self.tia_layers["slide"].info, SQ, self.renderer
         )
         self.tia_layers["overlay"] = self.tia_pyramids["overlay"]
-        self.update_types(SQ)
-        return "overlay"
+        types = self.update_types(SQ)
+        return json.dumps(tuple(types))
 
     def commit_db(self, save_path):
         save_path = self.decode_safe_name(save_path)
