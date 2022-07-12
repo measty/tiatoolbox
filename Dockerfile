@@ -16,5 +16,5 @@ COPY . .
 RUN python setup.py install
 EXPOSE 5100 5000
 
-CMD [ "bokeh", "serve", "./tiatoolbox/visualization/render_demo", "--allow-websocket-origin=localhost:5100", "--allow-websocket-origin=iguana.dcs.warwick.ac.uk", "--allow-websocket-origin=tia-web-01.dcs.warwick.ac.uk:5100", "--port", "5100", "--use-xheaders", "--unused-session-lifetime", "1000", "--check-unused-sessions", "1000" ]
+CMD [ "bokeh", "serve", "./tiatoolbox/visualization/render_demo", "--allow-websocket-origin=localhost:5100", "--allow-websocket-origin=iguana.dcs.warwick.ac.uk", "--allow-websocket-origin=tia-web-01.dcs.warwick.ac.uk:5100", "--allow-websocket-origin=20.0.0.9:5100", "--port", "5100", "--use-xheaders", "--unused-session-lifetime", "1000", "--check-unused-sessions", "1000" , "--args", "/app_data"]
 
