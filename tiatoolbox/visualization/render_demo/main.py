@@ -634,9 +634,9 @@ def cmap_drop_cb(attr):
 
 def slide_select_cb(attr, old, new):
     """setup the newly chosen slide"""
-    slide_path = Path(slide_folder) / Path(new[0])
     if len(new) == 0:
         return
+    slide_path = Path(slide_folder) / Path(new[0])
     pt_source.data = {"x": [], "y": []}
     box_source.data = {"x": [], "y": [], "width": [], "height": []}
     if len(p.renderers) > 3:

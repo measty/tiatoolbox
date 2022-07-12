@@ -610,7 +610,7 @@ class AnnotationTileGenerator(ZoomifyGenerator):
         r = self.renderer
         output_size = [self.output_tile_size] * 2
         if r.zoomed_out_strat == "scale" or r.zoomed_out_strat == "decimate":
-            min_area = 0.0004 * (self.tile_size * scale) ** 2
+            min_area = 0.0004 * (self.tile_size * scale * (self.info.mpp[0]/0.25)) ** 2
         else:
             min_area = r.zoomed_out_strat
 
