@@ -360,6 +360,7 @@ renderer = AnnotationRenderer(
     thickness=-1,
     edge_thickness=1,
     zoomed_out_strat="scale",
+    max_scale=8,
 )
 vstate.renderer = renderer
 
