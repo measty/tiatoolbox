@@ -11,6 +11,7 @@ import numpy as np
 from flask import Flask, Response, send_file
 from flask.templating import render_template
 from PIL import Image
+from bokeh.embed import server_document
 
 from tiatoolbox import data
 from tiatoolbox.annotation.storage import SQLiteStore
@@ -104,7 +105,8 @@ class TileServer(Flask):
         )(
             self.zoomify,
         )
-        self.route("/")(self.index)
+        #self.route("/")(self.index)
+        self.route("/")(self.bkapp_page)
         self.route("/changepredicate/<pred>")(self.change_pred)
         self.route("/changeprop/<prop>")(self.change_prop)
         self.route("/changeslide/<layer>/<layer_path>")(self.change_slide)
@@ -112,6 +114,8 @@ class TileServer(Flask):
         self.route("/loadannotations/<file_path>")(self.load_annotations)
         self.route("/changeoverlay/<overlay_path>")(self.change_overlay)
         self.route("/commit/<save_path>")(self.commit_db)
+
+
 
     def zoomify(
         self, layer: str, tile_group: int, z: int, x: int, y: int  # skipcq: PYL-w0613
@@ -161,6 +165,10 @@ class TileServer(Flask):
     def decode_safe_name(name):
         return Path(urllib.parse.unquote(name).replace("\\", os.sep))
 
+    def bkapp_page(self):
+        script = server_document('http://localhost:5006/bkapp')
+        return render_template("embed.html", script=script, template="Flask")
+    
     def index(self) -> Response:
         """Serve the index page.
 
