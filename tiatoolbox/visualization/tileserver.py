@@ -2,20 +2,22 @@
 import io
 import json
 import os
+import pickle
 import urllib
+from crypt import methods
 from pathlib import Path
 from typing import Dict, List, Union
 
 import matplotlib.cm as cm
 import numpy as np
-from flask import Flask, Response, send_file
+from flask import Flask, Response, request, send_file
 from flask.templating import render_template
 from PIL import Image
 
 from tiatoolbox import data
 from tiatoolbox.annotation.storage import SQLiteStore
 from tiatoolbox.tools.pyramid import AnnotationTileGenerator, ZoomifyGenerator
-from tiatoolbox.utils.visualization import colourise_image, AnnotationRenderer
+from tiatoolbox.utils.visualization import AnnotationRenderer, colourise_image
 from tiatoolbox.wsicore.wsireader import OpenSlideWSIReader, VirtualWSIReader, WSIReader
 
 
@@ -107,21 +109,22 @@ class TileServer(Flask):
                 meta = layer.info
 
         self.route(
-            "/layer/<layer>/zoomify/TileGroup<int:tile_group>/"
+            "/tileserver/layer/<layer>/zoomify/TileGroup<int:tile_group>/"
             "<int:z>-<int:x>-<int:y>.jpg"
         )(
             self.zoomify,
         )
         self.route("/")(self.index)
-        self.route("/changepredicate/<pred>")(self.change_pred)
-        self.route("/changeprop/<prop>")(self.change_prop)
-        self.route("/changeslide/<layer>/<layer_path>")(self.change_slide)
-        self.route("/changecmap/<cmap>")(self.change_mapper)
-        self.route("/loadannotations/<file_path>")(self.load_annotations)
-        self.route("/changeoverlay/<overlay_path>")(self.change_overlay)
-        self.route("/commit/<save_path>")(self.commit_db)
-        self.route("/updaterenderer/<prop>/<val>")(self.update_renderer)
-        self.route("/reset")(self.reset)
+        self.route("/tileserver/changepredicate/<pred>")(self.change_pred)
+        self.route("/tileserver/changeprop/<prop>")(self.change_prop)
+        self.route("/tileserver/changeslide/<layer>/<layer_path>")(self.change_slide)
+        self.route("/tileserver/changecmap/<cmap>")(self.change_mapper)
+        self.route("/tileserver/loadannotations/<file_path>")(self.load_annotations)
+        self.route("/tileserver/changeoverlay/<overlay_path>")(self.change_overlay)
+        self.route("/tileserver/commit/<save_path>")(self.commit_db)
+        self.route("/tileserver/updaterenderer/<prop>/<val>")(self.update_renderer)
+        self.route("/tileserver/updatewhere", methods=["POST"])(self.update_where)
+        self.route("/tileserver/reset")(self.reset)
 
     def zoomify(
         self, layer: str, tile_group: int, z: int, x: int, y: int  # skipcq: PYL-w0613
@@ -258,9 +261,29 @@ class TileServer(Flask):
         return "done"
 
     def update_renderer(self, prop, val):
+        val = json.loads(val)
         if val == "None" or val == "null":
             val = None
         self.renderer.__setattr__(prop, val)
+
+        return "done"
+
+    def update_where(self):
+        get_types = json.loads(request.form["types"])
+        filter_val = json.loads(request.form["filter"])
+
+        if filter_val == "None":
+
+            def pred(props):
+                return props["type"] in get_types
+
+        else:
+
+            def pred(props):
+                return eval(filter_val) and props["type"] in get_types
+
+        self.renderer.where = pred
+        return "done"
 
     def load_annotations(self, file_path, model_mpp):
         # file_path='\\'.join(file_path.split('-*-'))
@@ -270,7 +293,9 @@ class TileServer(Flask):
         for layer in self.tia_pyramids.values():
             if isinstance(layer, AnnotationTileGenerator):
                 layer.store.add_from(
-                    file_path, saved_res=model_mpp, slide_res=self.slide_mpp,
+                    file_path,
+                    saved_res=model_mpp,
+                    slide_res=self.slide_mpp,
                 )
                 types = self.update_types(layer.store)
                 return json.dumps(types)
@@ -283,7 +308,7 @@ class TileServer(Flask):
         self.tia_layers["overlay"] = self.tia_pyramids["overlay"]
         types = self.update_types(SQ)
         print(types)
-        return json.dumps(types)#"overlay"
+        return json.dumps(types)  # "overlay"
 
     def change_overlay(self, overlay_path):
         # overlay_path='\\'.join(overlay_path.split('-*-'))

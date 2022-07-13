@@ -1,9 +1,9 @@
+import json
 import operator
 import os
 import pickle
 import sys
 import urllib
-import json
 from cmath import pi
 from pathlib import Path, PureWindowsPath
 from shutil import rmtree
@@ -53,7 +53,9 @@ from tiatoolbox.visualization.ui_utils import get_level_by_extent
 from tiatoolbox.wsicore.wsireader import WSIReader
 
 host = os.environ.get("HOST")
-#host = "127.0.0.1"
+host2 = os.environ.get("HOST2")
+port = os.environ.get("PORT")
+# host = "127.0.0.1"
 # Define helper functions
 
 
@@ -116,8 +118,10 @@ def update_mapper():
 
 def update_renderer(prop, value):
     if prop == "mapper":
-        return requests.get(f"http://{host}:5000/changecmap/{value}")
-    return requests.get(f"http://{host}:5000/updaterenderer/{prop}/{value}")
+        return requests.get(f"http://{host2}:5000/tileserver/changecmap/{value}")
+    return requests.get(
+        f"http://{host2}:5000/tileserver/updaterenderer/{prop}/{json.dumps(value)}"
+    )
 
 
 def build_predicate():
@@ -142,7 +146,7 @@ def build_predicate():
         )
 
     vstate.renderer.where = combo
-    update_renderer("where", json.dumps(combo))
+    update_renderer("where", combo)
     return combo
 
 
@@ -165,7 +169,11 @@ def build_predicate_callable():
             return eval(filter_input.value) and props["type"] in get_types
 
     vstate.renderer.where = pred
-    update_renderer("where", json.dumps(pred))
+    # update_renderer("where", json.dumps(pred))
+    requests.post(
+        f"http://{host2}:5000/tileserver/updatewhere",
+        data={"types": json.dumps(get_types), "filter": json.dumps(filter_input.value)},
+    )
     return pred
 
 
@@ -294,14 +302,14 @@ def change_tiles(layer_name="overlay"):
                 continue
             grp = tg.get_grp()
             ts = make_ts(
-                f"http://{host}:5000/layer/{layer_key}/zoomify/TileGroup{grp}"
+                f"http://{host}:{port}/tileserver/layer/{layer_key}/zoomify/TileGroup{grp}"
                 + r"/{z}-{x}-{y}.jpg",
             )
             p.renderers[vstate.layer_dict[layer_key]].tile_source = ts
         return
 
     ts = make_ts(
-        f"http://{host}:5000/layer/{layer_name}/zoomify/TileGroup{grp}"
+        f"http://{host}:{port}/tileserver/layer/{layer_name}/zoomify/TileGroup{grp}"
         + r"/{z}-{x}-{y}.jpg",
     )
     if layer_name in vstate.layer_dict:
@@ -319,7 +327,7 @@ def change_tiles(layer_name="overlay"):
                 continue
             grp = tg.get_grp()
             ts = make_ts(
-                f"http://{host}:5000/layer/{layer_key}/zoomify/TileGroup{grp}"
+                f"http://{host}:{port}/tileserver/layer/{layer_key}/zoomify/TileGroup{grp}"
                 + r"/{z}-{x}-{y}.jpg",
             )
             p.renderers[vstate.layer_dict[layer_key]].tile_source = ts
@@ -397,8 +405,8 @@ def run_app():
 
 
 # start tile server
-#proc = Thread(target=run_app, daemon=True)
-#proc.start()
+# proc = Thread(target=run_app, daemon=True)
+# proc.start()
 
 TOOLTIPS = [
     ("index", "$index"),
@@ -434,7 +442,8 @@ p = figure(
 )
 initialise_slide()
 ts1 = make_ts(
-    f"http://{host}:5000/layer/slide/zoomify/TileGroup1" + r"/{z}-{x}-{y}.jpg",
+    f"http://{host}:{port}/tileserver/layer/slide/zoomify/TileGroup1"
+    + r"/{z}-{x}-{y}.jpg",
 )
 print(p.renderers)
 print(p.y_range)
@@ -511,7 +520,7 @@ def slide_toggle_cb(attr):
 
 
 def node_select_cb(attr, old, new):
-    #only used for old slidegraph clustering
+    # only used for old slidegraph clustering
     print(f"selected is: {new}")
     vstate.mapper = {new[0]: (1, 0, 0, 1)}
     vstate.renderer.mapper = lambda x: vstate.mapper[x]
@@ -584,13 +593,13 @@ def layer_folder_input_cb(attr, old, new):
 
 def filter_input_cb(attr, old, new):
     """Change predicate to be used to filter annotations"""
-    requests.get(f"http://{host}:5000/changepredicate/{new}")
+    requests.get(f"http://{host2}:5000/tileserver/changepredicate/{new}")
     vstate.update_state = 1
 
 
 def cprop_input_cb(attr, old, new):
     """Change property to colour by"""
-    requests.get(f"http://{host}:5000/changeprop/{new}")
+    requests.get(f"http://{host2}:5000/tileserver/changeprop/{new}")
     vstate.update_state = 1
 
 
@@ -679,7 +688,7 @@ def slide_select_cb(attr, old, new):
     fname = make_safe_name(str(slide_path))
     print(fname)
     print(vstate.mpp)
-    requests.get(f"http://{host}:5000/changeslide/slide/{fname}")
+    requests.get(f"http://{host2}:5000/tileserver/changeslide/slide/{fname}")
     change_tiles("slide")
     # if len(p.renderers)==1:
     # r=p.rect('x', 'y', 'width', 'height', source=box_source, fill_alpha=0)
@@ -716,7 +725,7 @@ def layer_drop_cb(attr):
 
     # fname='-*-'.join(attr.item.split('\\'))
     fname = make_safe_name(attr.item)
-    resp = requests.get(f"http://{host}:5000/changeoverlay/{fname}")
+    resp = requests.get(f"http://{host2}:5000/tileserver/changeoverlay/{fname}")
     vstate.types = json.loads(resp.text)
     print(f"types is now: {vstate.types}")
     if Path(attr.item).suffix in [".db", ".dat", ".geojson"]:
@@ -803,7 +812,7 @@ def save_cb(attr):
     save_path = make_safe_name(
         str(overlay_folder / (vstate.slide_path.stem + "_saved_anns.db"))
     )
-    requests.get(f"http://{host}:5000/commit/{save_path}")
+    requests.get(f"http://{host2}:5000/commit/{save_path}")
 
 
 # run NucleusInstanceSegmentor on a region of wsi defined by the box in box_source
@@ -848,7 +857,7 @@ def segment_on_box(attr):
     # fname='-*-'.join('.\\sample_tile_results\\0.dat'.split('\\'))
     fname = make_safe_name(".\\sample_tile_results\\0.dat")
     print(fname)
-    resp = requests.get(f"http://{host}:5000/loadannotations/{fname}")
+    resp = requests.get(f"http://{host2}:5000/tileserver/loadannotations/{fname}")
     vstate.types = json.load(resp.text)
     update_mapper()
     # type_drop.menu=[(str(t),str(t)) for t in vstate.types]
@@ -897,7 +906,7 @@ def nuclick_on_pts(attr):
     # fname='-*-'.join('.\\sample_tile_results\\0.dat'.split('\\'))
     fname = make_safe_name(".\\sample_tile_results\\0.dat")
     print(fname)
-    resp = requests.get(f"http://{host}:5000/loadannotations/{fname}")
+    resp = requests.get(f"http://{host2}:5000/tileserver/loadannotations/{fname}")
     vstate.types = json.load(resp.text)
     update_mapper()
     rmtree(r"./sample_tile_results")

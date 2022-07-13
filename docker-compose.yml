@@ -1,18 +1,3 @@
-# version: '3'
-# services:
-#   bokeh_app:
-#     build: .
-#     container_name: bokeh_app
-#     restart: always
-#     volumes:
-#       - ./bokeh/:/bokeh
-#       - ../app_data/:/app_data
-#     ports:
-#       - "20.0.0.9:5100:5100"
-#       - "5000:5000"
-#     env_file:
-#       - .env
-
 version: '3'
 
 services:
@@ -34,11 +19,12 @@ services:
     image: bokeh-app
     container_name: bokeh-app
     build:
-      context: ./tiatoolbox/visualization/bokeh_app
+      context: .
+      dockerfile: DockerfileB
     depends_on:
         - tile-service
-    ports:
-      - 5100:5100
+    #ports:
+     # - 5100:5100
     restart: on-failure
     env_file:
       - .env
@@ -51,7 +37,10 @@ services:
     image: tile-service
     container_name: tile-service
     build:
-      context: ./tiatoolbox/visualization/tile_app
-    ports:
-      - 5000:5000
+      context: .
+      dockerfile: DockerfileTS
+    #ports:
+      #- 5000:5000
     restart: on-failure
+    volumes:
+      - ../app_data/:/app_data
