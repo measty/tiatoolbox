@@ -5,7 +5,7 @@ services:
   # Proxies requests to internal services
   reverse-proxy:
     image: nginx:1.23.0
-    container_name: reverse_proxy
+    container_name: reverse-proxy
     depends_on:
         - bokeh-app
         - tile-service
