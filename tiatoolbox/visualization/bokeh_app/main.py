@@ -726,15 +726,16 @@ def layer_drop_cb(attr):
     # fname='-*-'.join(attr.item.split('\\'))
     fname = make_safe_name(attr.item)
     resp = requests.get(f"http://{host2}:5000/tileserver/changeoverlay/{fname}")
-    vstate.types = json.loads(resp.text)
-    print(f"types is now: {vstate.types}")
+    resp = json.loads(resp.text)
+
     if Path(attr.item).suffix in [".db", ".dat", ".geojson"]:
+        vstate.types = resp
         update_mapper()
         initialise_overlay()
         change_tiles("overlay")
     else:
-        add_layer(resp.text)
-        change_tiles(resp.text)
+        add_layer(resp)
+        change_tiles(resp)
 
 
 def layer_select_cb(attr):

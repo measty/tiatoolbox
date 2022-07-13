@@ -330,7 +330,7 @@ class TileServer(Flask):
                     Path(overlay_path), info=self.tia_layers["slide"].info
                 )
             self.tia_pyramids[layer] = ZoomifyGenerator(self.tia_layers[layer])
-            return layer
+            return json.dumps(layer)
         else:
             SQ = SQLiteStore(overlay_path, auto_commit=False)
 
