@@ -119,7 +119,7 @@ class TileServer(Flask):
         self.route("/tileserver/changeprop/<prop>")(self.change_prop)
         self.route("/tileserver/changeslide/<layer>/<layer_path>")(self.change_slide)
         self.route("/tileserver/changecmap/<cmap>")(self.change_mapper)
-        self.route("/tileserver/loadannotations/<file_path>")(self.load_annotations)
+        self.route("/tileserver/loadannotations/<file_path>/<float:model_mpp>")(self.load_annotations)
         self.route("/tileserver/changeoverlay/<overlay_path>")(self.change_overlay)
         self.route("/tileserver/commit/<save_path>")(self.commit_db)
         self.route("/tileserver/updaterenderer/<prop>/<val>")(self.update_renderer)
@@ -169,8 +169,9 @@ class TileServer(Flask):
         types = SQ.pquery("props['type']")
         if None in types:
             types.remove(None)
-
-        return types
+        if len(types) == 0:
+            return None
+        return tuple(types)
 
     @staticmethod
     def decode_safe_name(name):
@@ -237,6 +238,7 @@ class TileServer(Flask):
 
         self.tia_layers = {layer: WSIReader.open(Path(layer_path))}
         self.tia_pyramids = {layer: ZoomifyGenerator(self.tia_layers[layer])}
+        self.slide_mpp = self.tia_layers[layer].info.mpp
 
         return layer
 
@@ -301,7 +303,7 @@ class TileServer(Flask):
                 return json.dumps(types)
 
         SQ = SQLiteStore(auto_commit=False)
-        SQ.add_from(file_path, saved_res=model_mpp, slide_res=self.slide_mpp)
+        SQ.add_from(file_path, saved_res=model_mpp, slide_res=self.slide_mpp[0])
         self.tia_pyramids["overlay"] = AnnotationTileGenerator(
             self.tia_layers["slide"].info, SQ, self.renderer
         )
@@ -344,7 +346,7 @@ class TileServer(Flask):
         )
         self.tia_layers["overlay"] = self.tia_pyramids["overlay"]
         types = self.update_types(SQ)
-        return json.dumps(tuple(types))
+        return json.dumps(types)
 
     def commit_db(self, save_path):
         save_path = self.decode_safe_name(save_path)

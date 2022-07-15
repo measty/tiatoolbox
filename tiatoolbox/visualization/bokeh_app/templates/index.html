@@ -1,0 +1,31 @@
+{% extends base %}
+
+<!-- goes in head -->
+{% block preamble %}
+<link href="app/static/css/custom.min.css" rel="stylesheet">
+{% endblock %}
+
+{% block postamble %}
+  <style>
+    .slide {
+      width: 80%;
+      height: 100%;
+      position: absolute;
+      top: 0;
+      left: 0;
+      margin: 10px 0;
+    }
+    .ui {
+        width: 20%;
+        height: 20%;
+        position: absolute;
+        top: 0;
+        right: 0;
+    }
+  </style>
+{% endblock %}
+
+<!-- goes in body -->
+{% block contents %}
+<div class="slide"> {{ embed(roots.slide_window) }} </div><div class="ui"> {{ embed(roots.ui_layout) }} </div>
+{% endblock %}

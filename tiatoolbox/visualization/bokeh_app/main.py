@@ -110,10 +110,11 @@ def make_safe_name(name):
 
 
 def update_mapper():
-    colors = random_colors(len(vstate.types))
-    vstate.mapper = {key: (*color, 1) for key, color in zip(vstate.types, colors)}
-    renderer.mapper = lambda x: vstate.mapper[x]
-    update_renderer("mapper", vstate.mapper)
+    if vstate.types is not None:
+        colors = random_colors(len(vstate.types))
+        vstate.mapper = {key: (*color, 1) for key, color in zip(vstate.types, colors)}
+        renderer.mapper = lambda x: vstate.mapper[x]
+        update_renderer("mapper", vstate.mapper)
 
 
 def update_renderer(prop, value):
@@ -182,30 +183,32 @@ def initialise_slide():
     vstate.dims = wsi[0].info.slide_dimensions
 
     pad = int(np.mean(vstate.dims) / 10)
-    plot_size = np.array([1700, 1000])
+    plot_size = np.array([p.width, p.height])
+    aspect_ratio = plot_size[0] / plot_size[1]
     large_dim = np.argmax(np.array(vstate.dims) / plot_size)
 
     vstate.micron_formatter.args["mpp"] = vstate.mpp[0]
     if large_dim == 1:
-        p.x_range.start = -0.5 * (vstate.dims[1] * 1.7 - vstate.dims[0]) - 1.7 * pad
+        p.x_range.start = -0.5 * (vstate.dims[1] * aspect_ratio - vstate.dims[0]) - aspect_ratio * pad
         p.x_range.end = (
-            vstate.dims[1] * 1.7
-            - 0.5 * (vstate.dims[1] * 1.7 - vstate.dims[0])
-            + 1.7 * pad
+            vstate.dims[1] * aspect_ratio
+            - 0.5 * (vstate.dims[1] * aspect_ratio - vstate.dims[0])
+            + aspect_ratio * pad
         )
         p.y_range.start = -vstate.dims[1] - pad
         p.y_range.end = pad
         # p.x_range.min_interval = ?
     else:
-        p.x_range.start = -1.7 * pad
-        p.x_range.end = vstate.dims[0] + pad * 1.7
+        p.x_range.start = -aspect_ratio * pad
+        p.x_range.end = vstate.dims[0] + pad * aspect_ratio
         p.y_range.start = (
-            -vstate.dims[0] / 1.7 + 0.5 * (vstate.dims[0] / 1.7 - vstate.dims[1]) - pad
+            -vstate.dims[0] / aspect_ratio + 0.5 * (vstate.dims[0] / aspect_ratio - vstate.dims[1]) - pad
         )
-        p.y_range.end = 0.5 * (vstate.dims[0] / 1.7 - vstate.dims[1]) + pad
+        p.y_range.end = 0.5 * (vstate.dims[0] / aspect_ratio - vstate.dims[1]) + pad
 
-    p.x_range.bounds = (p.x_range.start - 2 * pad, p.x_range.end + 2 * pad)
-    p.y_range.bounds = (p.y_range.start - 2 * pad, p.y_range.end + 2 * pad)
+    #p.x_range.bounds = (p.x_range.start - 2 * pad, p.x_range.end + 2 * pad)
+    #p.y_range.bounds = (p.y_range.start - 2 * pad, p.y_range.end + 2 * pad)
+    #p._trigger_event()
 
     z = ZoomifyGenerator(wsi[0])
     vstate.num_zoom_levels = z.level_count
@@ -223,12 +226,12 @@ def initialise_overlay():
     print(now_active)
     for t in vstate.types:
         if str(t) not in now_active.keys():
-            box_column.children.append(Toggle(label=str(t), active=True, width=100))
+            box_column.children.append(Toggle(label=str(t), active=True, width=100, max_width=100, sizing_mode="stretch_width"))
             box_column.children[-1].on_click(layer_select_cb)
             try:
                 color_column.children.append(
                     ColorPicker(
-                        color=to_int_rgb(vstate.mapper[t][0:3]), name=str(t), width=60
+                        color=to_int_rgb(vstate.mapper[t][0:3]), name=str(t), width=60, max_width=60, sizing_mode="stretch_width"
                     )
                 )
             except KeyError:
@@ -237,6 +240,7 @@ def initialise_overlay():
                         color=to_int_rgb(vstate.mapper[int(t)][0:3]),
                         name=str(t),
                         width=60,
+                        max_width=60, sizing_mode="stretch_width",
                     )
                 )
             color_column.children[-1].on_change(
@@ -255,7 +259,7 @@ def initialise_overlay():
 
 
 def add_layer(lname):
-    box_column.children.append(Toggle(label=lname, active=True, width=100))
+    box_column.children.append(Toggle(label=lname, active=True, width=100, max_width=100, sizing_mode="stretch_width"))
     box_column.children[-1].on_click(
         bind_cb_obj_tog(box_column.children[-1], fixed_layer_select_cb)
     )
@@ -267,6 +271,7 @@ def add_layer(lname):
             step=0.01,
             title=lname,
             width=100,
+            max_width=90, sizing_mode="stretch_width",
             name=f"{lname}_slider",
         )
     )
@@ -428,6 +433,10 @@ p = figure(
     y_axis_type="linear",
     width=1700,
     height=1000,
+    #max_width=1700,
+    #max_height=1000,
+    #width_policy="max",
+    #height_policy="max",
     tooltips=TOOLTIPS,
     tools="pan,wheel_zoom,reset",
     active_scroll="wheel_zoom",
@@ -439,6 +448,7 @@ p = figure(
     lod_threshold=10,
     lod_timeout=200,
     sizing_mode="stretch_both",
+    name="slide_window",
 )
 initialise_slide()
 ts1 = make_ts(
@@ -480,35 +490,36 @@ slide_alpha = Slider(
     step=0.05,
     value=1.0,
     width=200,
+    max_width=200, sizing_mode="stretch_width"
 )
 
 overlay_alpha = Slider(
-    title="Adjust alpha Overlay", start=0, end=1, step=0.05, value=0.75, width=200
+    title="Adjust alpha Overlay", start=0, end=1, step=0.05, value=0.75, width=200, max_width=200, sizing_mode="stretch_width"
 )
 
-slide_toggle = Toggle(label="Slide", button_type="success", width=90)
-overlay_toggle = Toggle(label="Overlay", button_type="success", width=90)
-filter_input = TextInput(value="None", title="Filter:")
-cprop_input = TextInput(value="type", title="CProp:")
+slide_toggle = Toggle(label="Slide", button_type="success", width=90, max_width=90, sizing_mode="stretch_width")
+overlay_toggle = Toggle(label="Overlay", button_type="success", width=90, max_width=90, sizing_mode="stretch_width")
+filter_input = TextInput(value="None", title="Filter:", max_width=300, sizing_mode="stretch_width")
+cprop_input = TextInput(value="type", title="CProp:", max_width=300, sizing_mode="stretch_width")
 slide_select = MultiChoice(
-    title="Select Slide:", max_items=1, options=["*"], search_option_limit=5000
+    title="Select Slide:", max_items=1, options=["*"], search_option_limit=5000, max_width=300, sizing_mode="stretch_width"
 )
 cmmenu = [
     ("jet", "jet"),
     ("coolwarm", "coolwarm"),
     ("dict", "{'class1': (1,0,0,1), 'class2': (0,0,1,1), 'class3': (0,1,0,1)}"),
 ]
-cmap_drop = Dropdown(label="Colourmap", button_type="warning", menu=cmmenu)
-to_model_button = Button(label="Go", button_type="success", width=60)
+cmap_drop = Dropdown(label="Colourmap", button_type="warning", menu=cmmenu, max_width=300, sizing_mode="stretch_width")
+to_model_button = Button(label="Go", button_type="success", width=60, max_width=60, sizing_mode="stretch_width")
 model_drop = Dropdown(
-    label="Choose Model", button_type="warning", menu=["hovernet", "nuclick"], width=100
+    label="Choose Model", button_type="warning", menu=["hovernet", "nuclick"], width=100, max_width=100, sizing_mode="stretch_width"
 )
-layer_boxes = [Toggle(label=t, active=True, width=100) for t in vstate.types]
-lcolors = [ColorPicker(color=col[0:3], width=60) for col in vstate.colors]
-layer_folder_input = TextInput(value=str(overlay_folder), title="Overlay Folder:")
-layer_drop = Dropdown(label="Add Overlay", button_type="warning", menu=[None])
-opt_buttons = CheckboxButtonGroup(labels=["Filled", "Microns", "Grid"], active=[0])
-save_button = Button(label="Save", button_type="success")
+layer_boxes = [Toggle(label=t, active=True, width=100, max_width=100, sizing_mode="stretch_width") for t in vstate.types]
+lcolors = [ColorPicker(color=col[0:3], width=60, max_width=60, sizing_mode="stretch_width") for col in vstate.colors]
+layer_folder_input = TextInput(value=str(overlay_folder), title="Overlay Folder:", max_width=300, sizing_mode="stretch_width")
+layer_drop = Dropdown(label="Add Overlay", button_type="warning", menu=[None], max_width=300, sizing_mode="stretch_width")
+opt_buttons = CheckboxButtonGroup(labels=["Filled", "Microns", "Grid"], active=[0], max_width=300, sizing_mode="stretch_width")
+save_button = Button(label="Save", button_type="success", max_width=90, sizing_mode="stretch_width")
 
 
 # Define UI callbacks
@@ -858,7 +869,7 @@ def segment_on_box(attr):
     # fname='-*-'.join('.\\sample_tile_results\\0.dat'.split('\\'))
     fname = make_safe_name(".\\sample_tile_results\\0.dat")
     print(fname)
-    resp = requests.get(f"http://{host2}:5000/tileserver/loadannotations/{fname}")
+    resp = requests.get(f"http://{host2}:5000/tileserver/loadannotations/{fname}/{vstate.model_mpp}")
     vstate.types = json.load(resp.text)
     update_mapper()
     # type_drop.menu=[(str(t),str(t)) for t in vstate.types]
@@ -875,7 +886,7 @@ def nuclick_on_pts(attr):
     y = -np.round(np.array(pt_source.data["y"]))
 
     model = NuClick(5, 1)
-    pretrained_weights = r"E:\TTB_vis_folder\NuClick_Nuclick_40xAll.pth"
+    pretrained_weights = r"/app_data/NuClick_Nuclick_40xAll.pth"
     saved_state_dict = torch.load(pretrained_weights, map_location="cpu")
     model.load_state_dict(saved_state_dict, strict=True)
     vstate.model_mpp = 0.25
@@ -895,22 +906,23 @@ def nuclick_on_pts(attr):
         [vstate.slide_path],
         [points],
         ioconfig=ioconf,
-        save_dir="sample_tile_results/",
+        save_dir="/app_data/sample_tile_results/",
         patch_size=(128, 128),
         resolution=0.25,
         units="mpp",
-        on_gpu=True,
+        on_gpu=False,
         save_output=True,
     )
     print(nuclick_output)
 
     # fname='-*-'.join('.\\sample_tile_results\\0.dat'.split('\\'))
-    fname = make_safe_name(".\\sample_tile_results\\0.dat")
+    fname = make_safe_name("\\app_data\\sample_tile_results\\0.dat")
     print(fname)
-    resp = requests.get(f"http://{host2}:5000/tileserver/loadannotations/{fname}")
+    resp = requests.get(f"http://{host2}:5000/tileserver/loadannotations/{fname}/{vstate.model_mpp}")
+    print(resp.text)
     vstate.types = json.load(resp.text)
     update_mapper()
-    rmtree(r"./sample_tile_results")
+    rmtree(Path(r"/app_data/sample_tile_results"))
     initialise_overlay()
     change_tiles("overlay")
 
@@ -936,11 +948,7 @@ populate_layer_list(Path(vstate.slide_path).stem, overlay_folder)
 
 box_column = column(children=layer_boxes)
 color_column = column(children=lcolors)
-ui_layout = layout(
-    [
-        [
-            p,
-            [
+ui_layout = column([
                 slide_select,
                 save_button,
                 layer_drop,
@@ -955,10 +963,8 @@ ui_layout = layout(
                 row(children=[box_column, color_column]),
                 # box_column,
                 # layer_folder_input,
-            ],
-        ],
-    ]
-)
+            ], name="ui_layout")
+      
 
 
 def cleanup_session(session_context):
@@ -975,4 +981,5 @@ def update():
 
 
 curdoc().add_periodic_callback(update, 220)
+curdoc().add_root(p)
 curdoc().add_root(ui_layout)
