@@ -754,7 +754,7 @@ def layer_drop_cb(attr):
         with open(attr.item, "rb") as f:
             graph_dict = pickle.load(f)
         node_cm=cm.get_cmap('viridis')    
-        node_source.data = {"index": list(range(graph_dict["coordinates"].shape[0])), "node_color": [rgb2hex(to_int_rgb(node_cm(v))) for v in graph_dict['node_exp']]}
+        node_source.data = {"index": list(range(graph_dict["coordinates"].shape[0])), "node_color": [rgb2hex(node_cm(v)) for v in graph_dict['node_exp']]}
         edge_source.data = {
             "start": graph_dict["edge_index"].T[0, :],
             "end": graph_dict["edge_index"].T[1, :],
