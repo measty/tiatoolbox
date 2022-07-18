@@ -247,8 +247,7 @@ def initialise_slide():
 
 def initialise_overlay():
     vstate.colors = list(vstate.mapper.values())
-    if len(vstate.types) > 0:
-        vstate.types = [str(t) for t in vstate.types]  # vstate.mapper.keys()]
+    vstate.types = [str(t) for t in vstate.types]  # vstate.mapper.keys()]
     now_active = {b.label: b.active for b in box_column.children}
     print(vstate.types)
     print(now_active)
@@ -442,16 +441,6 @@ if not is_deployed:
     proc = Thread(target=run_app, daemon=True)
     proc.start()
 
-TOOLTIPS=[
-        ("Index", "$index"),
-        ("(x,y)", "($x, $y)"),
-        ("Score", "@node_exp"),
-        ("Feat1", "@feat1: @val1"),
-        ("Feat2", "@feat2: @val2"),
-        ("Feat3", "@feat3: @val3"),
-        ("Feat4", "@feat4: @val4"),
-        ("Feat5", "@feat5: @val5"),
-      ]
 
 # set up main window
 vstate.micron_formatter = FuncTickFormatter(
@@ -530,8 +519,8 @@ overlay_alpha = Slider(
     title="Adjust alpha Overlay", start=0, end=1, step=0.05, value=0.75, width=200, max_width=200, sizing_mode="stretch_width"
 )
 
-color_bar = ColorBar(color_mapper=LinearColorMapper(make_color_seq_from_cmap(cm.get_cmap('viridis'))), label_standoff=12)
-p.add_layout(color_bar, 'below')
+#color_bar = ColorBar(color_mapper=LinearColorMapper(make_color_seq_from_cmap(cm.get_cmap('viridis'))), label_standoff=12)
+#p.add_layout(color_bar, 'below')
 slide_toggle = Toggle(label="Slide", button_type="success", width=90, max_width=90, sizing_mode="stretch_width")
 overlay_toggle = Toggle(label="Overlay", button_type="success", width=90, max_width=90, sizing_mode="stretch_width")
 filter_input = TextInput(value="None", title="Filter:", max_width=300, sizing_mode="stretch_width")
@@ -753,8 +742,12 @@ def layer_drop_cb(attr):
         # its a graph
         with open(attr.item, "rb") as f:
             graph_dict = pickle.load(f)
-        node_cm=cm.get_cmap('viridis')    
-        node_source.data = {"index": list(range(graph_dict["coordinates"].shape[0])), "node_color": [rgb2hex(to_int_rgb(node_cm(v))) for v in graph_dict['node_exp']]}
+        node_cm=cm.get_cmap('viridis')
+        if 'score' in graph_dict:    
+            node_source.data = {"index": list(range(graph_dict["coordinates"].shape[0])), "node_color": [rgb2hex(node_cm(v)) for v in graph_dict['score']]}
+        else:
+            #default to green
+            node_source.data = {"index": list(range(graph_dict["coordinates"].shape[0])), "node_color": [rgb2hex((0,1,0))] * graph_dict["coordinates"].shape[0]}
         edge_source.data = {
             "start": graph_dict["edge_index"].T[0, :],
             "end": graph_dict["edge_index"].T[1, :],
@@ -775,10 +768,10 @@ def layer_drop_cb(attr):
         change_tiles("graph")
 
         #add additional data to graph datasource
-        for i in range(graph_dict['top_feats'].shape[1]):
-            node_source.data[f"feat{i+1}"] = graph_dict["top_feats"][:,i]
-            node_source.data[f"val{i+1}"] = graph_dict["top_vals"][:,i]
-        node_source.data['node_exp'] = graph_dict['node_exp']
+        for key in graph_dict:
+            if key in ['edge_index', 'coordinates']:
+                continue
+            node_source.data[key] = graph_dict[key]
 
         return
 
@@ -1019,21 +1012,17 @@ box_column = column(children=layer_boxes)
 color_column = column(children=lcolors)
 ui_layout = column([
                 slide_select,
-                #save_button,
+                save_button,
                 layer_drop,
                 row([slide_toggle, slide_alpha]),
                 row([overlay_toggle, overlay_alpha]),
-                #filter_input,
-                #cprop_input,
-                #cmap_drop,
+                filter_input,
+                cprop_input,
+                cmap_drop,
                 opt_buttons,
-                #row([to_model_button, model_drop]),
+                row([to_model_button, model_drop]),
                 type_cmap_select,
-                swap_button,
-                # type_drop,
-                row(children=[box_column, color_column]),
-                # box_column,
-                # layer_folder_input,
+                row(children=[box_column, color_column]),               
             ], name="ui_layout")
       
 
