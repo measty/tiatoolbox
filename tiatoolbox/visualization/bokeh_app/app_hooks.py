@@ -13,6 +13,9 @@ def make_safe_name(name):
 def on_session_destroyed(session_context):
     # If present, this function executes when the server closes session.
     host = os.environ.get("HOST2")
+    if host is None:
+        host = "127.0.0.1"
+        sys.exit()
     fname = r"/app_data/slides/TCGA-SC-A6LN-01Z-00-DX1.svs"
     fname = make_safe_name(fname)
     # resp = requests.get(f"http://127.0.0.1:5000/changeslide/slide/{fname}")

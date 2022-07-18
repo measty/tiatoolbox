@@ -8,6 +8,7 @@ from cmath import pi
 from pathlib import Path, PureWindowsPath
 from shutil import rmtree
 from threading import Thread
+import matplotlib.cm as cm
 
 import numpy as np
 import requests
@@ -34,6 +35,8 @@ from bokeh.models import (
     TapTool,
     TextInput,
     Toggle,
+    ColorBar,
+    LinearColorMapper,
 )
 from bokeh.models.tiles import WMTSTileSource
 from bokeh.plotting import figure
@@ -52,12 +55,19 @@ from tiatoolbox.visualization.tileserver import TileServer
 from tiatoolbox.visualization.ui_utils import get_level_by_extent
 from tiatoolbox.wsicore.wsireader import WSIReader
 
-host = os.environ.get("HOST")
-host2 = os.environ.get("HOST2")
-port = os.environ.get("PORT")
-# host = "127.0.0.1"
-# Define helper functions
+is_deployed=False
 
+if is_deployed:
+    host = os.environ.get("HOST")
+    host2 = os.environ.get("HOST2")
+    port = os.environ.get("PORT")
+else:
+    host = "127.0.0.1"
+    host2 = "127.0.0.1"
+    port = "5000"
+    # host = "127.0.0.1"
+
+# Define helper functions
 
 def make_ts(route):
     sf = 2 ** (vstate.num_zoom_levels - 9)
@@ -104,6 +114,17 @@ def name2type_key(name):
 def hex2rgb(hex_val):
     return tuple(int(hex_val[i : i + 2], 16) / 255 for i in (1, 3, 5))
 
+def rgb2hex(rgb):
+    return "#{:02x}{:02x}{:02x}".format(*to_int_rgb(rgb))
+
+def make_color_seq_from_cmap(cmap):
+    if cmap is None:
+        return [rgb2hex((1.0,1.0,1.0)),rgb2hex((1.0,1.0,1.0))] #no colors if using dict
+    colors = []
+    for v in np.linspace(0, 1, 20):
+        colors.append(rgb2hex(cmap(v)))
+    return colors
+
 
 def make_safe_name(name):
     return urllib.parse.quote(str(PureWindowsPath(name)), safe="")
@@ -119,6 +140,12 @@ def update_mapper():
 
 def update_renderer(prop, value):
     if prop == "mapper":
+        if value=='dict' or isinstance(value, dict):
+            value = vstate.mapper    #put the mapper dict back
+            color_bar.color_mapper.palette = make_color_seq_from_cmap(None)
+        else:
+            color_bar.color_mapper.palette = make_color_seq_from_cmap(cm.get_cmap(value))
+            color_bar.visible = True
         return requests.get(f"http://{host2}:5000/tileserver/changecmap/{value}")
     return requests.get(
         f"http://{host2}:5000/tileserver/updaterenderer/{prop}/{json.dumps(value)}"
@@ -220,7 +247,8 @@ def initialise_slide():
 
 def initialise_overlay():
     vstate.colors = list(vstate.mapper.values())
-    vstate.types = [str(t) for t in vstate.types]  # vstate.mapper.keys()]
+    if len(vstate.types) > 0:
+        vstate.types = [str(t) for t in vstate.types]  # vstate.mapper.keys()]
     now_active = {b.label: b.active for b in box_column.children}
     print(vstate.types)
     print(now_active)
@@ -324,7 +352,7 @@ def change_tiles(layer_name="overlay"):
             ts,
             smoothing=True,
             alpha=overlay_alpha.value,
-            level="overlay",
+            level="underlay",
             render_parents=False,
         )
         for layer_key in vstate.layer_dict.keys():
@@ -410,14 +438,20 @@ def run_app():
 
 
 # start tile server
-# proc = Thread(target=run_app, daemon=True)
-# proc.start()
+if not is_deployed:
+    proc = Thread(target=run_app, daemon=True)
+    proc.start()
 
-TOOLTIPS = [
-    ("index", "$index"),
-    ("(x,y)", "($x, $y)"),
-    ("Scores", "[@c1, @c2]"),
-]
+TOOLTIPS=[
+        ("Index", "$index"),
+        ("(x,y)", "($x, $y)"),
+        ("Score", "@node_exp"),
+        ("Feat1", "@feat1: @val1"),
+        ("Feat2", "@feat2: @val2"),
+        ("Feat3", "@feat3: @val3"),
+        ("Feat4", "@feat4: @val4"),
+        ("Feat5", "@feat5: @val5"),
+      ]
 
 # set up main window
 vstate.micron_formatter = FuncTickFormatter(
@@ -462,7 +496,6 @@ print(p.y_range)
 print(f"max zoom is: {p.renderers[0].tile_source.max_zoom}")
 
 p.grid.grid_line_color = None
-p.match_aspect = True
 box_source = ColumnDataSource({"x": [], "y": [], "width": [], "height": []})
 pt_source = ColumnDataSource({"x": [], "y": []})
 r = p.rect("x", "y", "width", "height", source=box_source, fill_alpha=0)
@@ -474,12 +507,12 @@ tslist = []
 
 p.renderers[0].tile_source.max_zoom = 10
 
-node_source = ColumnDataSource({"index": []})
+node_source = ColumnDataSource({"index": [], "node_color": []})
 edge_source = ColumnDataSource({"start": [], "end": []})
 graph = GraphRenderer()
 graph.node_renderer.data_source = node_source
 graph.edge_renderer.data_source = edge_source
-graph.node_renderer.glyph = Circle(radius=25, fill_color="green")
+graph.node_renderer.glyph = Circle(radius=50, radius_units='data', fill_color="green")
 
 
 # Define UI elements
@@ -497,6 +530,8 @@ overlay_alpha = Slider(
     title="Adjust alpha Overlay", start=0, end=1, step=0.05, value=0.75, width=200, max_width=200, sizing_mode="stretch_width"
 )
 
+color_bar = ColorBar(color_mapper=LinearColorMapper(make_color_seq_from_cmap(cm.get_cmap('viridis'))), label_standoff=12)
+p.add_layout(color_bar, 'below')
 slide_toggle = Toggle(label="Slide", button_type="success", width=90, max_width=90, sizing_mode="stretch_width")
 overlay_toggle = Toggle(label="Overlay", button_type="success", width=90, max_width=90, sizing_mode="stretch_width")
 filter_input = TextInput(value="None", title="Filter:", max_width=300, sizing_mode="stretch_width")
@@ -514,6 +549,10 @@ to_model_button = Button(label="Go", button_type="success", width=60, max_width=
 model_drop = Dropdown(
     label="Choose Model", button_type="warning", menu=["hovernet", "nuclick"], width=100, max_width=100, sizing_mode="stretch_width"
 )
+type_cmap_select = MultiChoice(
+    title="Colour glands by:", max_items=1, options=["*"], search_option_limit=5000, sizing_mode="stretch_width"
+)
+swap_button = Button(label="Swap feat/importance", button_type="success", width=140, max_width=140, sizing_mode="stretch_width", height=40)
 layer_boxes = [Toggle(label=t, active=True, width=100, max_width=100, sizing_mode="stretch_width") for t in vstate.types]
 lcolors = [ColorPicker(color=col[0:3], width=60, max_width=60, sizing_mode="stretch_width") for col in vstate.colors]
 layer_folder_input = TextInput(value=str(overlay_folder), title="Overlay Folder:", max_width=300, sizing_mode="stretch_width")
@@ -714,17 +753,19 @@ def layer_drop_cb(attr):
         # its a graph
         with open(attr.item, "rb") as f:
             graph_dict = pickle.load(f)
-        node_source.data = {"index": list(range(graph_dict["coordinates"].shape[0]))}
+        node_cm=cm.get_cmap('viridis')    
+        node_source.data = {"index": list(range(graph_dict["coordinates"].shape[0])), "node_color": [rgb2hex(to_int_rgb(node_cm(v))) for v in graph_dict['node_exp']]}
         edge_source.data = {
-            "start": graph_dict["edge_index"][0, :],
-            "end": graph_dict["edge_index"][1, :],
+            "start": graph_dict["edge_index"].T[0, :],
+            "end": graph_dict["edge_index"].T[1, :],
         }
-        print(graph_dict)
+        
         graph_layout = dict(
             zip(
                 node_source.data["index"],
                 [
-                    (x / (4 * vstate.mpp[0]), -y / (4 * vstate.mpp[1]))
+                    #(x / (4 * vstate.mpp[0]), -y / (4 * vstate.mpp[1]))
+                    (x, -y)
                     for x, y in graph_dict["coordinates"]
                 ],
             )
@@ -732,6 +773,13 @@ def layer_drop_cb(attr):
         graph.layout_provider = StaticLayoutProvider(graph_layout=graph_layout)
         add_layer("graph")
         change_tiles("graph")
+
+        #add additional data to graph datasource
+        for i in range(graph_dict['top_feats'].shape[1]):
+            node_source.data[f"feat{i+1}"] = graph_dict["top_feats"][:,i]
+            node_source.data[f"val{i+1}"] = graph_dict["top_vals"][:,i]
+        node_source.data['node_exp'] = graph_dict['node_exp']
+
         return
 
     # fname='-*-'.join(attr.item.split('\\'))
@@ -744,6 +792,8 @@ def layer_drop_cb(attr):
         update_mapper()
         initialise_overlay()
         change_tiles("overlay")
+        props = requests.get(f"http://{host2}:5000/tileserver/getprops")
+        type_cmap_select.options = json.loads(props.text)
     else:
         add_layer(resp)
         change_tiles(resp)
@@ -806,6 +856,15 @@ def bind_cb_obj_tog(cb_obj, cb):
 
     return wrapped
 
+def swap_cb(attr):
+    val = type_cmap_select.value
+    if len(val)==0:
+        return
+    if '_exp' in val[0]:
+        type_cmap_select.value = [val[0][:-4]]
+    else:
+        type_cmap_select.value = [val[0]+'_exp']
+    type_cmap_cb(None, None, type_cmap_select.value)
 
 def model_drop_cb(attr):
     vstate.current_model = attr.item
@@ -818,6 +877,15 @@ def to_model_cb(attr):
         nuclick_on_pts(attr)
     else:
         print("unknown model")
+
+
+def type_cmap_cb(attr, old, new):
+    if len(new)==0:
+        return
+    requests.get(f"http://{host2}:5000/tileserver/changesecondarycmap/Gla: 1/{new[0]}/viridis")
+    color_bar.color_mapper.palette = make_color_seq_from_cmap(cm.get_cmap('viridis'))
+    color_bar.visible = True
+    vstate.update_state = 1
 
 
 def save_cb(attr):
@@ -913,7 +981,6 @@ def nuclick_on_pts(attr):
         on_gpu=False,
         save_output=True,
     )
-    print(nuclick_output)
 
     # fname='-*-'.join('.\\sample_tile_results\\0.dat'.split('\\'))
     fname = make_safe_name("\\app_data\\sample_tile_results\\0.dat")
@@ -942,6 +1009,8 @@ overlay_toggle.on_click(overlay_toggle_cb)
 filter_input.on_change("value", filter_input_cb)
 cprop_input.on_change("value", cprop_input_cb)
 node_source.selected.on_change("indices", node_select_cb)
+type_cmap_select.on_change("value", type_cmap_cb)
+swap_button.on_click(swap_cb)
 
 populate_slide_list(slide_folder)
 populate_layer_list(Path(vstate.slide_path).stem, overlay_folder)
@@ -950,15 +1019,17 @@ box_column = column(children=layer_boxes)
 color_column = column(children=lcolors)
 ui_layout = column([
                 slide_select,
-                save_button,
+                #save_button,
                 layer_drop,
                 row([slide_toggle, slide_alpha]),
                 row([overlay_toggle, overlay_alpha]),
-                filter_input,
-                cprop_input,
-                cmap_drop,
+                #filter_input,
+                #cprop_input,
+                #cmap_drop,
                 opt_buttons,
-                row([to_model_button, model_drop]),
+                #row([to_model_button, model_drop]),
+                type_cmap_select,
+                swap_button,
                 # type_drop,
                 row(children=[box_column, color_column]),
                 # box_column,

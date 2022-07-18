@@ -32,7 +32,7 @@ def visualize(img_input):
         "bokeh",
         "serve",
         "--show",
-        str(vis_path.joinpath("render_demo")),
+        str(vis_path.joinpath("bokeh_app")),
         "--unused-session-lifetime",
         "1000",
         "--check-unused-sessions",

@@ -530,6 +530,7 @@ class AnnotationRenderer:
         zoomed_out_strat=10000,
         thickness=-1,
         edge_thickness=1,
+        secondary_cmap=None,
     ):
         if mapper is None:
             mapper = cm.get_cmap("jet")
@@ -550,6 +551,7 @@ class AnnotationRenderer:
         self.thickness = thickness
         self.edge_thickness = edge_thickness
         self.zoomed_out_strat = zoomed_out_strat
+        self.secondary_cmap = secondary_cmap
 
     @staticmethod
     def to_tile_coords(coords, tl, scale):
@@ -576,7 +578,18 @@ class AnnotationRenderer:
                 warnings.warn(
                     "score_prop not found in annotation properties. Using default color."
                 )
-
+        elif self.secondary_cmap is not None and 'type' in ann.properties.keys() and ann.properties['type'] == self.secondary_cmap['type']:
+            # use secondary cmap to color annotations of specific type
+            #print(f'using: {self.secondary_cmap}')
+            try:
+                return tuple(
+                    int(c * 255)
+                    for c in self.secondary_cmap['mapper'](self.score_fn(ann.properties[self.secondary_cmap['score_prop']]))
+                )
+            except KeyError:
+                warnings.warn(
+                    "score_prop not found in annotation properties. Using default color."
+                )
         elif self.score_prop is not None:
             try:
                 return tuple(

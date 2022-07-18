@@ -1155,7 +1155,7 @@ class AnnotationStore(ABC, MutableMapping):
                                         }
                                     )
                                 ),
-                                {key2: data[subcat][key][key2] for key2 in props[3:]},
+                                {key2: data[subcat][key][key2] for key2 in props[3:] if key2 in data[subcat][key].keys()},
                             )
                             for key in data[subcat].keys()
                         ]
@@ -1174,7 +1174,7 @@ class AnnotationStore(ABC, MutableMapping):
                                 }
                             )
                         ),
-                        {key2: data[key][key2] for key2 in props[3:]},
+                        {key2: data[key][key2] for key2 in props[3:] if key2 in data[key].keys()},
                     )
                     for key in data.keys()
                 ]

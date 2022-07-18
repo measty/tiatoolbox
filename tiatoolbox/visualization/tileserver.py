@@ -4,7 +4,6 @@ import json
 import os
 import pickle
 import urllib
-from crypt import methods
 from pathlib import Path
 from typing import Dict, List, Union
 
@@ -124,6 +123,8 @@ class TileServer(Flask):
         self.route("/tileserver/commit/<save_path>")(self.commit_db)
         self.route("/tileserver/updaterenderer/<prop>/<val>")(self.update_renderer)
         self.route("/tileserver/updatewhere", methods=["POST"])(self.update_where)
+        self.route("/tileserver/changesecondarycmap/<type>/<prop>/<cmap>")(self.change_secondary_cmap)
+        self.route("/tileserver/getprops")(self.get_properties)
         self.route("/tileserver/reset")(self.reset)
 
     def zoomify(
@@ -169,8 +170,8 @@ class TileServer(Flask):
         types = SQ.pquery("props['type']")
         if None in types:
             types.remove(None)
-        if len(types) == 0:
-            return None
+        #if len(types) == 0:
+            #return None
         return tuple(types)
 
     @staticmethod
@@ -262,6 +263,29 @@ class TileServer(Flask):
 
         return "done"
 
+    def change_secondary_cmap(self, type, prop, cmap):
+        if cmap[0] == "{":
+            cmap = eval(cmap)
+
+        if cmap is None:
+            cmapp = cm.get_cmap("jet")
+        elif isinstance(cmap, str):
+            cmapp = cm.get_cmap(cmap)
+        elif isinstance(cmap, dict):
+            cmapp = lambda x: cmap[x]
+
+        cmap_dict={'type': type, 'score_prop': prop, 'mapper': cmapp}
+
+        for layer in self.tia_pyramids.values():
+            if isinstance(layer, AnnotationTileGenerator):
+                print(cmap)
+                if cmapp == "None":
+                    cmapp = None
+                layer.renderer.secondary_cmap = cmap_dict
+
+        return "done"
+
+
     def update_renderer(self, prop, val):
         val = json.loads(val)
         if val == "None" or val == "null":
@@ -347,6 +371,21 @@ class TileServer(Flask):
         self.tia_layers["overlay"] = self.tia_pyramids["overlay"]
         types = self.update_types(SQ)
         return json.dumps(types)
+
+    def get_properties(self, type=None):
+        #get all properties present in the store
+        where = None
+        if type is not None:
+            where = f'props["type"]="{type}"',
+        ann_props = self.tia_pyramids['overlay'].store.pquery(
+            select = "*",
+            where = where,
+            unique = False,
+            )
+        props = []
+        for prop_dict in ann_props.values():
+            props.extend(list(prop_dict.keys()))
+        return json.dumps(list(set(props)))
 
     def commit_db(self, save_path):
         save_path = self.decode_safe_name(save_path)
