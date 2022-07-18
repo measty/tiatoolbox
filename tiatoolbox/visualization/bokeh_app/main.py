@@ -40,6 +40,7 @@ from bokeh.models import (
 )
 from bokeh.models.tiles import WMTSTileSource
 from bokeh.plotting import figure
+from bokeh.util import token
 from flask_cors import CORS
 
 from tiatoolbox.annotation.dsl import SQL_GLOBALS, SQLTriplet
@@ -56,6 +57,8 @@ from tiatoolbox.visualization.ui_utils import get_level_by_extent
 from tiatoolbox.wsicore.wsireader import WSIReader
 
 is_deployed=False
+rand_id = token.generate_session_id()
+print(f'rand id is: {rand_id}')
 
 if is_deployed:
     host = os.environ.get("HOST")
@@ -460,7 +463,7 @@ p = figure(
     #max_height=1000,
     #width_policy="max",
     #height_policy="max",
-    tooltips=TOOLTIPS,
+    #tooltips=TOOLTIPS,
     tools="pan,wheel_zoom,reset",
     active_scroll="wheel_zoom",
     output_backend="canvas",
@@ -519,7 +522,7 @@ overlay_alpha = Slider(
     title="Adjust alpha Overlay", start=0, end=1, step=0.05, value=0.75, width=200, max_width=200, sizing_mode="stretch_width"
 )
 
-#color_bar = ColorBar(color_mapper=LinearColorMapper(make_color_seq_from_cmap(cm.get_cmap('viridis'))), label_standoff=12)
+color_bar = ColorBar(color_mapper=LinearColorMapper(make_color_seq_from_cmap(cm.get_cmap('viridis'))), label_standoff=12)
 #p.add_layout(color_bar, 'below')
 slide_toggle = Toggle(label="Slide", button_type="success", width=90, max_width=90, sizing_mode="stretch_width")
 overlay_toggle = Toggle(label="Overlay", button_type="success", width=90, max_width=90, sizing_mode="stretch_width")
@@ -743,11 +746,12 @@ def layer_drop_cb(attr):
         with open(attr.item, "rb") as f:
             graph_dict = pickle.load(f)
         node_cm=cm.get_cmap('viridis')
+        num_nodes = graph_dict["coordinates"].shape[0]
         if 'score' in graph_dict:    
-            node_source.data = {"index": list(range(graph_dict["coordinates"].shape[0])), "node_color": [rgb2hex(node_cm(v)) for v in graph_dict['score']]}
+            node_source.data = {"index": list(range(num_nodes)), "node_color": [rgb2hex(node_cm(v)) for v in graph_dict['score']]}
         else:
             #default to green
-            node_source.data = {"index": list(range(graph_dict["coordinates"].shape[0])), "node_color": [rgb2hex((0,1,0))] * graph_dict["coordinates"].shape[0]}
+            node_source.data = {"index": list(range(num_nodes)), "node_color": [rgb2hex((0,1,0))] * num_nodes}
         edge_source.data = {
             "start": graph_dict["edge_index"].T[0, :],
             "end": graph_dict["edge_index"].T[1, :],
@@ -769,8 +773,11 @@ def layer_drop_cb(attr):
 
         #add additional data to graph datasource
         for key in graph_dict:
-            if key in ['edge_index', 'coordinates']:
-                continue
+            try:
+                if key in ['edge_index', 'coordinates'] or len(graph_dict[key])!=num_nodes:
+                    continue
+            except TypeError:
+                continue   #not arraylike, cant add to node data
             node_source.data[key] = graph_dict[key]
 
         return
