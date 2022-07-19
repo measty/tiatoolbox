@@ -5,7 +5,7 @@ services:
   # Proxies requests to internal services
   reverse-proxy:
     image: nginx:1.23.0
-    container_name: reverse_proxy
+    container_name: reverse-proxy
     depends_on:
         - bokeh-app
         - tile-service
@@ -31,7 +31,7 @@ services:
     volumes:
       - ../app_data/:/app_data
     command: >
-      sh -c " bokeh serve ./tiatoolbox/visualization/bokeh_app --log-level=debug --allow-websocket-origin="*" --port 5100 --use-xheaders --unused-session-lifetime 1000 check-unused-sessions 1000 --args /app_data"
+      sh -c "bokeh serve ./tiatoolbox/visualization/bokeh_app --log-level=debug --allow-websocket-origin="*" --port 5100 --use-xheaders --unused-session-lifetime 1000 --check-unused-sessions 1000 --args /app_data"
 
 
   # serves the tiles
