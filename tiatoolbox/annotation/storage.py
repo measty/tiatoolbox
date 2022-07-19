@@ -1086,7 +1086,7 @@ class AnnotationStore(ABC, MutableMapping):
         return store
 
     def add_from(
-        self, fp: Union[IO, str], saved_res=1, slide_res=1
+        self, fp: Union[IO, str], saved_res=1, slide_res=1, typedict=None,
     ) -> "AnnotationStore":
         fp = Path(fp)
         if fp.suffix == ".geojson":
@@ -1132,10 +1132,17 @@ class AnnotationStore(ABC, MutableMapping):
                     if "contour" not in props:
                         continue
                     if "type" in props:
-                        for key in data[subcat].keys():
-                            data[subcat][key][
-                                "type"
-                            ] = f"{subcat[:3]}: {data[subcat][key]['type']}"
+                        #use type dictonary if available else autogen from numbers
+                        if typedict is None:
+                            for key in data[subcat].keys():
+                                data[subcat][key][
+                                    "type"
+                                ] = f"{subcat[:3]}: {data[subcat][key]['type']}"
+                        else: 
+                            for key in data[subcat].keys():
+                                data[subcat][key][
+                                    "type"
+                                ] = typedict[subcat][data[subcat][key]['type']]#f"{subcat[:3]}: {data[subcat][key]['type']}"
                     else:
                         props.append("type")
                         for key in data[subcat].keys():

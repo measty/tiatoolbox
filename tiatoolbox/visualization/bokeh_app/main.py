@@ -40,6 +40,7 @@ from bokeh.models import (
 )
 from bokeh.models.tiles import WMTSTileSource
 from bokeh.plotting import figure
+from bokeh.util import token
 from flask_cors import CORS
 
 from tiatoolbox.annotation.dsl import SQL_GLOBALS, SQLTriplet
@@ -56,6 +57,8 @@ from tiatoolbox.visualization.ui_utils import get_level_by_extent
 from tiatoolbox.wsicore.wsireader import WSIReader
 
 is_deployed=False
+#rand_id = token.generate_session_id()
+#print(f'rand id is: {rand_id}')
 
 if is_deployed:
     host = os.environ.get("HOST")
@@ -66,6 +69,10 @@ else:
     host2 = "127.0.0.1"
     port = "5000"
     # host = "127.0.0.1"
+
+class DummyAttr:
+    def __init__(self, val):
+        self.item=val
 
 # Define helper functions
 
@@ -95,6 +102,10 @@ def make_ts(route):
 def to_int_rgb(rgb):
     """Helper to convert from float to int rgb(a) tuple"""
     return tuple(int(v * 255) for v in rgb)
+
+def to_float_rgb(rgb):
+    """Helper to convert from int to float rgb(a) tuple"""
+    return tuple(v / 255 for v in rgb)
 
 
 def name2type(name):
@@ -132,8 +143,11 @@ def make_safe_name(name):
 
 def update_mapper():
     if vstate.types is not None:
-        colors = random_colors(len(vstate.types))
-        vstate.mapper = {key: (*color, 1) for key, color in zip(vstate.types, colors)}
+        if colour_dict is not None:
+            vstate.mapper = colour_dict
+        else:
+            colors = random_colors(len(vstate.types))
+            vstate.mapper = {key: (*color, 1) for key, color in zip(vstate.types, colors)}
         renderer.mapper = lambda x: vstate.mapper[x]
         update_renderer("mapper", vstate.mapper)
 
@@ -146,8 +160,8 @@ def update_renderer(prop, value):
         else:
             color_bar.color_mapper.palette = make_color_seq_from_cmap(cm.get_cmap(value))
             color_bar.visible = True
-        return requests.get(f"http://{host2}:5000/tileserver/changecmap/{value}")
-    return requests.get(
+        return s.get(f"http://{host2}:5000/tileserver/changecmap/{value}")
+    return s.get(
         f"http://{host2}:5000/tileserver/updaterenderer/{prop}/{json.dumps(value)}"
     )
 
@@ -198,7 +212,7 @@ def build_predicate_callable():
 
     vstate.renderer.where = pred
     # update_renderer("where", json.dumps(pred))
-    requests.post(
+    s.post(
         f"http://{host2}:5000/tileserver/updatewhere",
         data={"types": json.dumps(get_types), "filter": json.dumps(filter_input.value)},
     )
@@ -335,14 +349,14 @@ def change_tiles(layer_name="overlay"):
                 continue
             grp = tg.get_grp()
             ts = make_ts(
-                f"http://{host}:{port}/tileserver/layer/{layer_key}/zoomify/TileGroup{grp}"
+                f"http://{host}:{port}/tileserver/layer/{layer_key}/{user}/zoomify/TileGroup{grp}"
                 + r"/{z}-{x}-{y}.jpg",
             )
             p.renderers[vstate.layer_dict[layer_key]].tile_source = ts
         return
 
     ts = make_ts(
-        f"http://{host}:{port}/tileserver/layer/{layer_name}/zoomify/TileGroup{grp}"
+        f"http://{host}:{port}/tileserver/layer/{layer_name}/{user}/zoomify/TileGroup{grp}"
         + r"/{z}-{x}-{y}.jpg",
     )
     if layer_name in vstate.layer_dict:
@@ -360,7 +374,7 @@ def change_tiles(layer_name="overlay"):
                 continue
             grp = tg.get_grp()
             ts = make_ts(
-                f"http://{host}:{port}/tileserver/layer/{layer_key}/zoomify/TileGroup{grp}"
+                f"http://{host}:{port}/tileserver/layer/{layer_key}/{user}/zoomify/TileGroup{grp}"
                 + r"/{z}-{x}-{y}.jpg",
             )
             p.renderers[vstate.layer_dict[layer_key]].tile_source = ts
@@ -388,6 +402,9 @@ class ViewerState:
 
 
 vstate = ViewerState()
+
+#override colours for the demo
+colour_dict = {'Neutrophil': to_float_rgb((252,161,3,255)), 'Epithelial Cell': to_float_rgb((3,252,40,255)), 'Lymphocyte': to_float_rgb((255,0,0,255)), 'Plasma Cell': to_float_rgb((93,212,196,255)), 'Eosinophil': to_float_rgb((0,0,255,255)), 'Connective Cell': to_float_rgb((255,0,255,255)), 'Gland': to_float_rgb((255,255,0,255)), 'Surface Epithelium': to_float_rgb((119,252,3,255)), 'Lumen': to_float_rgb((144,3,252,255))}
 
 # base_folder = r"E:\TTB_vis_folder"
 base_folder = "/app_data"
@@ -446,11 +463,11 @@ TOOLTIPS=[
         ("Index", "$index"),
         ("(x,y)", "($x, $y)"),
         ("Score", "@node_exp"),
-        ("Feat1", "@feat1: @val1"),
-        ("Feat2", "@feat2: @val2"),
-        ("Feat3", "@feat3: @val3"),
-        ("Feat4", "@feat4: @val4"),
-        ("Feat5", "@feat5: @val5"),
+        ("Feat1", "@feat1: @exp_val1"),
+        ("Feat2", "@feat2: @exp_val2"),
+        ("Feat3", "@feat3: @exp_val3"),
+        ("Feat4", "@feat4: @exp_val4"),
+        ("Feat5", "@feat5: @exp_val5"),
       ]
 
 # set up main window
@@ -485,8 +502,14 @@ p = figure(
     name="slide_window",
 )
 initialise_slide()
+
+s = requests.Session()
+resp = s.get(f"http://{host}:{port}/tileserver/setup")
+print(f'cookies are: {s.cookies}')
+user = s.cookies.get('user')
+
 ts1 = make_ts(
-    f"http://{host}:{port}/tileserver/layer/slide/zoomify/TileGroup1"
+    f"http://{host}:{port}/tileserver/layer/slide/{user}/zoomify/TileGroup1"
     + r"/{z}-{x}-{y}.jpg",
 )
 print(p.renderers)
@@ -643,13 +666,13 @@ def layer_folder_input_cb(attr, old, new):
 
 def filter_input_cb(attr, old, new):
     """Change predicate to be used to filter annotations"""
-    requests.get(f"http://{host2}:5000/tileserver/changepredicate/{new}")
+    s.get(f"http://{host2}:5000/tileserver/changepredicate/{new}")
     vstate.update_state = 1
 
 
 def cprop_input_cb(attr, old, new):
     """Change property to colour by"""
-    requests.get(f"http://{host2}:5000/tileserver/changeprop/{new}")
+    s.get(f"http://{host2}:5000/tileserver/changeprop/{new}")
     vstate.update_state = 1
 
 
@@ -738,8 +761,15 @@ def slide_select_cb(attr, old, new):
     fname = make_safe_name(str(slide_path))
     print(fname)
     print(vstate.mpp)
-    requests.get(f"http://{host2}:5000/tileserver/changeslide/slide/{fname}")
+    s.get(f"http://{host2}:5000/tileserver/changeslide/slide/{fname}")
     change_tiles("slide")
+
+    #for the purposes of demo, auto-load the relevant overlays upon choosing a slide
+    dummy = DummyAttr(overlay_folder/ (vstate.slide_path.stem+"_cerberus.db"))
+    layer_drop_cb(dummy)
+    dummy.item = overlay_folder/ (vstate.slide_path.stem+"_graph.pkl")
+    layer_drop_cb(dummy)
+
     # if len(p.renderers)==1:
     # r=p.rect('x', 'y', 'width', 'height', source=box_source, fill_alpha=0)
     # p.add_tools(BoxEditTool(renderers=[r], num_objects=1))
@@ -778,13 +808,14 @@ def layer_drop_cb(attr):
         for i in range(graph_dict['top_feats'].shape[1]):
             node_source.data[f"feat{i+1}"] = graph_dict["top_feats"][:,i]
             node_source.data[f"val{i+1}"] = graph_dict["top_vals"][:,i]
+            node_source.data[f"exp_val{i+1}"] = graph_dict["top_vals_exp"][:,i]
         node_source.data['node_exp'] = graph_dict['node_exp']
 
         return
 
     # fname='-*-'.join(attr.item.split('\\'))
     fname = make_safe_name(attr.item)
-    resp = requests.get(f"http://{host2}:5000/tileserver/changeoverlay/{fname}")
+    resp = s.get(f"http://{host2}:5000/tileserver/changeoverlay/{fname}")
     resp = json.loads(resp.text)
 
     if Path(attr.item).suffix in [".db", ".dat", ".geojson"]:
@@ -792,8 +823,9 @@ def layer_drop_cb(attr):
         update_mapper()
         initialise_overlay()
         change_tiles("overlay")
-        props = requests.get(f"http://{host2}:5000/tileserver/getprops")
+        props = s.get(f"http://{host2}:5000/tileserver/getprops")
         type_cmap_select.options = json.loads(props.text)
+        type_cmap_select.options.append('None')
     else:
         add_layer(resp)
         change_tiles(resp)
@@ -882,7 +914,7 @@ def to_model_cb(attr):
 def type_cmap_cb(attr, old, new):
     if len(new)==0:
         return
-    requests.get(f"http://{host2}:5000/tileserver/changesecondarycmap/Gla: 1/{new[0]}/viridis")
+    s.get(f"http://{host2}:5000/tileserver/changesecondarycmap/Gland/{new[0]}/viridis")
     color_bar.color_mapper.palette = make_color_seq_from_cmap(cm.get_cmap('viridis'))
     color_bar.visible = True
     vstate.update_state = 1
@@ -892,7 +924,7 @@ def save_cb(attr):
     save_path = make_safe_name(
         str(overlay_folder / (vstate.slide_path.stem + "_saved_anns.db"))
     )
-    requests.get(f"http://{host2}:5000/commit/{save_path}")
+    s.get(f"http://{host2}:5000/commit/{save_path}")
 
 
 # run NucleusInstanceSegmentor on a region of wsi defined by the box in box_source
@@ -937,7 +969,7 @@ def segment_on_box(attr):
     # fname='-*-'.join('.\\sample_tile_results\\0.dat'.split('\\'))
     fname = make_safe_name(".\\sample_tile_results\\0.dat")
     print(fname)
-    resp = requests.get(f"http://{host2}:5000/tileserver/loadannotations/{fname}/{vstate.model_mpp}")
+    resp = s.get(f"http://{host2}:5000/tileserver/loadannotations/{fname}/{vstate.model_mpp}")
     vstate.types = json.load(resp.text)
     update_mapper()
     # type_drop.menu=[(str(t),str(t)) for t in vstate.types]
@@ -985,7 +1017,7 @@ def nuclick_on_pts(attr):
     # fname='-*-'.join('.\\sample_tile_results\\0.dat'.split('\\'))
     fname = make_safe_name("\\app_data\\sample_tile_results\\0.dat")
     print(fname)
-    resp = requests.get(f"http://{host2}:5000/tileserver/loadannotations/{fname}/{vstate.model_mpp}")
+    resp = s.get(f"http://{host2}:5000/tileserver/loadannotations/{fname}/{vstate.model_mpp}")
     print(resp.text)
     vstate.types = json.load(resp.text)
     update_mapper()
@@ -1017,6 +1049,10 @@ populate_layer_list(Path(vstate.slide_path).stem, overlay_folder)
 
 box_column = column(children=layer_boxes)
 color_column = column(children=lcolors)
+
+#open up first slide in list
+slide_select_cb(None, None, new = [slide_list[0]])
+
 ui_layout = column([
                 slide_select,
                 #save_button,
