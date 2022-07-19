@@ -12,7 +12,7 @@ services:
     volumes:
       - ./tiatoolbox/visualization/reverse_proxy/nginx.conf:/etc/nginx/nginx.conf
     ports:
-      - 80:80
+      - 20.0.0.9:8080:80
 
   # serves the bokeh app
   bokeh-app:
@@ -30,6 +30,8 @@ services:
       - .env
     volumes:
       - ../app_data/:/app_data
+    command: >
+      sh -c " bokeh serve ./tiatoolbox/visualization/bokeh_app --log-level=debug --allow-websocket-origin="*" --port 5100 --use-xheaders --unused-session-lifetime 1000 check-unused-sessions 1000 --args /app_data"
 
 
   # serves the tiles

@@ -54,9 +54,9 @@ from tiatoolbox.tools.pyramid import ZoomifyGenerator
 from tiatoolbox.utils.visualization import AnnotationRenderer, random_colors
 from tiatoolbox.visualization.tileserver import TileServer
 from tiatoolbox.visualization.ui_utils import get_level_by_extent
-from tiatoolbox.wsicore.wsireader import WSIReader
+from tiatoolbox.wsicore.wsireader import WSIReader, OpenSlideWSIReader
 
-is_deployed=False
+is_deployed=True
 #rand_id = token.generate_session_id()
 #print(f'rand id is: {rand_id}')
 
@@ -504,7 +504,7 @@ p = figure(
 initialise_slide()
 
 s = requests.Session()
-resp = s.get(f"http://{host}:{port}/tileserver/setup")
+resp = s.get(f"http://{host2}:5000/tileserver/setup")
 print(f'cookies are: {s.cookies}')
 user = s.cookies.get('user')
 
