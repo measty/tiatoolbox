@@ -222,7 +222,7 @@ class TileServer(Flask):
         layers = [
             {
                 "name": name,
-                "url": f"/layer/{name}/zoomify/{{TileGroup}}/{{z}}-{{x}}-{{y}}.jpg",
+                "url": f"/tileserver/layer/{name}/zoomify/{{TileGroup}}/{{z}}-{{x}}-{{y}}.jpg",
                 "size": [int(x) for x in reader.info.slide_dimensions],
                 "mpp": float(np.mean(reader.info.mpp)),
             }
