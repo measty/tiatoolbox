@@ -2,27 +2,26 @@ This visualization tool is in the process of being added to tiatoolbox, but for 
 
 ## Setup
 
-Install tiatoolbox into a conda environment as normal from this fork.
+Install tiatoolbox into a conda environment as normal from this fork.  
+Install a couple of additional dependencies with:  
 
-Install a couple of additional dependencies with:
+conda install bokeh -c bokeh  
+conda install flask-cors  
 
-conda install bokeh -c bokeh
-conda install flask-cors
+enter command:  
+python setup.py install    while in the cloned tiatoolbox top directory.  
 
-enter command:
-python setup.py install    while in the cloned tiatoolbox top directory.
+start the interface using:  
 
-start the interface using:
+tiatoolbox visualize --img-input path\to\slides --img-input path\to\overlays  
 
-tiatoolbox visualize --img-input path\to\slides --img-input path\to\overlays
+alternatively just one path can be provided; in this case it is assumed that slides and overlays are in subdirectories of that provided directory called 'slides' and 'overlays' respectively.  
 
-alternatively just one path can be provided; in this case it is assumed that slides and overlays are in subdirectories of that provided directory called 'slides' and 'overlays' respectively.
-
-In the folder(s) that your command pointed to, should be the things that you want to visualize, following the conventions in the next section.
+In the folder(s) that your command pointed to, should be the things that you want to visualize, following the conventions in the next section.  
 
 ## Data format conventions/filestructure
 
-in the slides folder should be all the slides you want to use, and the overlays folder should contain whatever graphs, segmentations, heatmaps etc you are interesting in overlaying over the slides.
+in the slides folder should be all the slides you want to use, and the overlays folder should contain whatever graphs, segmentations, heatmaps etc you are interesting in overlaying over the slides.  
 
 When a slide is selected in the interface, any valid overlay file that can be found that contains the same name (not including extension) will be available to overlay upon it. 
 
@@ -33,27 +32,28 @@ The best way of getting segmentations (in the form of contours) into the visuali
 If your annotatins are in a geojson format following the sort of thing QuPath would output, that should be ok. Contours stored following hovernet-style output in a .dat file should also work
 
 Hovernet style:
-sample_dict = {nuc_id: {
-                             box: List[],
-                             centroid: List[],
-                             contour: List[List[]],
-                             prob: float,
-                             type: int
-			     ... #can add as many additional properties as we want... 
-                             }
-                ... # other instances
-              }
+```
+sample_dict = {nuc_id: {  
+                             box: List[],  
+                             centroid: List[],  
+                             contour: List[List[]],  
+                             prob: float,  
+                             type: int  
+			     ... #can add as many additional properties as we want...   
+                             }  
+                ... # other instances  
+              }  
+```
 
-
-
-
-geojson:
-{"type":"Feature",
-"geometry":{
-	"type":"Polygon",	
-	"coordinates":[[[21741, 49174.09],[21737.84, 49175.12],[21734.76, 49175.93],[21729.85, 49179.85],[21726.12, 49184.84],[21725.69, 49187.95],[21725.08, 49191],[21725.7, 49194.04],[21726.15, 49197.15],[21727.65, 49199.92],[21729.47, 49202.53],[21731.82, 49204.74],[21747.53, 49175.23],[21741, 49174.09]]]},
-	"properties":{"object_type":"detection","isLocked":false}
-}
+```
+geojson:  
+{"type":"Feature",  
+"geometry":{  
+	"type":"Polygon",  	
+	"coordinates":[[[21741, 49174.09],[21737.84, 49175.12],[21734.76, 49175.93],[21729.85, 49179.85],[21726.12, 49184.84],[21725.69, 49187.95],[21725.08, 49191],[21725.7, 49194.04],[21726.15, 49197.15],[21727.65, 49199.92],[21729.47, 49202.53],[21731.82, 49204.74],[21747.53, 49175.23],[21741, 49174.09]]]},  
+	"properties":{"object_type":"detection","isLocked":false}  
+}  
+```
 
 ### Heatmaps:
 
@@ -67,11 +67,11 @@ Can overlay multiple WSI's on top of eachother as separate layers
 
 Graphs can also be overlaid. Should be in a dictionary format, saved as a pickled .pkl file.
 eg:
-
-graph_dict = {  'edge_index': 2 x n_edges array of indices of pairs of connected nodes
-		'coordinates': n x 2 array of x,y coordinates for each graph node
+```
+graph_dict = {  'edge_index': 2 x n_edges array of indices of pairs of connected nodes  
+		'coordinates': n x 2 array of x,y coordinates for each graph node  
 		}
-
+```
 
 ## Other stuff:
 
