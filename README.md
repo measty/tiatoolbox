@@ -15,6 +15,7 @@ python setup.py install    while in the cloned tiatoolbox top directory.
 start the interface using:
 
 tiatoolbox visualize --img-input path\to\slides --img-input path\to\overlays
+
 alternatively just one path can be provided; in this case it is assumed that slides and overlays are in subdirectories of that provided directory called 'slides' and 'overlays' respectively.
 
 In the folder(s) that your command pointed to, should be the things that you want to visualize, following the conventions in the next section.
@@ -29,7 +30,7 @@ When a slide is selected in the interface, any valid overlay file that can be fo
 
 The best way of getting segmentations (in the form of contours) into the visualization is by putting them in an AnnotationStore. The other options are .geojson, and .dat.
 
-If your annotatins are in a geojson format following the sort of thing QuPath would output, that should also be ok. Contours stored following hovernet-style output in a .dat file should also work
+If your annotatins are in a geojson format following the sort of thing QuPath would output, that should be ok. Contours stored following hovernet-style output in a .dat file should also work
 
 Hovernet style:
 sample_dict = {nuc_id: {
@@ -76,7 +77,7 @@ graph_dict = {  'edge_index': 2 x n_edges array of indices of pairs of connected
 
 ### colormaps/colouring by score:
 
-You can select the property that will be used to colour annotations in the colour_prop box. The corresponding property should be either categorical (strings or ints), in which case a dict-based colour mapping will be used, or a float between 0-1 in which case a matplotlib colourmap will be applied.
+You can select the property that will be used to colour annotations in the colour_prop box. The corresponding property should be either categorical (strings or ints), in which case a dict-based colour mapping should be used, or a float between 0-1 in which case a matplotlib colourmap should be applied.
 There is also the option for the special case 'color' to be used - if your annotations have a property called color, this will be assumed to be an rgb value for each annotation which will be used directly without any mapping.
 
 Once you have selected a slide with the slide dropdown, you can add any number of overlays by repeatedly choosing files containing overlays from the overlay drop menu. They will be put on there as separate layers. In the case of segmentations, if your segmentations have the 'type' property as one of their properties, this can additionally be used to show/hide annotations of that specific type. Colors can be individually selected for each type also if the randomly-generated colour scheme is not suitable.
