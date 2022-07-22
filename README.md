@@ -9,13 +9,16 @@ conda install bokeh -c bokeh
 conda install flask-cors  
 
 enter command:  
-python setup.py install    while in the cloned tiatoolbox top directory.  
+python setup.py install      
+while in the cloned tiatoolbox top directory.  
 
 start the interface using:  
 
-tiatoolbox visualize --img-input path\to\slides --img-input path\to\overlays  
+`tiatoolbox visualize --img-input path\to\slides --img-input path\to\overlays`  
 
 alternatively just one path can be provided; in this case it is assumed that slides and overlays are in subdirectories of that provided directory called 'slides' and 'overlays' respectively.  
+Another option to start the interface is:  
+`bokeh serve --show ./tiatoolbox/visualization/bokeh_app --args path\to\slides path\to\overlays`  
 
 In the folder(s) that your command pointed to, should be the things that you want to visualize, following the conventions in the next section.  
 
