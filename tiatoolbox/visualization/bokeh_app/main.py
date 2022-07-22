@@ -433,7 +433,6 @@ def run_app():
         layers={
             "slide": wsi[0],
         },
-        state=vstate,
     )
     CORS(app, send_wildcard=True)
     app.run(host="0.0.0.0", threaded=False)

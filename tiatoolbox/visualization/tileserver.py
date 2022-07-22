@@ -1,4 +1,6 @@
 """Simple Flask WSGI apps to display tiles as slippery maps."""
+from __future__ import annotations
+
 import io
 import json
 import os
@@ -29,14 +31,13 @@ class TileServer(Flask):
             the page title.
         layers (Dict[str, WSIReader | str] | List[WSIReader | str]):
             A dictionary mapping layer names to image paths or
-            :obj:`WSIReader` objects to display. May also be a list,
-            in which case generic names 'layer-1', 'layer-2' etc.
-            will be used.
-            If layer is a single-channel low-res overlay, it will be
-            colourized using the 'viridis' colourmap
+            :obj:`WSIReader` objects to display. May also be a list, in
+            which case generic names 'layer-1', 'layer-2' etc. will be
+            used. If layer is a single-channel low-res overlay, it will
+            be colourized using the 'viridis' colourmap
 
     Examples:
-        >>> from tiatoolbox.wsiscore.wsireader import WSIReader
+        >>> from tiatoolbox.wsicore.wsireader import WSIReader
         >>> from tiatoolbox.visualization.tileserver import TileServer
         >>> wsi = WSIReader.open("CMU-1.svs")
         >>> app = TileServer(
@@ -46,13 +47,14 @@ class TileServer(Flask):
         ...     },
         ... )
         >>> app.run()
+
     """
 
     def __init__(
         self,
         title: str,
         layers: Union[Dict[str, Union[WSIReader, str]], List[Union[WSIReader, str]]],
-        state: Dict = None,
+        renderer: AnnotationRenderer = None,
     ) -> None:
         super().__init__(
             __name__,
@@ -66,46 +68,35 @@ class TileServer(Flask):
         self.tia_layers = {}
         self.tia_pyramids = {}
         self.slide_mpp = None
-        self.renderer = AnnotationRenderer(
-            "type",
-            {"class1": (1, 0, 0, 1), "class2": (0, 0, 1, 1), "class3": (0, 1, 0, 1)},
-            thickness=-1,
-            edge_thickness=1,
-            zoomed_out_strat="scale",
-            max_scale=8,
-        )
+        self.renderer = renderer
+        if renderer is None:
+            self.renderer = AnnotationRenderer(
+                "type",
+                {"class1": (1, 0, 0, 1), "class2": (0, 0, 1, 1), "class3": (0, 1, 0, 1)},
+                thickness=-1,
+                edge_thickness=1,
+                zoomed_out_strat="scale",
+                max_scale=8,
+            )
 
         # Generic layer names if none provided.
         if isinstance(layers, list):
             layers = {f"layer-{i}": p for i, p in enumerate(layers)}
         # Set up the layer dict.
         meta = None
-        for i, key in enumerate(layers):
-            layer = layers[key]
+        for i, (key, layer) in enumerate(layers.items()):
 
-            if isinstance(layer, (str, Path)):
-                layer_path = Path(layer)
-                if layer_path.suffix in [".jpg", ".png"]:
-                    # Assume its a low-res heatmap.
-                    layer = Image.open(layer_path)
-                    layer = np.array(layer)
-                else:
-                    layer = WSIReader.open(layer_path)
-
-            if isinstance(layer, np.ndarray):
-                # Make into rgb if single channel.
-                layer = colourise_image(layer)
-                layer = VirtualWSIReader(layer, info=meta)
+            layer = self._get_layer_as_wsireader(layer, meta)
 
             self.tia_layers[key] = layer
 
             if isinstance(layer, WSIReader):
                 self.tia_pyramids[key] = ZoomifyGenerator(layer)
             else:
-                self.tia_pyramids[key] = layer  # its an AnnotationTileGenerator
+                self.tia_pyramids[key] = layer  # it's an AnnotationTileGenerator
 
             if i == 0:
-                meta = layer.info
+                meta = layer.info  # base slide info
 
         self.route(
             "/tileserver/layer/<layer>/zoomify/TileGroup<int:tile_group>/"
@@ -126,6 +117,48 @@ class TileServer(Flask):
         self.route("/tileserver/changesecondarycmap/<type>/<prop>/<cmap>")(self.change_secondary_cmap)
         self.route("/tileserver/getprops")(self.get_properties)
         self.route("/tileserver/reset")(self.reset)
+
+    def _get_layer_as_wsireader(self, layer, meta):
+        """Gets appropriate image provider for layer.
+
+        Args:
+            layer (str | ndarray | WSIReader):
+                A reference to an image or annotations to be displayed.
+            meta (WSImeta):
+                The metadata of the base slide.
+
+        Returns:
+            WSIReader or AnnotationTileGenerator:
+                The appropriate image source for the layer.
+
+        """
+        if isinstance(layer, (str, Path)):
+            layer_path = Path(layer)
+            if layer_path.suffix in [".jpg", ".png"]:
+                # Assume it's a low-res heatmap.
+                layer = np.array(Image.open(layer_path))
+            elif layer_path.suffix == ".db":
+                # Assume its an annotation store.
+                layer = AnnotationTileGenerator(
+                    meta, SQLiteStore(layer_path), self.renderer
+                )
+            elif layer_path.suffix == ".geojson":
+                # Assume annotations in geojson format
+                layer = AnnotationTileGenerator(
+                    meta,
+                    SQLiteStore.from_geojson(layer_path),
+                    self.renderer,
+                )
+            else:
+                # Assume it's a WSI.
+                return WSIReader.open(layer_path)
+
+        if isinstance(layer, np.ndarray):
+            # Make into rgb if single channel.
+            layer = colourise_image(layer)
+            return VirtualWSIReader(layer, info=meta)
+
+        return layer
 
     def zoomify(
         self, layer: str, tile_group: int, z: int, x: int, y: int  # skipcq: PYL-w0613
@@ -149,7 +182,7 @@ class TileServer(Flask):
                 The y coordinate.
 
         Returns:
-            Response:
+            flask.Response:
                 The tile image response.
 
         """
@@ -182,7 +215,8 @@ class TileServer(Flask):
         """Serve the index page.
 
         Returns:
-            Response: The index page.
+            flask.Response:
+                The index page.
 
         """
         layers = [
