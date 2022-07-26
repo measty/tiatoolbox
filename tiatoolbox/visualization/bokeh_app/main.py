@@ -218,6 +218,8 @@ def build_predicate_callable():
 
 def initialise_slide():
     vstate.mpp = wsi[0].info.mpp
+    if vstate.mpp is None:
+        vstate.mpp = [1,1]
     vstate.dims = wsi[0].info.slide_dimensions
 
     pad = int(np.mean(vstate.dims) / 10)
@@ -388,7 +390,7 @@ def change_tiles(layer_name="overlay"):
             ts,
             smoothing=True,
             alpha=overlay_alpha.value,
-            level="underlay",
+            level="image",
             render_parents=False,
         )
         for layer_key in vstate.layer_dict.keys():
@@ -440,7 +442,7 @@ if len(sys.argv) == 3:
 
 # set initial slide to first one in base folder
 slide_list = []
-for ext in ["*.svs", "*ndpi", "*.tiff", "*.mrxs"]:  # ,'*.png','*.jpg']:
+for ext in ["*.svs", "*ndpi", "*.tiff", "*.mrxs", "*.jpg"]:  # ,'*.png','*.jpg']:
     slide_list.extend(list(slide_folder.glob(ext)))
     slide_list.extend(list(slide_folder.glob(str(Path("*") / ext))))
 vstate.slide_path = slide_list[0]
@@ -458,6 +460,8 @@ vstate.renderer = renderer
 wsi = [WSIReader.open(vstate.slide_path)]
 vstate.dims = wsi[0].info.slide_dimensions
 vstate.mpp = wsi[0].info.mpp
+if vstate.mpp is None:
+    vstate.mpp = [1, 1]
 
 
 def run_app():
@@ -500,7 +504,7 @@ p = figure(
     tools="pan,wheel_zoom,reset",
     active_scroll="wheel_zoom",
     output_backend="canvas",
-    hidpi=False,
+    hidpi=True,
     match_aspect=False,
     lod_factor=100,
     lod_interval=500,
@@ -534,7 +538,7 @@ p.renderers[0].tile_source.max_zoom = 10
 
 node_source = ColumnDataSource({"index": [], "node_color": []})
 edge_source = ColumnDataSource({"start": [], "end": []})
-graph = GraphRenderer()
+graph = GraphRenderer(level='guide')
 graph.node_renderer.data_source = node_source
 graph.edge_renderer.data_source = edge_source
 graph.node_renderer.glyph = Circle(radius=50, radius_units="data", fill_color="green")
@@ -722,7 +726,7 @@ def populate_layer_list(slide_name, overlay_path: Path):
 def populate_slide_list(slide_folder, search_txt=None):
     file_list = []
     len_slidepath = len(slide_folder.parts)
-    for ext in ["*.svs", "*ndpi", "*.tiff", "*.mrxs"]:
+    for ext in ["*.svs", "*ndpi", "*.tiff", "*.mrxs", "*.jpg"]:
         file_list.extend(list(Path(slide_folder).glob(str(Path("*") / ext))))
         file_list.extend(list(Path(slide_folder).glob(ext)))
     if search_txt is None:

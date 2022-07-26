@@ -60,7 +60,7 @@ import joblib
 import numpy as np
 import pandas as pd
 from shapely import speedups, wkb, wkt
-from shapely.affinity import scale
+from shapely.affinity import scale, translate
 from shapely.geometry import LineString, MultiPolygon, Point, Polygon
 from shapely.geometry import mapping as geometry2feature
 from shapely.geometry import shape as feature2geometry
@@ -1172,9 +1172,26 @@ class AnnotationStore(ABC, MutableMapping):
         return store
 
     def add_from(
-        self, fp: Union[IO, str], saved_res=1, slide_res=1, typedict=None,
+        self, fp: Union[IO, str], saved_res=1, slide_res=1, typedict=None, relative_to=None,
     ) -> "AnnotationStore":
         fp = Path(fp)
+
+        def make_valid_poly(poly, relative_to=None):
+                if poly.is_valid:
+                    return poly
+                poly = poly.buffer(0.01)
+                if poly.is_valid:
+                    return poly
+                poly = make_valid(poly)
+                if len(list(poly)) > 1:
+                    return MultiPolygon(
+                        [p for p in poly if poly.geom_type == "Polygon"]
+                    )
+                if relative_to is not None:
+                    # transform coords to be relative to given pt.
+                    poly = translate(poly, -relative_to[0], -relative_to[1])
+                return poly
+
         if fp.suffix == ".geojson":
             geojson = self._load_cases(
                 fp=fp,
@@ -1187,23 +1204,11 @@ class AnnotationStore(ABC, MutableMapping):
                 store.append(Annotation(geometry, properties))
             return store"""
             anns = [
-                Annotation(feature2geometry(feature["geometry"]), feature["properties"])
+                Annotation(make_valid_poly(feature2geometry(feature["geometry"]), relative_to), feature["properties"])
                 for feature in geojson["features"]
             ]
         elif fp.suffix == ".dat":
             # hovernet-stype .dat file
-            def make_valid_poly(poly):
-                if poly.is_valid:
-                    return poly
-                poly = poly.buffer(0.01)
-                if poly.is_valid:
-                    return poly
-                poly = make_valid(poly)
-                if len(list(poly)) > 1:
-                    return MultiPolygon(
-                        [p for p in poly if poly.geom_type == "Polygon"]
-                    )
-                return poly
 
             data = joblib.load(fp)
             props = list(data[list(data.keys())[0]].keys())  # [3:]
@@ -1246,7 +1251,8 @@ class AnnotationStore(ABC, MutableMapping):
                                             )
                                             * np.array([data[subcat][key]["contour"]]),
                                         }
-                                    )
+                                    ),
+                                    relative_to,
                                 ),
                                 {key2: data[subcat][key][key2] for key2 in props[3:] if key2 in data[subcat][key].keys()},
                             )
@@ -1265,7 +1271,8 @@ class AnnotationStore(ABC, MutableMapping):
                                     )
                                     * np.array([data[key]["contour"]]),
                                 }
-                            )
+                            ),
+                            relative_to,
                         ),
                         {key2: data[key][key2] for key2 in props[3:] if key2 in data[key].keys()},
                     )
@@ -1273,7 +1280,7 @@ class AnnotationStore(ABC, MutableMapping):
                 ]
         else:
             raise ValueError("Invalid file type")
-        print(len(anns))
+        print(f'added {len(anns)} annotations')
         self.append_many(anns)
 
     def to_geojson(self, fp: Optional[IO] = None) -> Optional[str]:
@@ -1429,6 +1436,20 @@ class AnnotationStore(ABC, MutableMapping):
             for key, annotation in self.items()
         )
         return pd.json_normalize(features).set_index("key")
+
+    def translate(self, x: float, y: float):
+        """Translate all annotations by the given vector. Useful for
+        transforming coordinates from slide space into patch/tile/core space.
+
+        Args:
+            x (float):
+                The amount to translate in the x direction.
+            y (float):
+                The amount to translate in the y direction.
+
+        """
+        for key, annotation in self.items():
+            self.patch(key, geometry = translate(annotation.geometry, x, y))
 
     def __del__(self) -> None:
         self.close()
@@ -2289,6 +2310,8 @@ class SQLiteStore(AnnotationStore):
                 for i, value in enumerate(selection):
                     result[i].add(value)
             return list(result.values())
+        if where is None:
+            where = lambda _: True
         return {
             key: select(json.loads(properties))
             for key, properties in cur.fetchall()
