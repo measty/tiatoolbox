@@ -54,7 +54,7 @@ class TileServer(Flask):
         self,
         title: str,
         layers: Union[Dict[str, Union[WSIReader, str]], List[Union[WSIReader, str]]],
-        renderer: AnnotationRenderer = None,
+        renderer = None,
     ) -> None:
         super().__init__(
             __name__,
@@ -68,7 +68,8 @@ class TileServer(Flask):
         self.tia_layers = {}
         self.tia_pyramids = {}
         self.slide_mpp = None
-        self.renderer = renderer
+        #self.renderer = renderer
+        self.overlap = 0
         if renderer is None:
             self.renderer = AnnotationRenderer(
                 "type",
@@ -76,7 +77,8 @@ class TileServer(Flask):
                 thickness=-1,
                 edge_thickness=1,
                 zoomed_out_strat="scale",
-                max_scale=8,
+                max_scale=800,
+                blur_radius=0,
             )
 
         # Generic layer names if none provided.
@@ -96,7 +98,10 @@ class TileServer(Flask):
                 self.tia_pyramids[key] = layer  # it's an AnnotationTileGenerator
 
             if i == 0:
+                if layer.info.mpp is None:
+                    layer.info.mpp = [1, 1]
                 meta = layer.info  # base slide info
+                self.slide_mpp = meta.mpp
 
         self.route(
             "/tileserver/layer/<layer>/zoomify/TileGroup<int:tile_group>/"
@@ -140,7 +145,7 @@ class TileServer(Flask):
             elif layer_path.suffix == ".db":
                 # Assume its an annotation store.
                 layer = AnnotationTileGenerator(
-                    meta, SQLiteStore(layer_path), self.renderer
+                    meta, SQLiteStore(layer_path), self.renderer, overlap=self.overlap,
                 )
             elif layer_path.suffix == ".geojson":
                 # Assume annotations in geojson format
@@ -148,6 +153,7 @@ class TileServer(Flask):
                     meta,
                     SQLiteStore.from_geojson(layer_path),
                     self.renderer,
+                    overlap=self.overlap,
                 )
             else:
                 # Assume it's a WSI.
@@ -199,12 +205,15 @@ class TileServer(Flask):
         image_io.seek(0)
         return send_file(image_io, mimetype="image/webp")
 
-    def update_types(self, SQ):
+    def update_types(self, SQ: SQLiteStore):
         types = SQ.pquery("props['type']")
         if None in types:
             types.remove(None)
         #if len(types) == 0:
             #return None
+        print(f'types is: {types}')
+        if types is None:
+            types = "None"
         return tuple(types)
 
     @staticmethod
@@ -272,7 +281,9 @@ class TileServer(Flask):
                 del self.tia_layers[layer]"""
 
         self.tia_layers = {layer: WSIReader.open(Path(layer_path))}
-        self.tia_pyramids = {layer: ZoomifyGenerator(self.tia_layers[layer])}
+        self.tia_pyramids = {layer: ZoomifyGenerator(self.tia_layers[layer], tile_size=256)}
+        if self.tia_layers[layer].info.mpp is None:
+            self.tia_layers[layer].info.mpp = [1, 1]
         self.slide_mpp = self.tia_layers[layer].info.mpp
 
         return layer
@@ -325,7 +336,10 @@ class TileServer(Flask):
         if val == "None" or val == "null":
             val = None
         self.renderer.__setattr__(prop, val)
-
+        if prop == "blur_radius":
+            self.renderer.blur_radius = val
+            self.overlap = int(1.5*val)
+            self.tia_pyramids['overlay'].overlap = self.overlap
         return "done"
 
     def update_where(self):
@@ -363,7 +377,7 @@ class TileServer(Flask):
         SQ = SQLiteStore(auto_commit=False)
         SQ.add_from(file_path, saved_res=model_mpp, slide_res=self.slide_mpp[0])
         self.tia_pyramids["overlay"] = AnnotationTileGenerator(
-            self.tia_layers["slide"].info, SQ, self.renderer
+            self.tia_layers["slide"].info, SQ, self.renderer, overlap=self.overlap,
         )
         self.tia_layers["overlay"] = self.tia_pyramids["overlay"]
         types = self.update_types(SQ)
@@ -400,7 +414,7 @@ class TileServer(Flask):
                 types = self.update_types(SQ)
                 return json.dumps(types)
         self.tia_pyramids["overlay"] = AnnotationTileGenerator(
-            self.tia_layers["slide"].info, SQ, self.renderer
+            self.tia_layers["slide"].info, SQ, self.renderer, overlap=self.overlap,
         )
         self.tia_layers["overlay"] = self.tia_pyramids["overlay"]
         types = self.update_types(SQ)

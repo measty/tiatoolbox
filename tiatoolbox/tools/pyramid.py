@@ -20,7 +20,7 @@ from typing import Iterable, Tuple, Union
 
 import defusedxml
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageOps
 from shapely.geometry import Polygon
 
 from tiatoolbox.annotation.storage import Annotation, AnnotationStore
@@ -476,13 +476,15 @@ class AnnotationTileGenerator(ZoomifyGenerator):
         tile_size: int = 256,
         downsample: int = 2,
         overlap: int = 0,
-    ):
+    ):  
         super().__init__(None, tile_size, downsample, overlap)
         self.info = info
         self.store = store
         if renderer is None:
             renderer = AnnotationRenderer()
         self.renderer = renderer
+        print('renderer is: {renderer}')
+        self.overlap = int(1.5*renderer.blur_radius)
 
         output_size = [self.output_tile_size] * 2
         self.empty_img = Image.fromarray(
@@ -606,7 +608,7 @@ class AnnotationTileGenerator(ZoomifyGenerator):
         if all(slide_dimensions < [baseline_x, baseline_y]):
             raise IndexError
 
-        bounds = locsize2bounds(coord, [self.tile_size * scale] * 2)
+        bounds = locsize2bounds(coord, [self.output_tile_size * scale] * 2)
         bound_geom = Polygon.from_bounds(*bounds)
         tile = self.render_annotations(bound_geom, scale)
 
@@ -635,14 +637,15 @@ class AnnotationTileGenerator(ZoomifyGenerator):
                 The tile with the annotations rendered.
 
         """
-        top_left = np.array(bound_geom.bounds[:2]) - scale*self.overlap
+        top_left = np.array(bound_geom.bounds[:2])# - scale*self.overlap
         # clip_bound_geom=bound_geom.buffer(scale)
         r = self.renderer
         output_size = [self.output_tile_size] * 2
         if r.zoomed_out_strat == "scale" or r.zoomed_out_strat == "decimate":
+            mpp_sf = np.minimum(self.info.mpp[0]/ 0.25, 1) if self.info.mpp is not None else 1
             min_area = (
                 0.0005
-                * (self.tile_size * scale * (np.minimum(self.info.mpp[0] / 0.25, 1)))
+                * (self.output_tile_size * scale * mpp_sf)
                 ** 2
             )
         else:
@@ -694,8 +697,9 @@ class AnnotationTileGenerator(ZoomifyGenerator):
             tile = np.zeros((output_size[0], output_size[1], 4), dtype=np.uint8)
             for ann in anns:
                 self.render_by_type(tile, ann, top_left, scale)
-
-        return Image.fromarray(tile)
+        if r.blur is None:
+            return Image.fromarray(tile)
+        return ImageOps.crop(Image.fromarray(tile).filter(r.blur), self.overlap)
 
     def render_by_type(
         self,

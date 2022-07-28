@@ -33,6 +33,7 @@ from bokeh.models import (
     MultiChoice,
     PointDrawTool,
     Slider,
+    Spinner,
     StaticLayoutProvider,
     TapTool,
     TextInput,
@@ -85,7 +86,7 @@ def make_ts(route):
     )
     ts.tile_size = 256
     ts.initial_resolution = (
-        40211.5 * sf * (2 / (100 * pi))
+        40211.5 * sf * (2 / (100 * pi)) #* (256/512)
     )  # 156543.03392804097    40030 great circ
     ts.x_origin_offset = 0  # 5000000
     # ts.y_origin_offset=-2500000
@@ -254,7 +255,7 @@ def initialise_slide():
     # p.y_range.bounds = (p.y_range.start - 2 * pad, p.y_range.end + 2 * pad)
     # p._trigger_event()
 
-    z = ZoomifyGenerator(wsi[0])
+    z = ZoomifyGenerator(wsi[0], tile_size=256)
     vstate.num_zoom_levels = z.level_count
     print(f"nzoom_levs: {vstate.num_zoom_levels}")
     zlev = get_level_by_extent((0, p.y_range.start, p.x_range.end, 0))
@@ -503,9 +504,9 @@ p = figure(
     # tooltips=TOOLTIPS,
     tools="pan,wheel_zoom,reset",
     active_scroll="wheel_zoom",
-    output_backend="canvas",
+    output_backend="svg",
     hidpi=True,
-    match_aspect=False,
+    match_aspect=True,
     lod_factor=100,
     lod_interval=500,
     lod_threshold=10,
@@ -589,8 +590,15 @@ overlay_toggle = Toggle(
 filter_input = TextInput(
     value="None", title="Filter:", max_width=300, sizing_mode="stretch_width"
 )
-cprop_input = TextInput(
-    value="type", title="CProp:", max_width=300, sizing_mode="stretch_width"
+#cprop_input = TextInput(
+#    value="type", title="CProp:", max_width=300, sizing_mode="stretch_width"
+#)
+cprop_input = MultiChoice(
+    title="Colour by:",
+    max_items=1,
+    options=["*"],
+    search_option_limit=5000,
+    sizing_mode="stretch_width",
 )
 slide_select = MultiChoice(
     title="Select Slide:",
@@ -603,13 +611,32 @@ slide_select = MultiChoice(
 cmmenu = [
     ("jet", "jet"),
     ("coolwarm", "coolwarm"),
-    ("dict", "{'class1': (1,0,0,1), 'class2': (0,0,1,1), 'class3': (0,1,0,1)}"),
+    ("viridis", "viridis"),
+    ("dict", "dict"),
 ]
 cmap_drop = Dropdown(
     label="Colourmap",
     button_type="warning",
     menu=cmmenu,
-    max_width=300,
+    max_width=90,
+    sizing_mode="stretch_width",
+)
+blur_spinner = Spinner(
+    title="Blur:",
+    low = 0,
+    high = 10,
+    step = 1,
+    value = 0,
+    width = 90,
+    sizing_mode="stretch_width",
+)
+scale_spinner = Spinner(
+    title="max_scale:",
+    low = 0,
+    high = 100,
+    step = 8,
+    value = 8,
+    width = 90,
     sizing_mode="stretch_width",
 )
 to_model_button = Button(
@@ -762,7 +789,7 @@ def filter_input_cb(attr, old, new):
 
 def cprop_input_cb(attr, old, new):
     """Change property to colour by"""
-    requests.get(f"http://{host2}:5000/tileserver/changeprop/{new}")
+    requests.get(f"http://{host2}:5000/tileserver/changeprop/{new[0]}")
     vstate.update_state = 1
 
 
@@ -821,6 +848,14 @@ def opt_buttons_cb(attr, old, new):
 def cmap_drop_cb(attr):
     update_renderer("mapper", attr.item)
     # change_tiles('overlay')
+    vstate.update_state = 1
+
+def blur_spinner_cb(attr, old, new):
+    update_renderer("blur_radius", new)
+    vstate.update_state = 1
+
+def scale_spinner_cb(attr, old, new):
+    update_renderer("max_scale", new)
     vstate.update_state = 1
 
 
@@ -928,6 +963,7 @@ def layer_drop_cb(attr):
         change_tiles("overlay")
         props = requests.get(f"http://{host2}:5000/tileserver/getprops")
         type_cmap_select.options = json.loads(props.text)
+        cprop_input.options = json.loads(props.text)
     else:
         add_layer(resp)
         change_tiles(resp)
@@ -1142,6 +1178,8 @@ overlay_alpha.on_change("value", overlay_alpha_cb)
 slide_select.on_change("value", slide_select_cb)
 save_button.on_click(save_cb)
 cmap_drop.on_click(cmap_drop_cb)
+blur_spinner.on_change("value", blur_spinner_cb)
+scale_spinner.on_change("value", scale_spinner_cb)
 to_model_button.on_click(to_model_cb)
 model_drop.on_click(model_drop_cb)
 layer_drop.on_click(layer_drop_cb)
@@ -1169,6 +1207,7 @@ ui_layout = column(
         filter_input,
         cprop_input,
         cmap_drop,
+        #row([cmap_drop, blur_spinner, scale_spinner]),
         opt_buttons,
         row([to_model_button, model_drop]),
         # type_cmap_select,

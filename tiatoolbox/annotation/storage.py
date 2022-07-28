@@ -1437,7 +1437,7 @@ class AnnotationStore(ABC, MutableMapping):
         )
         return pd.json_normalize(features).set_index("key")
 
-    def translate(self, x: float, y: float):
+    def translate_db(self, x: float, y: float):
         """Translate all annotations by the given vector. Useful for
         transforming coordinates from slide space into patch/tile/core space.
 
@@ -1448,8 +1448,8 @@ class AnnotationStore(ABC, MutableMapping):
                 The amount to translate in the y direction.
 
         """
-        for key, annotation in self.items():
-            self.patch(key, geometry = translate(annotation.geometry, x, y))
+        translated_anns = {key: translate(annotation.geometry, x, y) for key, annotation in self.items()}
+        self.patch_many(translated_anns.keys(), translated_anns.values())
 
     def __del__(self) -> None:
         self.close()

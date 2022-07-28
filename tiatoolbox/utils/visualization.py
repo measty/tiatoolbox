@@ -11,6 +11,7 @@ import numpy as np
 import warnings
 from shapely.affinity import affine_transform
 from numpy.typing import ArrayLike
+from PIL import ImageFilter
 
 from tiatoolbox.annotation.storage import Annotation, Geometry
 
@@ -538,6 +539,7 @@ class AnnotationRenderer:
         thickness=-1,
         edge_thickness=1,
         secondary_cmap=None,
+        blur_radius=0,
     ):
         if mapper is None:
             mapper = cm.get_cmap("jet")
@@ -559,6 +561,12 @@ class AnnotationRenderer:
         self.edge_thickness = edge_thickness
         self.zoomed_out_strat = zoomed_out_strat
         self.secondary_cmap = secondary_cmap
+        self.blur_radius = blur_radius
+        if blur_radius > 0:
+            self.blur = ImageFilter.GaussianBlur(blur_radius)
+            self.edge_thickness = 0
+        else:
+            self.blur = None
 
     @staticmethod
     def to_tile_coords(coords: List, top_left: Tuple[float, float], scale: int):
@@ -765,3 +773,11 @@ class AnnotationRenderer:
             col,
             thickness=3,
         )
+
+    """def __setattr__(self, __name: str, __value) -> None:
+        if __name == "blur_radius":
+            #need to change additional settings
+            self.__dict__['blur'] = ImageFilter.GaussianBlur(__value)
+            self.__dict__['edge_thickness'] = 0
+        else:
+            super().__setattr__(__name, __value)"""
