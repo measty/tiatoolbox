@@ -77,7 +77,7 @@ class TileServer(Flask):
                 thickness=-1,
                 edge_thickness=1,
                 zoomed_out_strat="scale",
-                max_scale=800,
+                max_scale=16,
                 blur_radius=0,
             )
 
@@ -337,7 +337,7 @@ class TileServer(Flask):
             val = None
         self.renderer.__setattr__(prop, val)
         if prop == "blur_radius":
-            self.renderer.blur_radius = val
+            #self.renderer.blur_radius = val
             self.overlap = int(1.5*val)
             self.tia_pyramids['overlay'].overlap = self.overlap
         return "done"

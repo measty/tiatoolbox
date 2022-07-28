@@ -504,7 +504,7 @@ p = figure(
     # tooltips=TOOLTIPS,
     tools="pan,wheel_zoom,reset",
     active_scroll="wheel_zoom",
-    output_backend="svg",
+    output_backend="canvas",
     hidpi=True,
     match_aspect=True,
     lod_factor=100,
@@ -514,6 +514,7 @@ p = figure(
     sizing_mode="stretch_both",
     name="slide_window",
 )
+p.axis.visible = False
 initialise_slide()
 ts1 = make_ts(
     f"http://{host}:{port}/tileserver/layer/slide/zoomify/TileGroup1"
@@ -618,7 +619,9 @@ cmap_drop = Dropdown(
     label="Colourmap",
     button_type="warning",
     menu=cmmenu,
-    max_width=90,
+    width=100,
+    max_width = 100,
+    height=45,
     sizing_mode="stretch_width",
 )
 blur_spinner = Spinner(
@@ -627,16 +630,18 @@ blur_spinner = Spinner(
     high = 10,
     step = 1,
     value = 0,
-    width = 90,
+    width = 80,
+    max_width = 80,
     sizing_mode="stretch_width",
 )
 scale_spinner = Spinner(
     title="max_scale:",
     low = 0,
-    high = 100,
+    high = 140,
     step = 8,
-    value = 8,
-    width = 90,
+    value = 16,
+    width = 80,
+    max_width = 80,
     sizing_mode="stretch_width",
 )
 to_model_button = Button(
@@ -650,8 +655,8 @@ model_drop = Dropdown(
     label="Choose Model",
     button_type="warning",
     menu=["hovernet", "nuclick"],
-    width=100,
-    max_width=100,
+    width=120,
+    max_width=120,
     sizing_mode="stretch_width",
 )
 type_cmap_select = MultiChoice(
@@ -1200,16 +1205,15 @@ color_column = column(children=lcolors)
 ui_layout = column(
     [
         slide_select,
-        save_button,
         layer_drop,
         row([slide_toggle, slide_alpha]),
         row([overlay_toggle, overlay_alpha]),
         filter_input,
         cprop_input,
-        cmap_drop,
-        #row([cmap_drop, blur_spinner, scale_spinner]),
+        #cmap_drop,
+        row([cmap_drop, blur_spinner, scale_spinner]),
         opt_buttons,
-        row([to_model_button, model_drop]),
+        row([to_model_button, model_drop, save_button]),
         # type_cmap_select,
         row(children=[box_column, color_column]),
     ],

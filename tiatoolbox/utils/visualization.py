@@ -678,11 +678,11 @@ class AnnotationRenderer:
         col = self.get_color(annotation)
 
         cnt = self.to_tile_coords(annotation.geometry.exterior.coords, top_left, scale)
-        cv2.drawContours(tile, [cnt], 0, col, self.thickness)
+        cv2.drawContours(tile, [cnt], 0, col, self.thickness, lineType=cv2.LINE_8)
         if self.thickness == -1 and self.edge_thickness > 0:
             edge_col = self.get_color_edge(annotation)
             cv2.drawContours(
-                tile, [cnt], 0, edge_col, self.edge_thickness, lineType=cv2.LINE_4
+                tile, [cnt], 0, edge_col, self.edge_thickness, lineType=cv2.LINE_8
             )
 
     def render_multipoly(self, tile, annotation, top_left, scale):
@@ -691,7 +691,7 @@ class AnnotationRenderer:
 
         for poly in annotation.geometry.geoms:
             cnt = self.to_tile_coords(poly.exterior.coords, top_left, scale)
-            cv2.drawContours(tile, [cnt], 0, col, self.thickness)
+            cv2.drawContours(tile, [cnt], 0, col, self.thickness, lineType=cv2.LINE_8)
 
     def render_rect(
         self,
@@ -774,10 +774,15 @@ class AnnotationRenderer:
             thickness=3,
         )
 
-    """def __setattr__(self, __name: str, __value) -> None:
+    def __setattr__(self, __name: str, __value) -> None:
         if __name == "blur_radius":
             #need to change additional settings
-            self.__dict__['blur'] = ImageFilter.GaussianBlur(__value)
-            self.__dict__['edge_thickness'] = 0
-        else:
-            super().__setattr__(__name, __value)"""
+            if __value > 0:
+                self.__dict__['blur'] = ImageFilter.GaussianBlur(__value)
+                self.__dict__['edge_thickness'] = 0
+            else:
+                self.__dict__['blur'] = None
+                self.__dict__['edge_thickness'] = 1
+        
+        #super().__setattr__(__name, __value)"""
+        self.__dict__[__name] = __value
