@@ -2,26 +2,29 @@ This visualization tool is in the process of being added to tiatoolbox, but for 
 
 ## Setup
 
-Install tiatoolbox into a conda environment as normal from this fork.
+Install tiatoolbox into a conda environment as normal from this fork.  
+Install a couple of additional dependencies with:  
 
-Install a couple of additional dependencies with:
+conda install bokeh -c bokeh  
+conda install flask-cors  
 
-conda install bokeh -c bokeh
-conda install flask-cors
+enter command:  
+python setup.py install      
+while in the cloned tiatoolbox top directory.  
 
-enter command:
-python setup.py install    while in the cloned tiatoolbox top directory.
+start the interface using:  
 
-start the interface using:
+`tiatoolbox visualize --img-input path\to\slides --img-input path\to\overlays`  
 
-tiatoolbox visualize --img-input path\to\slides --img-input path\to\overlays
-alternatively just one path can be provided; in this case it is assumed that slides and overlays are in subdirectories of that provided directory called 'slides' and 'overlays' respectively.
+alternatively just one path can be provided; in this case it is assumed that slides and overlays are in subdirectories of that provided directory called 'slides' and 'overlays' respectively.  
+Another option to start the interface is:  
+`bokeh serve --show ./tiatoolbox/visualization/bokeh_app --args path\to\slides path\to\overlays`  
 
-In the folder(s) that your command pointed to, should be the things that you want to visualize, following the conventions in the next section.
+In the folder(s) that your command pointed to, should be the things that you want to visualize, following the conventions in the next section.  
 
 ## Data format conventions/filestructure
 
-in the slides folder should be all the slides you want to use, and the overlays folder should contain whatever graphs, segmentations, heatmaps etc you are interesting in overlaying over the slides.
+in the slides folder should be all the slides you want to use, and the overlays folder should contain whatever graphs, segmentations, heatmaps etc you are interesting in overlaying over the slides.  
 
 When a slide is selected in the interface, any valid overlay file that can be found that contains the same name (not including extension) will be available to overlay upon it. 
 
@@ -29,30 +32,31 @@ When a slide is selected in the interface, any valid overlay file that can be fo
 
 The best way of getting segmentations (in the form of contours) into the visualization is by putting them in an AnnotationStore. The other options are .geojson, and .dat.
 
-If your annotatins are in a geojson format following the sort of thing QuPath would output, that should also be ok. Contours stored following hovernet-style output in a .dat file should also work
+If your annotatins are in a geojson format following the sort of thing QuPath would output, that should be ok. Contours stored following hovernet-style output in a .dat file should also work
 
 Hovernet style:
-sample_dict = {nuc_id: {
-                             box: List[],
-                             centroid: List[],
-                             contour: List[List[]],
-                             prob: float,
-                             type: int
-			     ... #can add as many additional properties as we want... 
-                             }
-                ... # other instances
-              }
+```
+sample_dict = {nuc_id: {  
+                             box: List[],  
+                             centroid: List[],  
+                             contour: List[List[]],  
+                             prob: float,  
+                             type: int  
+			     ... #can add as many additional properties as we want...   
+                             }  
+                ... # other instances  
+              }  
+```
 
-
-
-
-geojson:
-{"type":"Feature",
-"geometry":{
-	"type":"Polygon",	
-	"coordinates":[[[21741, 49174.09],[21737.84, 49175.12],[21734.76, 49175.93],[21729.85, 49179.85],[21726.12, 49184.84],[21725.69, 49187.95],[21725.08, 49191],[21725.7, 49194.04],[21726.15, 49197.15],[21727.65, 49199.92],[21729.47, 49202.53],[21731.82, 49204.74],[21747.53, 49175.23],[21741, 49174.09]]]},
-	"properties":{"object_type":"detection","isLocked":false}
-}
+```
+geojson:  
+{"type":"Feature",  
+"geometry":{  
+	"type":"Polygon",  	
+	"coordinates":[[[21741, 49174.09],[21737.84, 49175.12],[21734.76, 49175.93],[21729.85, 49179.85],[21726.12, 49184.84],[21725.69, 49187.95],[21725.08, 49191],[21725.7, 49194.04],[21726.15, 49197.15],[21727.65, 49199.92],[21729.47, 49202.53],[21731.82, 49204.74],[21747.53, 49175.23],[21741, 49174.09]]]},  
+	"properties":{"object_type":"detection","isLocked":false}  
+}  
+```
 
 ### Heatmaps:
 
@@ -66,17 +70,17 @@ Can overlay multiple WSI's on top of eachother as separate layers
 
 Graphs can also be overlaid. Should be in a dictionary format, saved as a pickled .pkl file.
 eg:
-
-graph_dict = {  'edge_index': 2 x n_edges array of indices of pairs of connected nodes
-		'coordinates': n x 2 array of x,y coordinates for each graph node
+```
+graph_dict = {  'edge_index': 2 x n_edges array of indices of pairs of connected nodes  
+		'coordinates': n x 2 array of x,y coordinates for each graph node  
 		}
-
+```
 
 ## Other stuff:
 
 ### colormaps/colouring by score:
 
-You can select the property that will be used to colour annotations in the colour_prop box. The corresponding property should be either categorical (strings or ints), in which case a dict-based colour mapping will be used, or a float between 0-1 in which case a matplotlib colourmap will be applied.
+You can select the property that will be used to colour annotations in the colour_prop box. The corresponding property should be either categorical (strings or ints), in which case a dict-based colour mapping should be used, or a float between 0-1 in which case a matplotlib colourmap should be applied.
 There is also the option for the special case 'color' to be used - if your annotations have a property called color, this will be assumed to be an rgb value for each annotation which will be used directly without any mapping.
 
 Once you have selected a slide with the slide dropdown, you can add any number of overlays by repeatedly choosing files containing overlays from the overlay drop menu. They will be put on there as separate layers. In the case of segmentations, if your segmentations have the 'type' property as one of their properties, this can additionally be used to show/hide annotations of that specific type. Colors can be individually selected for each type also if the randomly-generated colour scheme is not suitable.
