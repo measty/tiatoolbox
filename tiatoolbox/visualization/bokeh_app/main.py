@@ -548,7 +548,7 @@ graph.node_renderer.glyph = Circle(radius=50, radius_units="data", fill_color="g
 
 # Define UI elements
 slide_alpha = Slider(
-    title="Adjust alpha WSI",
+    title="Slide Alpha",
     start=0,
     end=1,
     step=0.05,
@@ -559,13 +559,25 @@ slide_alpha = Slider(
 )
 
 overlay_alpha = Slider(
-    title="Adjust alpha Overlay",
+    title="Overlay Alpha",
     start=0,
     end=1,
     step=0.05,
     value=0.75,
     width=200,
+    height=40,
     max_width=200,
+    sizing_mode="stretch_width",
+)
+
+pt_size_spinner =  Spinner(
+    title="Pt. Size:",
+    low = 0,
+    high = 10,
+    step = 1,
+    value = 1,
+    width = 60,
+    max_width = 60,
     sizing_mode="stretch_width",
 )
 
@@ -586,6 +598,7 @@ overlay_toggle = Toggle(
     button_type="success",
     width=90,
     max_width=90,
+    height=40,
     sizing_mode="stretch_width",
 )
 filter_input = TextInput(
@@ -821,6 +834,9 @@ def overlay_alpha_cb(attr, old, new):
         else:
             p.renderers[i].alpha = new
 
+def pt_size_cb(attr, old, new):
+    update_renderer("edge_thickness", new)
+    vstate.update_state = 1
 
 def opt_buttons_cb(attr, old, new):
     old_thickness = vstate.renderer.thickness
@@ -1180,6 +1196,7 @@ def nuclick_on_pts(attr):
 # associate callback functions to the widgets
 slide_alpha.on_change("value", slide_alpha_cb)
 overlay_alpha.on_change("value", overlay_alpha_cb)
+pt_size_spinner.on_change("value", pt_size_cb)
 slide_select.on_change("value", slide_select_cb)
 save_button.on_click(save_cb)
 cmap_drop.on_click(cmap_drop_cb)
@@ -1207,7 +1224,7 @@ ui_layout = column(
         slide_select,
         layer_drop,
         row([slide_toggle, slide_alpha]),
-        row([overlay_toggle, overlay_alpha]),
+        row([overlay_toggle, overlay_alpha, pt_size_spinner]),
         filter_input,
         cprop_input,
         #cmap_drop,
