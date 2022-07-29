@@ -54,7 +54,7 @@ class TileServer(Flask):
         self,
         title: str,
         layers: Union[Dict[str, Union[WSIReader, str]], List[Union[WSIReader, str]]],
-        renderer = None,
+        renderer: AnnotationRenderer = None,
     ) -> None:
         super().__init__(
             __name__,
@@ -166,6 +166,48 @@ class TileServer(Flask):
 
         return layer
 
+    def _get_layer_as_wsireader(self, layer, meta):
+        """Gets appropriate image provider for layer.
+
+        Args:
+            layer (str | ndarray | WSIReader):
+                A reference to an image or annotations to be displayed.
+            meta (WSImeta):
+                The metadata of the base slide.
+
+        Returns:
+            WSIReader or AnnotationTileGenerator:
+                The appropriate image source for the layer.
+
+        """
+        if isinstance(layer, (str, Path)):
+            layer_path = Path(layer)
+            if layer_path.suffix in [".jpg", ".png"]:
+                # Assume it's a low-res heatmap.
+                layer = np.array(Image.open(layer_path))
+            elif layer_path.suffix == ".db":
+                # Assume its an annotation store.
+                layer = AnnotationTileGenerator(
+                    meta, SQLiteStore(layer_path), self.renderer
+                )
+            elif layer_path.suffix == ".geojson":
+                # Assume annotations in geojson format
+                layer = AnnotationTileGenerator(
+                    meta,
+                    SQLiteStore.from_geojson(layer_path),
+                    self.renderer,
+                )
+            else:
+                # Assume it's a WSI.
+                return WSIReader.open(layer_path)
+
+        if isinstance(layer, np.ndarray):
+            # Make into rgb if single channel.
+            layer = colourise_image(layer)
+            return VirtualWSIReader(layer, info=meta)
+
+        return layer
+
     def zoomify(
         self, layer: str, tile_group: int, z: int, x: int, y: int  # skipcq: PYL-w0613
     ) -> Response:
@@ -231,12 +273,13 @@ class TileServer(Flask):
         layers = [
             {
                 "name": name,
-                "url": f"/tileserver/layer/{name}/zoomify/{{TileGroup}}/{{z}}-{{x}}-{{y}}.jpg",
-                "size": [int(x) for x in reader.info.slide_dimensions],
-                "mpp": float(np.mean(reader.info.mpp)),
+                "url": f"/layer/tileserver/{name}/zoomify/{{TileGroup}}/{{z}}-{{x}}-{{y}}.jpg",
+                "size": [int(x) for x in layer.info.slide_dimensions],
+                "mpp": float(np.mean(layer.info.mpp)),
             }
-            for name, reader in self.tia_layers.items()
+            for name, layer in self.tia_layers.items()
         ]
+
         return render_template(
             "index.html", title=self.tia_title, layers=json.dumps(layers)
         )

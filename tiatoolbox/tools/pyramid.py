@@ -222,6 +222,7 @@ class TilePyramidGenerator:
                 pad_mode=pad_mode,
                 interpolation=interpolation,
             )
+        # is this needed? get rid of it or do a better way
         alph = 255 - np.all(tile == 255, axis=2).astype("uint8") * 255
         tile = np.dstack((tile, alph))
         return Image.fromarray(tile)
@@ -270,7 +271,7 @@ class TilePyramidGenerator:
             ...   wsi=reader,
             ...   tile_size=256,
             ... )
-            >>>  tile_generator.dump(
+            >>> tile_generator.dump(
             ...    path="sample.gz.zip",
             ...    container="zip",
             ...    compression="gzip",
@@ -483,7 +484,6 @@ class AnnotationTileGenerator(ZoomifyGenerator):
         if renderer is None:
             renderer = AnnotationRenderer()
         self.renderer = renderer
-        print('renderer is: {renderer}')
         self.overlap = int(1.5*renderer.blur_radius)
 
         output_size = [self.output_tile_size] * 2

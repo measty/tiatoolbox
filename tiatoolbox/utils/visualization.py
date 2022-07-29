@@ -1,6 +1,7 @@
 """Visualisation and overlay functions used in tiatoolbox."""
 import colorsys
 import random
+import warnings
 from typing import Callable, Dict, List, Optional, Tuple, Union
 
 import cv2
@@ -14,6 +15,8 @@ from numpy.typing import ArrayLike
 from PIL import ImageFilter
 
 from tiatoolbox.annotation.storage import Annotation, Geometry
+
+from tiatoolbox.annotation.storage import Annotation
 
 
 def random_colors(num_colors, bright=True):
@@ -153,9 +156,11 @@ def overlay_prediction_mask(
     color_list = np.array(color_list) / 255
     uid_list = list(label_info.keys())
     cmap = mpl.colors.ListedColormap(color_list)
+
     colorbar_params = {
         "mappable": mpl.cm.ScalarMappable(cmap=cmap),
         "boundaries": uid_list + [uid_list[-1] + 1],
+        "values": uid_list,
         "ticks": [b + 0.5 for b in uid_list],
         "spacing": "proportional",
         "orientation": "vertical",

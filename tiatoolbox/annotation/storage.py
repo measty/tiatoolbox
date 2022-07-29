@@ -859,7 +859,7 @@ class AnnotationStore(ABC, MutableMapping):
                 ...     Annotation(
                 ...         geometry=Polygon.from_bounds(0, 0, 1, 1),
                 ...         properties={"class": 42},
-                ...     )
+                ...     ),
                 ...     key="foo",
                 ... )
                 >>> store.bquery(where="props['class'] == 42")
@@ -2059,7 +2059,7 @@ class SQLiteStore(AnnotationStore):
     ) -> Dict[str, Annotation]:
         query_geometry = geometry
         cur = self._query(
-            rows="[key], properties, cx, cy, geometry",
+            columns="[key], properties, cx, cy, geometry",
             geometry=query_geometry,
             geometry_predicate=geometry_predicate,
             where=where,
