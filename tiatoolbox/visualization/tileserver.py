@@ -254,8 +254,8 @@ class TileServer(Flask):
         #if len(types) == 0:
             #return None
         print(f'types is: {types}')
-        if types is None:
-            types = "None"
+        #if types is None:
+            #types = "None"
         return tuple(types)
 
     @staticmethod

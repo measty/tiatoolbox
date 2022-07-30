@@ -142,6 +142,7 @@ def make_safe_name(name):
 
 def update_mapper():
     if vstate.types is not None:
+        type_cmap_select.options = [str(t) for t in vstate.types]
         colors = random_colors(len(vstate.types))
         vstate.mapper = {key: (*color, 1) for key, color in zip(vstate.types, colors)}
         renderer.mapper = lambda x: vstate.mapper[x]
@@ -222,7 +223,8 @@ def initialise_slide():
     if vstate.mpp is None:
         vstate.mpp = [1,1]
     vstate.dims = wsi[0].info.slide_dimensions
-
+    vstate.types = []
+    vstate.props = []
     pad = int(np.mean(vstate.dims) / 10)
     plot_size = np.array([p.width, p.height])
     aspect_ratio = plot_size[0] / plot_size[1]
@@ -275,8 +277,8 @@ def initialise_overlay():
                 Toggle(
                     label=str(t),
                     active=True,
-                    width=100,
-                    max_width=100,
+                    width=130,
+                    max_width=130,
                     sizing_mode="stretch_width",
                 )
             )
@@ -321,8 +323,8 @@ def add_layer(lname):
         Toggle(
             label=lname,
             active=True,
-            width=100,
-            max_width=100,
+            width=130,
+            max_width=130,
             sizing_mode="stretch_width",
         )
     )
@@ -424,6 +426,7 @@ class ViewerState:
         self.model_mpp = 0
         self.micron_formatter = None
         self.current_model = "hovernet"
+        self.props = []
 
 
 vstate = ViewerState()
@@ -507,14 +510,14 @@ p = figure(
     output_backend="canvas",
     hidpi=True,
     match_aspect=True,
-    lod_factor=100,
-    lod_interval=500,
-    lod_threshold=10,
-    lod_timeout=200,
+    #lod_factor=100,
+    #lod_interval=500,
+    #lod_threshold=10,
+    #lod_timeout=200,
     sizing_mode="stretch_both",
     name="slide_window",
 )
-p.axis.visible = False
+#p.axis.visible = False
 initialise_slide()
 ts1 = make_ts(
     f"http://{host}:{port}/tileserver/layer/slide/zoomify/TileGroup1"
@@ -613,6 +616,7 @@ cprop_input = MultiChoice(
     options=["*"],
     search_option_limit=5000,
     sizing_mode="stretch_width",
+    max_width=300,
 )
 slide_select = MultiChoice(
     title="Select Slide:",
@@ -673,11 +677,12 @@ model_drop = Dropdown(
     sizing_mode="stretch_width",
 )
 type_cmap_select = MultiChoice(
-    title="Colour glands by:",
-    max_items=1,
+    title="Colour specific type by:",
+    max_items=2,
     options=["*"],
     search_option_limit=5000,
     sizing_mode="stretch_width",
+    max_width=300,
 )
 swap_button = Button(
     label="Swap feat/importance",
@@ -983,8 +988,9 @@ def layer_drop_cb(attr):
         initialise_overlay()
         change_tiles("overlay")
         props = requests.get(f"http://{host2}:5000/tileserver/getprops")
-        type_cmap_select.options = json.loads(props.text)
-        cprop_input.options = json.loads(props.text)
+        vstate.props = json.loads(props.text)
+        #type_cmap_select.options = vstate.props
+        cprop_input.options = vstate.props
     else:
         add_layer(resp)
         change_tiles(resp)
@@ -1074,13 +1080,26 @@ def to_model_cb(attr):
 
 def type_cmap_cb(attr, old, new):
     if len(new) == 0:
+        type_cmap_select.options = vstate.types
         return
-    requests.get(
-        f"http://{host2}:5000/tileserver/changesecondarycmap/Gla: 1/{new[0]}/viridis"
-    )
-    color_bar.color_mapper.palette = make_color_seq_from_cmap(cm.get_cmap("viridis"))
-    color_bar.visible = True
-    vstate.update_state = 1
+    if len(new) == 1:
+        #find out what still has to be selected
+        if new[0] in vstate.types:
+            type_cmap_select.options = vstate.props + [new[0]]
+        elif new[0] in vstate.props:
+            type_cmap_select.options = vstate.types + [new[0]]
+    else:
+        #both selected, update the renderer
+        if new[1] in vstate.types:
+            type_cmap_select.value = [new[1], new[0]]
+            return
+        requests.get(
+            f"http://{host2}:5000/tileserver/changesecondarycmap/{new[0]}/{new[1]}/viridis"
+        )
+        
+        color_bar.color_mapper.palette = make_color_seq_from_cmap(cm.get_cmap("viridis"))
+        color_bar.visible = True
+        vstate.update_state = 1
 
 
 def save_cb(attr):
@@ -1135,7 +1154,7 @@ def segment_on_box(attr):
     resp = requests.get(
         f"http://{host2}:5000/tileserver/loadannotations/{fname}/{vstate.model_mpp}"
     )
-    vstate.types = json.load(resp.text)
+    vstate.types = json.loads(resp.text)
     update_mapper()
     # type_drop.menu=[(str(t),str(t)) for t in vstate.types]
     rmtree(r"./sample_tile_results")
@@ -1186,7 +1205,7 @@ def nuclick_on_pts(attr):
         f"http://{host2}:5000/tileserver/loadannotations/{fname}/{vstate.model_mpp}"
     )
     print(resp.text)
-    vstate.types = json.load(resp.text)
+    vstate.types = json.loads(resp.text)
     update_mapper()
     rmtree(Path(r"/app_data/sample_tile_results"))
     initialise_overlay()
@@ -1231,10 +1250,11 @@ ui_layout = column(
         row([cmap_drop, blur_spinner, scale_spinner]),
         opt_buttons,
         row([to_model_button, model_drop, save_button]),
-        # type_cmap_select,
+        type_cmap_select,
         row(children=[box_column, color_column]),
     ],
     name="ui_layout",
+    sizing_mode="stretch_both",
 )
 
 
