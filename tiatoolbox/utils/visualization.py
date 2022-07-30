@@ -690,7 +690,7 @@ class AnnotationRenderer:
         if self.thickness == -1 and self.edge_thickness > 0:
             edge_col = self.get_color_edge(annotation)
             cv2.drawContours(
-                tile, [cnt], 0, edge_col, self.edge_thickness, lineType=cv2.LINE_8
+                tile, [cnt], 0, edge_col, 1, lineType=cv2.LINE_8
             )
 
     def render_multipoly(self, tile, annotation, top_left, scale):
