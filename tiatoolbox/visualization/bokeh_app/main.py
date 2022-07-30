@@ -677,7 +677,7 @@ model_drop = Dropdown(
     sizing_mode="stretch_width",
 )
 type_cmap_select = MultiChoice(
-    title="Colour specific type by:",
+    title="Colour type by property:",
     max_items=2,
     options=["*"],
     search_option_limit=5000,
@@ -1248,9 +1248,9 @@ ui_layout = column(
         cprop_input,
         #cmap_drop,
         row([cmap_drop, blur_spinner, scale_spinner]),
+        type_cmap_select,
         opt_buttons,
         row([to_model_button, model_drop, save_button]),
-        type_cmap_select,
         row(children=[box_column, color_column]),
     ],
     name="ui_layout",
