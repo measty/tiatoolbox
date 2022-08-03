@@ -278,6 +278,7 @@ def initialise_overlay():
                     label=str(t),
                     active=True,
                     width=130,
+                    height = 30,
                     max_width=130,
                     sizing_mode="stretch_width",
                 )
@@ -290,6 +291,7 @@ def initialise_overlay():
                         name=str(t),
                         width=60,
                         max_width=60,
+                        height = 30,
                         sizing_mode="stretch_width",
                     )
                 )
@@ -509,7 +511,7 @@ p = figure(
     active_scroll="wheel_zoom",
     output_backend="canvas",
     hidpi=True,
-    match_aspect=True,
+    match_aspect=False,
     #lod_factor=100,
     #lod_interval=500,
     #lod_threshold=10,
@@ -543,10 +545,10 @@ p.renderers[0].tile_source.max_zoom = 10
 
 node_source = ColumnDataSource({"index": [], "node_color": []})
 edge_source = ColumnDataSource({"start": [], "end": []})
-graph = GraphRenderer(level='guide')
+graph = GraphRenderer()#level='overlay')
 graph.node_renderer.data_source = node_source
 graph.edge_renderer.data_source = edge_source
-graph.node_renderer.glyph = Circle(radius=50, radius_units="data", fill_color="green")
+graph.node_renderer.glyph = Circle(radius=50, radius_units="data", fill_color="node_color")
 
 
 # Define UI elements
@@ -841,6 +843,7 @@ def overlay_alpha_cb(attr, old, new):
 
 def pt_size_cb(attr, old, new):
     update_renderer("edge_thickness", new)
+    graph.node_renderer.glyph.radius = 20*new
     vstate.update_state = 1
 
 def opt_buttons_cb(attr, old, new):
@@ -945,8 +948,8 @@ def layer_drop_cb(attr):
                 "node_color": [rgb2hex((0, 1, 0))] * num_nodes,
             }
         edge_source.data = {
-            "start": graph_dict["edge_index"].T[0, :],
-            "end": graph_dict["edge_index"].T[1, :],
+            "start": graph_dict["edge_index"][0, :],
+            "end": graph_dict["edge_index"][1, :],
         }
 
         graph_layout = dict(

@@ -409,16 +409,15 @@ class TileServer(Flask):
 
         for layer in self.tia_pyramids.values():
             if isinstance(layer, AnnotationTileGenerator):
-                layer.store.add_from(
+                layer.store.from_dat(
                     file_path,
-                    saved_res=model_mpp,
-                    slide_res=self.slide_mpp,
+                    np.array(model_mpp) / np.array(self.slide_mpp)
                 )
                 types = self.update_types(layer.store)
                 return json.dumps(types)
 
         SQ = SQLiteStore(auto_commit=False)
-        SQ.add_from(file_path, saved_res=model_mpp, slide_res=self.slide_mpp[0])
+        SQ.from_dat(file_path, np.array(model_mpp) / np.array(self.slide_mpp))
         self.tia_pyramids["overlay"] = AnnotationTileGenerator(
             self.tia_layers["slide"].info, SQ, self.renderer, overlap=self.overlap,
         )
@@ -435,7 +434,7 @@ class TileServer(Flask):
             SQ = SQLiteStore.from_geojson(overlay_path)
         elif overlay_path.suffix == ".dat":
             SQ = SQLiteStore(auto_commit=False)
-            SQ.add_from(overlay_path, slide_res=self.slide_mpp)
+            SQ.from_dat(overlay_path, 1 / np.array(self.slide_mpp))
         elif overlay_path.suffix in [".jpg", ".png", ".tiff"]:
             layer = f"layer{len(self.tia_pyramids)}"
             if overlay_path.suffix == ".tiff":

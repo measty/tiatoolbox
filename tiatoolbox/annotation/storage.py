@@ -1171,8 +1171,8 @@ class AnnotationStore(ABC, MutableMapping):
         store.append_many(anns)
         return store
 
-    def add_from(
-        self, fp: Union[IO, str], saved_res=1, slide_res=1, typedict=None, relative_to=None,
+    def from_dat(
+        self, fp: Union[IO, str], scale_factor = 1, typedict=None, relative_to=None,
     ) -> "AnnotationStore":
         fp = Path(fp)
 
@@ -1245,11 +1245,8 @@ class AnnotationStore(ABC, MutableMapping):
                                     feature2geometry(
                                         {
                                             "type": "Polygon",
-                                            "coordinates": (
-                                                np.array(saved_res)
-                                                / np.array(slide_res)
-                                            )
-                                            * np.array([data[subcat][key]["contour"]]),
+                                            "coordinates": 
+                                            scale_factor * np.array([data[subcat][key]["contour"]]),
                                         }
                                     ),
                                     relative_to,
@@ -1266,10 +1263,7 @@ class AnnotationStore(ABC, MutableMapping):
                             feature2geometry(
                                 {
                                     "type": "Polygon",
-                                    "coordinates": (
-                                        np.array(saved_res) / np.array(slide_res)
-                                    )
-                                    * np.array([data[key]["contour"]]),
+                                    "coordinates": scale_factor * np.array([data[key]["contour"]]),
                                 }
                             ),
                             relative_to,
