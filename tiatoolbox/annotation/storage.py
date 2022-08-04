@@ -1209,8 +1209,11 @@ class AnnotationStore(ABC, MutableMapping):
             ]
         elif fp.suffix == ".dat":
             # hovernet-stype .dat file
-
-            data = joblib.load(fp)
+            try:
+                data = joblib.load(fp)
+            except:
+                with open(fp,'r') as f:
+                    data = json.load(f)
             props = list(data[list(data.keys())[0]].keys())  # [3:]
             if "contour" not in props:
                 # assume cerberous format with objects subdivided into categories
