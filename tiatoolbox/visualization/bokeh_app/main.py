@@ -495,6 +495,10 @@ vstate.micron_formatter = FuncTickFormatter(
     return Math.round(tick*mpp)
     """,
 )
+
+do_feats = False
+
+
 p = figure(
     x_range=(0, vstate.dims[0]),
     y_range=(0, -vstate.dims[1]),
@@ -506,7 +510,7 @@ p = figure(
     # max_height=1000,
     # width_policy="max",
     # height_policy="max",
-    # tooltips=TOOLTIPS,
+    #tooltips=TOOLTIPS,
     tools="pan,wheel_zoom,reset",
     active_scroll="wheel_zoom",
     output_backend="canvas",
@@ -968,6 +972,9 @@ def layer_drop_cb(attr):
 
         # add additional data to graph datasource
         for key in graph_dict:
+            if key=='feat_names':
+                graph_feat_names=graph_dict[key]
+                do_feats = True
             try:
                 if (
                     key in ["edge_index", "coordinates"]
@@ -977,6 +984,17 @@ def layer_drop_cb(attr):
             except TypeError:
                 continue  # not arraylike, cant add to node data
             node_source.data[key] = graph_dict[key]
+
+        if do_feats:
+            for i in range(graph_dict['feats'].shape[1]):
+                node_source.data[graph_feat_names[i]] = graph_dict["feats"][:,i]
+
+            TOOLTIPS=[
+                ("Index", "$index"),
+                ("(x,y)", "($x, $y)"),
+            ]
+            TOOLTIPS.extend([(graph_feat_names[i], f"@{graph_feat_names[i]}") for i in range(graph_dict['feats'].shape[1])])
+            #p.tooltips=TOOLTIPS
 
         return
 
