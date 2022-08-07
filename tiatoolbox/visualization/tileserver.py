@@ -453,11 +453,13 @@ class TileServer(Flask):
         for key, layer in self.tia_pyramids.items():
             if isinstance(layer, AnnotationTileGenerator):
                 layer.store = SQ
+                print(f'loaded {len(SQ)} annotations')
                 types = self.update_types(SQ)
                 return json.dumps(types)
         self.tia_pyramids["overlay"] = AnnotationTileGenerator(
             self.tia_layers["slide"].info, SQ, self.renderer, overlap=self.overlap,
         )
+        print(f'loaded {len(self.tia_pyramids["overlay"].store)} annotations')
         self.tia_layers["overlay"] = self.tia_pyramids["overlay"]
         types = self.update_types(SQ)
         return json.dumps(types)
