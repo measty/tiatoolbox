@@ -30,9 +30,9 @@ When a slide is selected in the interface, any valid overlay file that can be fo
 
 ### Segmentation:
 
-The best way of getting segmentations (in the form of contours) into the visualization is by putting them in an AnnotationStore. The other options are .geojson, and .dat.
+The best way of getting segmentations (in the form of contours) into the visualization is by putting them in an AnnotationStore.  The other options are .geojson, or a hovernet -style .dat, both of which can usually be loaded within the interface but will incur a small delay while the data in converted internally into an AnnotationStore.
 
-If your annotatins are in a geojson format following the sort of thing QuPath would output, that should be ok. Contours stored following hovernet-style output in a .dat file should also work
+If your annotations are in a geojson format following the sort of thing QuPath would output, that should be ok. Contours stored following hovernet-style output in a .dat file should also work. An overview of the data structure in these formats is below.
 
 Hovernet style:
 ```
@@ -58,6 +58,11 @@ geojson:
 }  
 ```
 
+If your data is not in one of these formats, it is usually fairly straightforward to build an annotation store out of your model outputs.  
+A small script of 6-10 lines is usually all that is required. There are example code snippets illustrating how to create an annotation store in a variety of common scenarios in: [example_snippets](https://github.com/measty/tiatoolbox/blob/feature-add-gui/tiatoolbox/visualization/bokeh_app/ann_store_examples.py) 
+
+Most use-cases should be covered in there, or something close enough that a few tweaks to a snippet will do what is needed.
+
 ### Heatmaps:
 
 will display a low-res heatmap in .jpg or .png format. Should be the same aspect ratio as the WSI it will be overlaid on.
@@ -78,18 +83,24 @@ graph_dict = {  'edge_index': 2 x n_edges array of indices of pairs of connected
 
 ## Other stuff:
 
-### colormaps/colouring by score:
+### Colormaps/colouring by score:
+
+Once you have selected a slide with the slide dropdown, you can add any number of overlays by repeatedly choosing files containing overlays from the overlay drop menu. They will be put on there as separate layers. In the case of segmentations, if your segmentations have the 'type' property as one of their properties, this can additionally be used to show/hide annotations of that specific type. Colors can be individually selected for each type also if the randomly-generated colour scheme is not suitable.  
 
 You can select the property that will be used to colour annotations in the colour_prop box. The corresponding property should be either categorical (strings or ints), in which case a dict-based colour mapping should be used, or a float between 0-1 in which case a matplotlib colourmap should be applied.
-There is also the option for the special case 'color' to be used - if your annotations have a property called color, this will be assumed to be an rgb value for each annotation which will be used directly without any mapping.
+There is also the option for the special case 'color' to be used - if your annotations have a property called color, this will be assumed to be an rgb value for each annotation which will be used directly without any mapping.  
 
-Once you have selected a slide with the slide dropdown, you can add any number of overlays by repeatedly choosing files containing overlays from the overlay drop menu. They will be put on there as separate layers. In the case of segmentations, if your segmentations have the 'type' property as one of their properties, this can additionally be used to show/hide annotations of that specific type. Colors can be individually selected for each type also if the randomly-generated colour scheme is not suitable.
+The 'colour type by property' box allows annotations of the specified type to be coloured by a different property to the 'global' one. For example, this could be used to have all detections coloured according to their type, but for Glands, colour by some feature describing them instead.
 
 ### Running models:
 
 Regions of the image can be selected, using either a box select or points, which can be sent to a model via selecting the model in the drop-down menu and then clicking go. Available so far are hovernet and nuclick. 
 
 To save the annotations resulting from a model, or loaded from a .geojson or .dat (will be saved as a SQLiteStore .db file which will be far quicker to load) use the save button (for the moment it is just saved in a file '{slide_name}_saved_anns.db' in the overlays folder). 
+
+### Zoomed out plotting:  
+
+By default, the interface is set up to show only larger annotations while zoomed out. Smaller annotations which would be too small to see clearly while zoomed out will not be displayed. The 'max-scale' value can be changed to control the zoom level at which this happens. A larger value will mean smaller annotations remain visible at more zoomed out scale. If you want all annotations to be displayed always regardless of zoom, just type in a large value (1000+) to set it to its max. In the case of very many annotations, this may result in some loading lag when zoomed out.
 
 ### Other options:
 
