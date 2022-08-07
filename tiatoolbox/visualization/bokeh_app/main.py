@@ -36,6 +36,7 @@ from bokeh.models import (
     Spinner,
     StaticLayoutProvider,
     TapTool,
+    HoverTool,
     TextInput,
     Toggle,
 )
@@ -540,9 +541,10 @@ box_source = ColumnDataSource({"x": [], "y": [], "width": [], "height": []})
 pt_source = ColumnDataSource({"x": [], "y": []})
 r = p.rect("x", "y", "width", "height", source=box_source, fill_alpha=0)
 c = p.circle("x", "y", source=pt_source, color="red", size=5)
+hover = HoverTool()
 p.add_tools(BoxEditTool(renderers=[r], num_objects=1))
 p.add_tools(PointDrawTool(renderers=[c]))
-p.add_tools(TapTool())
+p.add_tools(TapTool(), hover)
 tslist = []
 
 p.renderers[0].tile_source.max_zoom = 10
@@ -936,6 +938,7 @@ def layer_drop_cb(attr):
     """setup the newly chosen overlay"""
     if Path(attr.item).suffix == ".pkl":
         # its a graph
+        do_feats = False
         with open(attr.item, "rb") as f:
             graph_dict = pickle.load(f)
         node_cm = cm.get_cmap("viridis")
@@ -987,14 +990,16 @@ def layer_drop_cb(attr):
 
         if do_feats:
             for i in range(graph_dict['feats'].shape[1]):
+                if i>9:
+                    break   #more than 10 wont really fit, ignore rest
                 node_source.data[graph_feat_names[i]] = graph_dict["feats"][:,i]
 
             TOOLTIPS=[
                 ("Index", "$index"),
                 ("(x,y)", "($x, $y)"),
             ]
-            TOOLTIPS.extend([(graph_feat_names[i], f"@{graph_feat_names[i]}") for i in range(graph_dict['feats'].shape[1])])
-            #p.tooltips=TOOLTIPS
+            TOOLTIPS.extend([(graph_feat_names[i], f"@{graph_feat_names[i]}") for i in range(np.minimum(graph_dict['feats'].shape[1],9))])
+            hover.tooltips=TOOLTIPS
 
         return
 
