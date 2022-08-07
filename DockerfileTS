@@ -1,0 +1,21 @@
+# syntax=docker/dockerfile:1
+FROM python:3.8-slim-buster
+
+WORKDIR /tiatoolbox
+RUN apt-get update && apt-get -y install gcc
+RUN apt-get install -y python3-opencv curl
+RUN apt-get -y install libopenjp2-7-dev libopenjp2-tools openslide-tools
+
+COPY requirements.txt requirements.txt
+
+RUN pip3 install -r requirements.txt
+RUN pip3 install bokeh
+RUN pip3 install flask-cors
+RUN pip3 install gunicorn
+
+COPY . .
+RUN python setup.py install
+EXPOSE 5000
+
+CMD [ "gunicorn", "tiatoolbox.visualization.tile_app.tile_app:app", "--bind", ":5000"]
+#CMD [ "python3", "tiatoolbox/visualization/tile_app/tile_app.py"]

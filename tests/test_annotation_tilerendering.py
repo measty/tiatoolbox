@@ -2,21 +2,73 @@
 AnnotationRenderer and AnnotationTileGenerator
 """
 from pathlib import Path
+from typing import List, Union
 
 import matplotlib.cm as cm
 import matplotlib.pyplot as plt
 import numpy as np
 import pytest
 from PIL import Image
-from scipy.ndimage.measurements import label
-from shapely.geometry import MultiPoint
+from scipy.ndimage import label
+from shapely.geometry import LineString, MultiPoint, Polygon
+from shapely.geometry.point import Point
 from skimage import data
 
-from tiatoolbox.annotation.storage import Annotation, SQLiteStore
+from tests.test_annotation_stores import cell_polygon
+from tiatoolbox.annotation.storage import Annotation, AnnotationStore, SQLiteStore
 from tiatoolbox.tools.pyramid import AnnotationTileGenerator
 from tiatoolbox.utils.env_detection import running_on_travis
 from tiatoolbox.utils.visualization import AnnotationRenderer
 from tiatoolbox.wsicore import wsireader
+
+
+@pytest.fixture(scope="session")
+def cell_grid() -> List[Polygon]:
+    """Generate a grid of fake cell boundary polygon annotations."""
+    np.random.seed(0)
+    return [
+        cell_polygon(((i + 0.5) * 100, (j + 0.5) * 100)) for i, j in np.ndindex(5, 5)
+    ]
+
+
+@pytest.fixture(scope="session")
+def points_grid(spacing=60) -> List[Point]:
+    """Generate a grid of fake point annotations."""
+    np.random.seed(0)
+    return [Point((600 + i * spacing, 600 + j * spacing)) for i, j in np.ndindex(7, 7)]
+
+
+@pytest.fixture(scope="session")
+def fill_store(cell_grid, points_grid):
+    """Factory fixture to fill stores with test data."""
+
+    def _fill_store(
+        store_class: AnnotationStore,
+        path: Union[str, Path],
+    ):
+        """Fills store with random variety of annotations."""
+        store = store_class(path)
+
+        cells = [
+            Annotation(cell, {"type": "cell", "prob": np.random.rand(1)[0]})
+            for cell in cell_grid
+        ]
+        points = [
+            Annotation(point, {"type": "pt", "prob": np.random.rand(1)[0]})
+            for point in points_grid
+        ]
+        lines = [
+            Annotation(
+                LineString(((x, x + 500) for x in range(100, 400, 10))),
+                {"type": "line", "prob": 0.75},
+            )
+        ]
+
+        annotations = cells + points + lines
+        keys = store.append_many(annotations)
+        return keys, store
+
+    return _fill_store
 
 
 def test_tile_generator_len(fill_store, tmp_path):
@@ -131,7 +183,7 @@ def test_decimation(fill_store, tmp_path):
     plt.imshow(thumb)
     plt.show()
     _, num = label(np.array(thumb)[:, :, 1])  # default colour is green
-    assert num == 16  # expect 16 pts in bottom right quadrant
+    assert num == 17  # expect 17 pts in bottom right quadrant
 
 
 def test_get_tile_negative_level(fill_store, tmp_path):
@@ -249,3 +301,32 @@ def test_random_mapper():
         assert len(rgba) == 4
         for val in rgba:
             assert 0 <= val <= 1
+
+
+def test_categorical_mapper(fill_store, tmp_path):
+    """Test categorical mapper option to ease cli usage."""
+    array = np.ones((1024, 1024))
+    wsi = wsireader.VirtualWSIReader(array, mpp=(1, 1))
+    _, store = fill_store(SQLiteStore, tmp_path / "test.db")
+    renderer = AnnotationRenderer(score_prop="type", mapper="categorical")
+    AnnotationTileGenerator(wsi.info, store, renderer, tile_size=256)
+    # check correct keys exist and all colours are valid rgba values
+    for ann_type in ["line", "pt", "cell"]:
+        rgba = renderer.mapper(ann_type)
+        assert isinstance(rgba, tuple)
+        assert len(rgba) == 4
+        for val in rgba:
+            assert 0 <= val <= 1
+
+
+def test_colour_prop_warning(fill_store, tmp_path):
+    """Test warning when rendering annotations in which the provided
+    score_prop does not exist.
+    """
+    array = np.ones((1024, 1024))
+    wsi = wsireader.VirtualWSIReader(array, mpp=(1, 1))
+    _, store = fill_store(SQLiteStore, tmp_path / "test.db")
+    renderer = AnnotationRenderer(score_prop="nonexistant_prop")
+    tg = AnnotationTileGenerator(wsi.info, store, renderer, tile_size=256)
+    with pytest.warns(UserWarning, match="score_prop not found in properties"):
+        tg.get_tile(1, 0, 0)

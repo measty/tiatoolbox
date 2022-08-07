@@ -195,7 +195,7 @@ class SQLTriplet(SQLExpression):
             operator.or_: lambda a, b: f"({a} OR {b})",
             operator.abs: lambda a, _: f"ABS({a})",
             operator.not_: lambda a, _: f"NOT({a})",
-            operator.eq: lambda a, b: f"({a} = {b})",
+            operator.eq: lambda a, b: f"({a} == {b})",
             operator.ne: lambda a, b: f"({a} != {b})",
             operator.pow: lambda a, p: f"POWER({a}, {p})",
             operator.mod: lambda a, b: f"({a} % {b})",

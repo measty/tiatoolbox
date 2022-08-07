@@ -10,6 +10,7 @@ include conf.py
 recursive-include tests *
 recursive-include docs
 recursive-include tiatoolbox/data *
+recursive-include tiatoolbox/visualization/bokeh_app *
 
 recursive-exclude * __pycache__
 recursive-exclude * *.py[co]

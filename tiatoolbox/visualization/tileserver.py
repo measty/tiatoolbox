@@ -1,19 +1,25 @@
 """Simple Flask WSGI apps to display tiles as slippery maps."""
+from __future__ import annotations
+
 import io
 import json
+import os
+import pickle
+import urllib
 from pathlib import Path
 from typing import Dict, List, Union
-import numpy as np
+
 import matplotlib.cm as cm
-from flask import Flask, Response, send_file
+import numpy as np
+from flask import Flask, Response, request, send_file
 from flask.templating import render_template
-import urllib
+from PIL import Image
+
 from tiatoolbox import data
 from tiatoolbox.annotation.storage import SQLiteStore
 from tiatoolbox.tools.pyramid import AnnotationTileGenerator, ZoomifyGenerator
-from tiatoolbox.wsicore.wsireader import VirtualWSIReader, WSIReader, OpenSlideWSIReader
-from PIL import Image
-from tiatoolbox.utils.visualization import colourise_image
+from tiatoolbox.utils.visualization import AnnotationRenderer, colourise_image
+from tiatoolbox.wsicore.wsireader import OpenSlideWSIReader, VirtualWSIReader, WSIReader
 
 
 class TileServer(Flask):
@@ -25,14 +31,13 @@ class TileServer(Flask):
             the page title.
         layers (Dict[str, WSIReader | str] | List[WSIReader | str]):
             A dictionary mapping layer names to image paths or
-            :obj:`WSIReader` objects to display. May also be a list,
-            in which case generic names 'layer-1', 'layer-2' etc.
-            will be used.
-            If layer is a single-channel low-res overlay, it will be
-            colourized using the 'viridis' colourmap
+            :obj:`WSIReader` objects to display. May also be a list, in
+            which case generic names 'layer-1', 'layer-2' etc. will be
+            used. If layer is a single-channel low-res overlay, it will
+            be colourized using the 'viridis' colourmap
 
     Examples:
-        >>> from tiatoolbox.wsiscore.wsireader import WSIReader
+        >>> from tiatoolbox.wsicore.wsireader import WSIReader
         >>> from tiatoolbox.visualization.tileserver import TileServer
         >>> wsi = WSIReader.open("CMU-1.svs")
         >>> app = TileServer(
@@ -42,13 +47,14 @@ class TileServer(Flask):
         ...     },
         ... )
         >>> app.run()
+
     """
 
     def __init__(
         self,
         title: str,
         layers: Union[Dict[str, Union[WSIReader, str]], List[Union[WSIReader, str]]],
-        state: Dict = None,
+        renderer: AnnotationRenderer = None,
     ) -> None:
         super().__init__(
             __name__,
@@ -61,54 +67,146 @@ class TileServer(Flask):
         self.tia_title = title
         self.tia_layers = {}
         self.tia_pyramids = {}
-        self.state = state
+        self.slide_mpp = None
+        #self.renderer = renderer
+        self.overlap = 0
+        if renderer is None:
+            self.renderer = AnnotationRenderer(
+                "type",
+                {"class1": (1, 0, 0, 1), "class2": (0, 0, 1, 1), "class3": (0, 1, 0, 1)},
+                thickness=-1,
+                edge_thickness=1,
+                zoomed_out_strat="scale",
+                max_scale=8,
+                blur_radius=0,
+            )
 
         # Generic layer names if none provided.
         if isinstance(layers, list):
             layers = {f"layer-{i}": p for i, p in enumerate(layers)}
         # Set up the layer dict.
         meta = None
-        for i, key in enumerate(layers):
-            layer = layers[key]
+        for i, (key, layer) in enumerate(layers.items()):
 
-            if isinstance(layer, (str, Path)):
-                layer_path = Path(layer)
-                if layer_path.suffix in [".jpg", ".png"]:
-                    # Assume its a low-res heatmap.
-                    layer = Image.open(layer_path)
-                    layer = np.array(layer)
-                else:
-                    layer = WSIReader.open(layer_path)
-
-            if isinstance(layer, np.ndarray):
-                # Make into rgb if single channel.
-                layer = colourise_image(layer)
-                layer = VirtualWSIReader(layer, info=meta)
+            layer = self._get_layer_as_wsireader(layer, meta)
 
             self.tia_layers[key] = layer
 
             if isinstance(layer, WSIReader):
                 self.tia_pyramids[key] = ZoomifyGenerator(layer)
             else:
-                self.tia_pyramids[key] = layer  # its an AnnotationTileGenerator
+                self.tia_pyramids[key] = layer  # it's an AnnotationTileGenerator
 
             if i == 0:
-                meta = layer.info
+                if layer.info.mpp is None:
+                    layer.info.mpp = [1, 1]
+                meta = layer.info  # base slide info
+                self.slide_mpp = meta.mpp
 
         self.route(
-            "/layer/<layer>/zoomify/TileGroup<int:tile_group>/"
+            "/tileserver/layer/<layer>/zoomify/TileGroup<int:tile_group>/"
             "<int:z>-<int:x>-<int:y>.jpg"
         )(
             self.zoomify,
         )
         self.route("/")(self.index)
-        self.route("/changepredicate/<pred>")(self.change_pred)
-        self.route("/changeprop/<prop>")(self.change_prop)
-        self.route("/changeslide/<layer>/<layer_path>")(self.change_slide)
-        self.route("/changecmap/<cmap>")(self.change_mapper)
-        self.route("/loadannotations/<file_path>")(self.load_annotations)
-        self.route("/changeoverlay/<overlay_path>")(self.change_overlay)
-        self.route("/commit")(self.commit_db)
+        self.route("/tileserver/changepredicate/<pred>")(self.change_pred)
+        self.route("/tileserver/changeprop/<prop>")(self.change_prop)
+        self.route("/tileserver/changeslide/<layer>/<layer_path>")(self.change_slide)
+        self.route("/tileserver/changecmap/<cmap>")(self.change_mapper)
+        self.route("/tileserver/loadannotations/<file_path>/<float:model_mpp>")(self.load_annotations)
+        self.route("/tileserver/changeoverlay/<overlay_path>")(self.change_overlay)
+        self.route("/tileserver/commit/<save_path>")(self.commit_db)
+        self.route("/tileserver/updaterenderer/<prop>/<val>")(self.update_renderer)
+        self.route("/tileserver/updatewhere", methods=["POST"])(self.update_where)
+        self.route("/tileserver/changesecondarycmap/<type>/<prop>/<cmap>")(self.change_secondary_cmap)
+        self.route("/tileserver/getprops")(self.get_properties)
+        self.route("/tileserver/reset")(self.reset)
+
+    def _get_layer_as_wsireader(self, layer, meta):
+        """Gets appropriate image provider for layer.
+
+        Args:
+            layer (str | ndarray | WSIReader):
+                A reference to an image or annotations to be displayed.
+            meta (WSImeta):
+                The metadata of the base slide.
+
+        Returns:
+            WSIReader or AnnotationTileGenerator:
+                The appropriate image source for the layer.
+
+        """
+        if isinstance(layer, (str, Path)):
+            layer_path = Path(layer)
+            if layer_path.suffix in [".jpg", ".png"]:
+                # Assume it's a low-res heatmap.
+                layer = np.array(Image.open(layer_path))
+            elif layer_path.suffix == ".db":
+                # Assume its an annotation store.
+                layer = AnnotationTileGenerator(
+                    meta, SQLiteStore(layer_path), self.renderer, overlap=self.overlap,
+                )
+            elif layer_path.suffix == ".geojson":
+                # Assume annotations in geojson format
+                layer = AnnotationTileGenerator(
+                    meta,
+                    SQLiteStore.from_geojson(layer_path),
+                    self.renderer,
+                    overlap=self.overlap,
+                )
+            else:
+                # Assume it's a WSI.
+                return WSIReader.open(layer_path)
+
+        if isinstance(layer, np.ndarray):
+            # Make into rgb if single channel.
+            layer = colourise_image(layer)
+            return VirtualWSIReader(layer, info=meta)
+
+        return layer
+
+    def _get_layer_as_wsireader(self, layer, meta):
+        """Gets appropriate image provider for layer.
+
+        Args:
+            layer (str | ndarray | WSIReader):
+                A reference to an image or annotations to be displayed.
+            meta (WSImeta):
+                The metadata of the base slide.
+
+        Returns:
+            WSIReader or AnnotationTileGenerator:
+                The appropriate image source for the layer.
+
+        """
+        if isinstance(layer, (str, Path)):
+            layer_path = Path(layer)
+            if layer_path.suffix in [".jpg", ".png"]:
+                # Assume it's a low-res heatmap.
+                layer = np.array(Image.open(layer_path))
+            elif layer_path.suffix == ".db":
+                # Assume its an annotation store.
+                layer = AnnotationTileGenerator(
+                    meta, SQLiteStore(layer_path), self.renderer
+                )
+            elif layer_path.suffix == ".geojson":
+                # Assume annotations in geojson format
+                layer = AnnotationTileGenerator(
+                    meta,
+                    SQLiteStore.from_geojson(layer_path),
+                    self.renderer,
+                )
+            else:
+                # Assume it's a WSI.
+                return WSIReader.open(layer_path)
+
+        if isinstance(layer, np.ndarray):
+            # Make into rgb if single channel.
+            layer = colourise_image(layer)
+            return VirtualWSIReader(layer, info=meta)
+
+        return layer
 
     def zoomify(
         self, layer: str, tile_group: int, z: int, x: int, y: int  # skipcq: PYL-w0613
@@ -132,7 +230,7 @@ class TileServer(Flask):
                 The y coordinate.
 
         Returns:
-            Response:
+            flask.Response:
                 The tile image response.
 
         """
@@ -149,27 +247,39 @@ class TileServer(Flask):
         image_io.seek(0)
         return send_file(image_io, mimetype="image/webp")
 
-    def update_types(self, SQ):
-        self.state.types = SQ.pquery("props['type']")
-        if None in self.state.types:
-            self.state.types.remove(None)
+    def update_types(self, SQ: SQLiteStore):
+        types = SQ.pquery("props['type']")
+        if None in types:
+            types.remove(None)
+        #if len(types) == 0:
+            #return None
+        print(f'types is: {types}')
+        #if types is None:
+            #types = "None"
+        return tuple(types)
+
+    @staticmethod
+    def decode_safe_name(name):
+        return Path(urllib.parse.unquote(name).replace("\\", os.sep))
 
     def index(self) -> Response:
         """Serve the index page.
 
         Returns:
-            Response: The index page.
+            flask.Response:
+                The index page.
 
         """
         layers = [
             {
                 "name": name,
-                "url": f"/layer/{name}/zoomify/{{TileGroup}}/{{z}}-{{x}}-{{y}}.jpg",
-                "size": [int(x) for x in reader.info.slide_dimensions],
-                "mpp": float(np.mean(reader.info.mpp)),
+                "url": f"/layer/tileserver/{name}/zoomify/{{TileGroup}}/{{z}}-{{x}}-{{y}}.jpg",
+                "size": [int(x) for x in layer.info.slide_dimensions],
+                "mpp": float(np.mean(layer.info.mpp)),
             }
-            for name, reader in self.tia_layers.items()
+            for name, layer in self.tia_layers.items()
         ]
+
         return render_template(
             "index.html", title=self.tia_title, layers=json.dumps(layers)
         )
@@ -195,9 +305,15 @@ class TileServer(Flask):
 
         return "done"
 
+    def reset(self):
+        self.tia_layers = {}
+        self.tia_pyramids = {}
+        self.slide_mpp = None
+        return "done"
+
     def change_slide(self, layer, layer_path):
         # layer_path='\\'.join(layer_path.split('-*-'))
-        layer_path = Path(urllib.parse.unquote(layer_path))
+        layer_path = self.decode_safe_name(layer_path)
         print(layer_path)
 
         """self.tia_layers[layer]=WSIReader.open(Path(layer_path))
@@ -208,7 +324,10 @@ class TileServer(Flask):
                 del self.tia_layers[layer]"""
 
         self.tia_layers = {layer: WSIReader.open(Path(layer_path))}
-        self.tia_pyramids = {layer: ZoomifyGenerator(self.tia_layers[layer])}
+        self.tia_pyramids = {layer: ZoomifyGenerator(self.tia_layers[layer], tile_size=256)}
+        if self.tia_layers[layer].info.mpp is None:
+            self.tia_layers[layer].info.mpp = [1, 1]
+        self.slide_mpp = self.tia_layers[layer].info.mpp
 
         return layer
 
@@ -232,39 +351,90 @@ class TileServer(Flask):
 
         return "done"
 
-    def load_annotations(self, file_path):
+    def change_secondary_cmap(self, type, prop, cmap):
+        if cmap[0] == "{":
+            cmap = eval(cmap)
+
+        if cmap is None:
+            cmapp = cm.get_cmap("jet")
+        elif isinstance(cmap, str):
+            cmapp = cm.get_cmap(cmap)
+        elif isinstance(cmap, dict):
+            cmapp = lambda x: cmap[x]
+
+        cmap_dict={'type': type, 'score_prop': prop, 'mapper': cmapp}
+
+        for layer in self.tia_pyramids.values():
+            if isinstance(layer, AnnotationTileGenerator):
+                print(cmap)
+                if cmapp == "None":
+                    cmapp = None
+                layer.renderer.secondary_cmap = cmap_dict
+
+        return "done"
+
+
+    def update_renderer(self, prop, val):
+        val = json.loads(val)
+        if val == "None" or val == "null":
+            val = None
+        self.renderer.__setattr__(prop, val)
+        if prop == "blur_radius":
+            #self.renderer.blur_radius = val
+            self.overlap = int(1.5*val)
+            self.tia_pyramids['overlay'].overlap = self.overlap
+        return "done"
+
+    def update_where(self):
+        get_types = json.loads(request.form["types"])
+        filter_val = json.loads(request.form["filter"])
+
+        if filter_val == "None":
+
+            def pred(props):
+                return props["type"] in get_types
+
+        else:
+
+            def pred(props):
+                return eval(filter_val) and props["type"] in get_types
+
+        self.renderer.where = pred
+        return "done"
+
+    def load_annotations(self, file_path, model_mpp):
         # file_path='\\'.join(file_path.split('-*-'))
-        file_path = Path(urllib.parse.unquote(file_path))
+        file_path = self.decode_safe_name(file_path)
         print(file_path)
 
         for layer in self.tia_pyramids.values():
             if isinstance(layer, AnnotationTileGenerator):
-                layer.store.add_from(
-                    file_path, saved_res=self.state.model_mpp, slide_res=self.state.mpp
+                layer.store.from_dat(
+                    file_path,
+                    np.array(model_mpp) / np.array(self.slide_mpp)
                 )
-                self.update_types(layer.store)
-                return "overlay"
+                types = self.update_types(layer.store)
+                return json.dumps(types)
 
         SQ = SQLiteStore(auto_commit=False)
-        SQ.add_from(file_path, saved_res=self.state.model_mpp, slide_res=self.state.mpp)
+        SQ.from_dat(file_path, np.array(model_mpp) / np.array(self.slide_mpp))
         self.tia_pyramids["overlay"] = AnnotationTileGenerator(
-            self.tia_layers["slide"].info, SQ, self.state.renderer
+            self.tia_layers["slide"].info, SQ, self.renderer, overlap=self.overlap,
         )
         self.tia_layers["overlay"] = self.tia_pyramids["overlay"]
-        self.update_types(SQ)
-        print(self.state.types)
-        return "overlay"
+        types = self.update_types(SQ)
+        print(types)
+        return json.dumps(types)  # "overlay"
 
     def change_overlay(self, overlay_path):
         # overlay_path='\\'.join(overlay_path.split('-*-'))
-        overlay_path = Path(urllib.parse.unquote(overlay_path))
+        overlay_path = self.decode_safe_name(overlay_path)
         print(overlay_path)
-        overlay_path = Path(overlay_path)
         if overlay_path.suffix == ".geojson":
             SQ = SQLiteStore.from_geojson(overlay_path)
         elif overlay_path.suffix == ".dat":
             SQ = SQLiteStore(auto_commit=False)
-            SQ.add_from(overlay_path, slide_res=self.state.mpp[0])
+            SQ.from_dat(overlay_path, 1)#1 / np.array(self.slide_mpp))
         elif overlay_path.suffix in [".jpg", ".png", ".tiff"]:
             layer = f"layer{len(self.tia_pyramids)}"
             if overlay_path.suffix == ".tiff":
@@ -276,28 +446,48 @@ class TileServer(Flask):
                     Path(overlay_path), info=self.tia_layers["slide"].info
                 )
             self.tia_pyramids[layer] = ZoomifyGenerator(self.tia_layers[layer])
-            return layer
+            return json.dumps(layer)
         else:
             SQ = SQLiteStore(overlay_path, auto_commit=False)
 
         for key, layer in self.tia_pyramids.items():
             if isinstance(layer, AnnotationTileGenerator):
                 layer.store = SQ
-                self.update_types(SQ)
-                return key
+                print(f'loaded {len(SQ)} annotations')
+                types = self.update_types(SQ)
+                return json.dumps(types)
         self.tia_pyramids["overlay"] = AnnotationTileGenerator(
-            self.tia_layers["slide"].info, SQ, self.state.renderer
+            self.tia_layers["slide"].info, SQ, self.renderer, overlap=self.overlap,
         )
+        print(f'loaded {len(self.tia_pyramids["overlay"].store)} annotations')
         self.tia_layers["overlay"] = self.tia_pyramids["overlay"]
-        self.update_types(SQ)
-        return "overlay"
+        types = self.update_types(SQ)
+        return json.dumps(types)
 
-    def commit_db(self):
+    def get_properties(self, type=None):
+        #get all properties present in the store
+        where = None
+        if type is not None:
+            where = f'props["type"]="{type}"',
+        ann_props = self.tia_pyramids['overlay'].store.pquery(
+            select = "*",
+            where = where,
+            unique = False,
+            )
+        props = []
+        for prop_dict in ann_props.values():
+            props.extend(list(prop_dict.keys()))
+        return json.dumps(list(set(props)))
+
+    def commit_db(self, save_path):
+        save_path = self.decode_safe_name(save_path)
+        print(save_path)
         for key, layer in self.tia_pyramids.items():
             if isinstance(layer, AnnotationTileGenerator):
                 if layer.store.path.suffix == ".db":
                     print("db committed")
                     layer.store.commit()
                 else:
-                    layer.store.dump("./temp_store.db")
+                    layer.store.commit()
+                    layer.store.dump(str(save_path))
         return "done"

@@ -1,3 +1,7 @@
+default_language_version:
+    python: python3.8 # Remove once flake8-sql is compatible with python 3.9+
+    # https://github.com/pgjones/flake8-sql/pull/21
+
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v4.3.0
@@ -65,14 +69,6 @@ repos:
         ]
   - repo: local
     hooks:
-      - id: pytest-changed-files
-        name: pytest-changed-files
-        entry: pytest
-        files: tests/.*\btest_\w*.py
-        language: system
-        stages: [push]
-  - repo: local
-    hooks:
       - id: requirements-consistency
         name: check requirements are consistent
         entry: python pre-commit/requirements_consistency.py
@@ -80,3 +76,8 @@ repos:
         pass_filenames: false
         language: python
         additional_dependencies: [pyyaml]
+      - id: notebook-check-ast
+        name: check notebook ast
+        entry: python pre-commit/notebook_check_ast.py
+        types_or: [jupyter]
+        language: python
