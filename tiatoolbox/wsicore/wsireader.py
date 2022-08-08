@@ -17,7 +17,7 @@ import openslide
 import pandas as pd
 import tifffile
 import zarr
-from PIL import Image
+from PIL import Image, ImageOps
 from shapely.geometry import Polygon
 
 from tiatoolbox import utils
@@ -26,7 +26,7 @@ from tiatoolbox.utils.env_detection import pixman_warning
 from tiatoolbox.utils.exceptions import FileNotSupported
 from tiatoolbox.wsicore.metadata.ngff import Multiscales
 from tiatoolbox.wsicore.wsimeta import WSIMeta
-from tiatoolbox.annotation.storage import AnnotationStore, SQLiteStore
+from tiatoolbox.annotation.storage import AnnotationStore, SQLiteStore, Annotation
 from tiatoolbox.utils.visualization import AnnotationRenderer
 
 pixman_warning()
@@ -4354,12 +4354,13 @@ class AnnotationStoreReader(WSIReader):
     """
 
     def __init__(self, path, info: WSIMeta,
-        store: AnnotationStore,
+        #store: AnnotationStore,
         renderer: AnnotationRenderer = None,
         **kwargs):
         super().__init__(path, **kwargs)
         self.info = info
-        self.store = store
+        #self.store = store
+        self.store = SQLiteStore(path)
         if renderer is None:
             renderer = AnnotationRenderer()
         self.renderer = renderer
@@ -4411,7 +4412,7 @@ class AnnotationStoreReader(WSIReader):
             location=location, size=baseline_read_size
         )
         bound_geom = Polygon.from_bounds(*bounds)
-        im_region = self.render_annotations(bound_geom, 1, location)
+        im_region = self.render_annotations(bound_geom, 1)
 
         im_region = utils.transforms.imresize(
             img=im_region,
@@ -4458,7 +4459,7 @@ class AnnotationStoreReader(WSIReader):
             )
 
         bound_geom = Polygon.from_bounds(*bounds_at_baseline)
-        im_region = self.render_annotations(bound_geom, 1, bounds_at_baseline[:2])
+        im_region = self.render_annotations(bound_geom, 1)
 
         if coord_space == "resolution":
             # do this to enforce output size is as defined by input bounds
@@ -4474,14 +4475,40 @@ class AnnotationStoreReader(WSIReader):
 
         return im_region
 
-    def render_annotations(self, bound_geom, scale, tl):
-        """get annotations as bbox or geometry according to zoom level,
-        and decimate large collections of small annotations if appropriate"""
+    def render_annotations(
+        self,
+        bound_geom: Polygon,
+        scale: int,
+    ):
+        """Render annotations within given bounds on top on an image.
+
+        This gets annotations as bounding boxes or geometries according to
+        zoom level, and renders them. Large collections of small
+        annotation geometries are decimated if appropriate.
+
+        Args:
+            rgb (np.ndarray):
+                The image to render the annotation on.
+            bound_geom (Polygon):
+                A polygon representing the bounding box of the tile.
+            scale (int):
+                The scale at which we are rendering the tile.
+        Returns:
+            np.ndarray:
+                The tile with the annotations rendered.
+
+        """
+        top_left = np.array(bound_geom.bounds[:2])# - scale*self.overlap
         # clip_bound_geom=bound_geom.buffer(scale)
         r = self.renderer
-        output_size = [self.output_tile_size] * 2
+        output_size = [int(bound_geom.bounds[2]-bound_geom.bounds[0])] * 2
         if r.zoomed_out_strat == "scale" or r.zoomed_out_strat == "decimate":
-            min_area = 0.0004 * (self.tile_size * scale) ** 2
+            mpp_sf = np.minimum(self.info.mpp[0]/ 0.25, 1) if self.info.mpp is not None else 1
+            min_area = (
+                0.0005
+                * (self.output_tile_size * scale * mpp_sf)
+                ** 2
+            )
         else:
             min_area = r.zoomed_out_strat
 
@@ -4497,73 +4524,26 @@ class AnnotationStoreReader(WSIReader):
                 )
                 if len(anns_dict) == 0:
                     return self.empty_img
-                rgb = np.zeros((output_size[0], output_size[1], 4), dtype=np.uint8)
-                print(f"len annotations dict is: {len(anns_dict)}")
+                tile = np.zeros((output_size[0], output_size[1], 4), dtype=np.uint8)
                 if len(anns_dict) < 40:
-                    decimate = int(len(anns_dict) / 20) + 1
-                i = 0
-                for key, ann in anns_dict.items():
-                    i += 1
+                    decimate = 1
+                for i, (key, ann) in enumerate(anns_dict.items()):
                     if ann.geometry.area > min_area:
                         ann = self.store[key]
-                        # ann_bounded = r.get_bounded(ann, clip_bound_geom)
-                        ann_bounded = ann.geometry
-                        if ann_bounded.is_empty:
-                            # only bbox not actual geom was inside the tile, so ignore
-                            continue
-                        if ann_bounded.geom_type == "Polygon":
-                            r.render_poly(rgb, ann, ann_bounded, tl, scale)
-                        elif ann_bounded.geom_type == "LineString":
-                            r.render_line(rgb, ann, ann_bounded, tl, scale)
-                        elif ann_bounded.geom_type == "MultiPolygon":
-                            r.render_multipoly(rgb, ann, ann_bounded, tl, scale)
-                        else:
-                            print(f"unknown geometry: {ann_bounded.geom_type}")
-                        continue
-                    if i % decimate == 0:
-                        if ann.geometry.geom_type == "Point":
-                            r.render_pt(rgb, ann, tl, scale)
-                            continue
-                        # ann_bounded = r.get_bounded(ann, clip_bound_geom)
-                        ann_bounded = ann.geometry
-                        if ann_bounded.geom_type == "Polygon":
-                            if ann_bounded.is_empty:
-                                print("why is this empty?")
-                                continue
-                            r.render_rect(rgb, ann, ann_bounded, tl, scale)
-                        elif ann_bounded.geom_type == "LineString":
-                            # ann_bounded = ann.geometry.intersection(bound_geom)
-                            r.render_line(rgb, ann, ann_bounded, tl, scale)
-                        else:
-                            print(f"unknown geometry: {ann_bounded.geom_type}")
+                        self.render_by_type(tile, ann, top_left, scale)
+                    elif i % decimate == 0:
+                        ann = self.store[key]
+                        self.render_by_type(tile, ann, top_left, scale, True)
             else:
                 anns = self.store.cached_query(bound_geom.bounds, self.renderer.where)
-                if len(anns) == 0:
-                    return self.empty_img
-                rgb = np.zeros((output_size[0], output_size[1], 4), dtype=np.uint8)
+                #if len(anns) == 0:
+                   ## return self.empty_img
+                tile = np.zeros((output_size[0], output_size[1], 4), dtype=np.uint8)
                 for ann in anns:
-                    if ann.geometry.geom_type == "Point":
-                        r.render_pt(rgb, ann, tl, scale)
-                        continue
-                    # ann_bounded = r.get_bounded(ann, clip_bound_geom)
-                    ann_bounded = ann.geometry
-                    if ann_bounded.is_empty:
-                        # print('why is this empty?')
-                        continue
-                    if ann_bounded.geom_type == "Polygon":
-                        r.render_poly(rgb, ann, ann_bounded, tl, scale)
-                    elif ann_bounded.geom_type == "LineString":
-                        r.render_line(rgb, ann, ann_bounded, tl, scale)
-                    elif ann_bounded.geom_type == "MultiPolygon":
-                        r.render_multipoly(rgb, ann, ann_bounded, tl, scale)
-                    elif ann_bounded.geom_type == "GeometryCollection":
-                        # print(f"unknown geometry: {ann_bounded.geom_type}: {[g.geom_type for g in ann_bounded.geoms]}")
-                        pass
-                    else:
-                        print(f"unknown geometry: {ann_bounded.geom_type}")
-
-            return Image.fromarray(rgb)
+                    self.render_by_type(tile, ann, top_left, scale)
+            return Image.fromarray(tile)
         else:
+            # Get only annotations > min_area. Plot them all
             if scale > self.renderer.max_scale:
                 anns = self.store.cached_query(
                     bound_geom.bounds,
@@ -4572,29 +4552,54 @@ class AnnotationStoreReader(WSIReader):
                 )
             else:
                 anns = self.store.cached_query(bound_geom.bounds, self.renderer.where)
-            if len(anns) == 0:
-                return self.empty_img
+            #if len(anns) == 0:
+                #return self.empty_img
 
-            rgb = np.zeros((output_size[0], output_size[1], 4), dtype=np.uint8)
+            tile = np.zeros((output_size[0], output_size[1], 4), dtype=np.uint8)
             for ann in anns:
-                if ann.geometry.geom_type == "Point":
-                    r.render_pt(rgb, ann, tl, scale)
-                    continue
-                # ann_bounded = r.get_bounded(ann, clip_bound_geom)
-                ann_bounded = ann.geometry
-                if ann_bounded.is_empty:
-                    # print('why is this empty?')
-                    continue
-                if ann_bounded.geom_type == "Polygon":
-                    r.render_poly(rgb, ann, ann_bounded, tl, scale)
-                elif ann_bounded.geom_type == "LineString":
-                    r.render_line(rgb, ann, ann_bounded, tl, scale)
-                elif ann_bounded.geom_type == "MultiPolygon":
-                    r.render_multipoly(rgb, ann, ann_bounded, tl, scale)
-                elif ann_bounded.geom_type == "GeometryCollection":
-                    # print(f"unknown geometry: {ann_bounded.geom_type}: {[g.geom_type for g in ann_bounded.geoms]}")
-                    pass
-                else:
-                    warnings.warn(f"Unknown geometry: {ann_bounded.geom_type}")
+                self.render_by_type(tile, ann, top_left, scale)
+        if r.blur is None:
+            return tile
+        return np.array(ImageOps.crop(Image.fromarray(tile).filter(r.blur), self.overlap))
 
-        return Image.fromarray(rgb)
+    def render_by_type(
+        self,
+        tile: np.ndarray,
+        annotation: Annotation,
+        top_left: Tuple[float, float],
+        scale: int,
+        poly_as_box: bool = False,
+    ):
+        """Render annotation appropriately to its geometry type.
+
+        Args:
+            tile (np.ndarray):
+                The rgb(a) tile image to render the annotation on.
+            annotation (Annotation):
+                The annotation to render.
+            top_left (Tuple[int, int]):
+                The top left coordinate of the tile.
+            scale (int):
+                The scale at which we are rendering the tile.
+            poly_as_box (bool):
+                Whether to render polygons as boxes.
+
+        """
+        r = self.renderer
+        geom_type = annotation.geometry.geom_type
+        if geom_type == "Point":
+            r.render_pt(tile, annotation, top_left, scale)
+        elif geom_type == "Polygon":
+            if poly_as_box:
+                r.render_rect(tile, annotation, top_left, scale)
+            else:
+                r.render_poly(tile, annotation, top_left, scale)
+        elif geom_type == "MultiPolygon":
+            r.render_multipoly(tile, annotation, top_left, scale)
+        elif geom_type == "LineString":
+            r.render_line(tile, annotation, top_left, scale)
+        elif geom_type == "GeometryCollection":
+            warnings.warn(f"unknown geometry: {geom_type}: {[g.geom_type for g in annotation.geometry.geoms]}")
+            #pass
+        else:
+            warnings.warn(f"Unknown geometry: {geom_type}")
