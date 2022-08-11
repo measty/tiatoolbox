@@ -1156,7 +1156,7 @@ class AnnotationStore(ABC, MutableMapping):
             AnnotationStore:
                 A new annotation store with the annotations loaded from the file.
         """
-        
+
         store = cls()
         store.add_from(fp, scale_factor)
         return store
@@ -1175,13 +1175,17 @@ class AnnotationStore(ABC, MutableMapping):
             AnnotationStore:
                 A new annotation store with the annotations loaded from the file.
         """
-        
+
         store = cls()
         store.add_from(fp, scale_factor)
         return store
 
     def add_from(
-        self, fp: Union[IO, str], scale_factor = 1, typedict=None, relative_to=None,
+        self,
+        fp: Union[IO, str],
+        scale_factor=1,
+        typedict=None,
+        relative_to=None,
     ) -> "AnnotationStore":
         fp = Path(fp)
         """Add annotations from a .geojson or .dat file to an existing store. Make a best
@@ -1202,6 +1206,7 @@ class AnnotationStore(ABC, MutableMapping):
             relative_to [float, float]:
                 The x and y coordinates to use as the origin for the annotations.
         """
+
         def make_valid_poly(poly, relative_to=None):
             """Helper function to make a valid polygon."""
             if poly.is_valid:
@@ -1211,9 +1216,7 @@ class AnnotationStore(ABC, MutableMapping):
                 return poly
             poly = make_valid(poly)
             if len(list(poly)) > 1:
-                return MultiPolygon(
-                    [p for p in poly if poly.geom_type == "Polygon"]
-                )
+                return MultiPolygon([p for p in poly if poly.geom_type == "Polygon"])
             if relative_to is not None:
                 # transform coords to be relative to given pt.
                 poly = translate(poly, -relative_to[0], -relative_to[1])
@@ -1225,23 +1228,30 @@ class AnnotationStore(ABC, MutableMapping):
                 string_fn=json.loads,
                 file_fn=json.load,
             )
-            
+
             if scale_factor is not None:
                 anns = [
                     Annotation(
                         scale(
-                            make_valid_poly(feature2geometry(feature["geometry"]), relative_to),
+                            make_valid_poly(
+                                feature2geometry(feature["geometry"]), relative_to
+                            ),
                             xfact=scale_factor,
                             yfact=scale_factor,
                             origin=(0, 0, 0),
                         ),
                         feature["properties"],
-                        )
-                        for feature in geojson["features"]
-                    ]
+                    )
+                    for feature in geojson["features"]
+                ]
             else:
                 anns = [
-                    Annotation(make_valid_poly(feature2geometry(feature["geometry"]), relative_to), feature["properties"])
+                    Annotation(
+                        make_valid_poly(
+                            feature2geometry(feature["geometry"]), relative_to
+                        ),
+                        feature["properties"],
+                    )
                     for feature in geojson["features"]
                 ]
 
@@ -1250,7 +1260,7 @@ class AnnotationStore(ABC, MutableMapping):
             try:
                 data = joblib.load(fp)
             except:
-                with open(fp,'r') as f:
+                with open(fp, "r") as f:
                     data = json.load(f)
             props = list(data[list(data.keys())[0]].keys())  # [3:]
             if "contour" not in props:
@@ -1264,17 +1274,17 @@ class AnnotationStore(ABC, MutableMapping):
                     if "contour" not in props:
                         continue
                     if "type" in props:
-                        #use type dictonary if available else autogen from numbers
+                        # use type dictonary if available else autogen from numbers
                         if typedict is None:
                             for key in data[subcat].keys():
                                 data[subcat][key][
                                     "type"
                                 ] = f"{subcat[:3]}: {data[subcat][key]['type']}"
-                        else: 
+                        else:
                             for key in data[subcat].keys():
-                                data[subcat][key][
-                                    "type"
-                                ] = typedict[subcat][data[subcat][key]['type']]#f"{subcat[:3]}: {data[subcat][key]['type']}"
+                                data[subcat][key]["type"] = typedict[subcat][
+                                    data[subcat][key]["type"]
+                                ]  # f"{subcat[:3]}: {data[subcat][key]['type']}"
                     else:
                         props.append("type")
                         for key in data[subcat].keys():
@@ -1286,13 +1296,17 @@ class AnnotationStore(ABC, MutableMapping):
                                     feature2geometry(
                                         {
                                             "type": "Polygon",
-                                            "coordinates": 
-                                            scale_factor * np.array([data[subcat][key]["contour"]]),
+                                            "coordinates": scale_factor
+                                            * np.array([data[subcat][key]["contour"]]),
                                         }
                                     ),
                                     relative_to,
                                 ),
-                                {key2: data[subcat][key][key2] for key2 in props[3:] if key2 in data[subcat][key].keys()},
+                                {
+                                    key2: data[subcat][key][key2]
+                                    for key2 in props[3:]
+                                    if key2 in data[subcat][key].keys()
+                                },
                             )
                             for key in data[subcat].keys()
                         ]
@@ -1304,18 +1318,23 @@ class AnnotationStore(ABC, MutableMapping):
                             feature2geometry(
                                 {
                                     "type": "Polygon",
-                                    "coordinates": scale_factor * np.array([data[key]["contour"]]),
+                                    "coordinates": scale_factor
+                                    * np.array([data[key]["contour"]]),
                                 }
                             ),
                             relative_to,
                         ),
-                        {key2: data[key][key2] for key2 in props[3:] if key2 in data[key].keys()},
+                        {
+                            key2: data[key][key2]
+                            for key2 in props[3:]
+                            if key2 in data[key].keys()
+                        },
                     )
                     for key in data.keys()
                 ]
         else:
             raise ValueError("Invalid file type")
-        print(f'added {len(anns)} annotations')
+        print(f"added {len(anns)} annotations")
         self.append_many(anns)
 
     def to_geojson(self, fp: Optional[IO] = None) -> Optional[str]:
@@ -1483,7 +1502,10 @@ class AnnotationStore(ABC, MutableMapping):
                 The amount to translate in the y direction.
 
         """
-        translated_anns = {key: translate(annotation.geometry, x, y) for key, annotation in self.items()}
+        translated_anns = {
+            key: translate(annotation.geometry, x, y)
+            for key, annotation in self.items()
+        }
         self.patch_many(translated_anns.keys(), translated_anns.values())
 
     def __del__(self) -> None:

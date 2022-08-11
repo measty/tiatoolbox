@@ -87,7 +87,7 @@ def make_ts(route):
     )
     ts.tile_size = 256
     ts.initial_resolution = (
-        40211.5 * sf * (2 / (100 * pi)) #* (256/512)
+        40211.5 * sf * (2 / (100 * pi))  # * (256/512)
     )  # 156543.03392804097    40030 great circ
     ts.x_origin_offset = 0  # 5000000
     # ts.y_origin_offset=-2500000
@@ -97,9 +97,11 @@ def make_ts(route):
     # ts.min_zoom=10
     return ts
 
+
 def to_float_rgb(rgb):
     """Helper to convert from int to float rgb(a) tuple"""
     return tuple(v / 255 for v in rgb)
+
 
 def to_int_rgb(rgb):
     """Helper to convert from float to int rgb(a) tuple"""
@@ -225,7 +227,7 @@ def build_predicate_callable():
 def initialise_slide():
     vstate.mpp = wsi[0].info.mpp
     if vstate.mpp is None:
-        vstate.mpp = [1,1]
+        vstate.mpp = [1, 1]
     vstate.dims = wsi[0].info.slide_dimensions
     vstate.types = []
     vstate.props = []
@@ -282,7 +284,7 @@ def initialise_overlay():
                     label=str(t),
                     active=True,
                     width=130,
-                    height = 30,
+                    height=30,
                     max_width=130,
                     sizing_mode="stretch_width",
                 )
@@ -295,7 +297,7 @@ def initialise_overlay():
                         name=str(t),
                         width=60,
                         max_width=60,
-                        height = 30,
+                        height=30,
                         sizing_mode="stretch_width",
                     )
                 )
@@ -480,7 +482,7 @@ def run_app():
     app = TileServer(
         title="Testing TileServer",
         layers={
-            #"slide": wsi[0],
+            # "slide": wsi[0],
         },
     )
     CORS(app, send_wildcard=True)
@@ -514,26 +516,26 @@ p = figure(
     # max_height=1000,
     # width_policy="max",
     # height_policy="max",
-    #tooltips=TOOLTIPS,
+    # tooltips=TOOLTIPS,
     tools="pan,wheel_zoom,reset",
     active_scroll="wheel_zoom",
     output_backend="canvas",
     hidpi=True,
     match_aspect=False,
-    #lod_factor=100,
-    #lod_interval=500,
-    #lod_threshold=10,
-    #lod_timeout=200,
+    # lod_factor=100,
+    # lod_interval=500,
+    # lod_threshold=10,
+    # lod_timeout=200,
     sizing_mode="stretch_both",
     name="slide_window",
 )
-#p.axis.visible = False
+# p.axis.visible = False
 initialise_slide()
 
 s = requests.Session()
 resp = s.get(f"http://{host2}:5000/tileserver/setup")
-print(f'cookies are: {s.cookies}')
-user = s.cookies.get('user')
+print(f"cookies are: {s.cookies}")
+user = s.cookies.get("user")
 
 ts1 = make_ts(
     f"http://{host}:{port}/tileserver/layer/slide/{user}/zoomify/TileGroup1"
@@ -560,10 +562,12 @@ p.renderers[0].tile_source.max_zoom = 10
 
 node_source = ColumnDataSource({"index": [], "node_color": []})
 edge_source = ColumnDataSource({"start": [], "end": []})
-graph = GraphRenderer()#level='overlay')
+graph = GraphRenderer()  # level='overlay')
 graph.node_renderer.data_source = node_source
 graph.edge_renderer.data_source = edge_source
-graph.node_renderer.glyph = Circle(radius=50, radius_units="data", fill_color="node_color")
+graph.node_renderer.glyph = Circle(
+    radius=50, radius_units="data", fill_color="node_color"
+)
 
 
 # Define UI elements
@@ -590,14 +594,14 @@ overlay_alpha = Slider(
     sizing_mode="stretch_width",
 )
 
-pt_size_spinner =  Spinner(
+pt_size_spinner = Spinner(
     title="Pt. Size:",
-    low = 0,
-    high = 10,
-    step = 1,
-    value = 1,
-    width = 60,
-    max_width = 60,
+    low=0,
+    high=10,
+    step=1,
+    value=1,
+    width=60,
+    max_width=60,
     sizing_mode="stretch_width",
 )
 
@@ -624,9 +628,9 @@ overlay_toggle = Toggle(
 filter_input = TextInput(
     value="None", title="Filter:", max_width=300, sizing_mode="stretch_width"
 )
-#cprop_input = TextInput(
+# cprop_input = TextInput(
 #    value="type", title="CProp:", max_width=300, sizing_mode="stretch_width"
-#)
+# )
 cprop_input = MultiChoice(
     title="Colour by:",
     max_items=1,
@@ -654,28 +658,28 @@ cmap_drop = Dropdown(
     button_type="warning",
     menu=cmmenu,
     width=100,
-    max_width = 100,
+    max_width=100,
     height=45,
     sizing_mode="stretch_width",
 )
 blur_spinner = Spinner(
     title="Blur:",
-    low = 0,
-    high = 10,
-    step = 1,
-    value = 0,
-    width = 80,
-    max_width = 80,
+    low=0,
+    high=10,
+    step=1,
+    value=0,
+    width=80,
+    max_width=80,
     sizing_mode="stretch_width",
 )
 scale_spinner = Spinner(
     title="max_scale:",
-    low = 0,
-    high = 540,
-    step = 8,
-    value = 16,
-    width = 80,
-    max_width = 80,
+    low=0,
+    high=540,
+    step=8,
+    value=16,
+    width=80,
+    max_width=80,
     sizing_mode="stretch_width",
 )
 to_model_button = Button(
@@ -856,10 +860,12 @@ def overlay_alpha_cb(attr, old, new):
         else:
             p.renderers[i].alpha = new
 
+
 def pt_size_cb(attr, old, new):
     update_renderer("edge_thickness", new)
-    graph.node_renderer.glyph.radius = 20*new
+    graph.node_renderer.glyph.radius = 20 * new
     vstate.update_state = 1
+
 
 def opt_buttons_cb(attr, old, new):
     old_thickness = vstate.renderer.thickness
@@ -894,9 +900,11 @@ def cmap_drop_cb(attr):
     # change_tiles('overlay')
     vstate.update_state = 1
 
+
 def blur_spinner_cb(attr, old, new):
     update_renderer("blur_radius", new)
     vstate.update_state = 1
+
 
 def scale_spinner_cb(attr, old, new):
     update_renderer("max_scale", new)
@@ -984,8 +992,8 @@ def layer_drop_cb(attr):
 
         # add additional data to graph datasource
         for key in graph_dict:
-            if key=='feat_names':
-                graph_feat_names=graph_dict[key]
+            if key == "feat_names":
+                graph_feat_names = graph_dict[key]
                 do_feats = True
             try:
                 if (
@@ -998,17 +1006,22 @@ def layer_drop_cb(attr):
             node_source.data[key] = graph_dict[key]
 
         if do_feats:
-            for i in range(graph_dict['feats'].shape[1]):
-                if i>9:
-                    break   #more than 10 wont really fit, ignore rest
-                node_source.data[graph_feat_names[i]] = graph_dict["feats"][:,i]
+            for i in range(graph_dict["feats"].shape[1]):
+                if i > 9:
+                    break  # more than 10 wont really fit, ignore rest
+                node_source.data[graph_feat_names[i]] = graph_dict["feats"][:, i]
 
-            TOOLTIPS=[
+            TOOLTIPS = [
                 ("Index", "$index"),
                 ("(x,y)", "($x, $y)"),
             ]
-            TOOLTIPS.extend([(graph_feat_names[i], f"@{graph_feat_names[i]}") for i in range(np.minimum(graph_dict['feats'].shape[1],9))])
-            hover.tooltips=TOOLTIPS
+            TOOLTIPS.extend(
+                [
+                    (graph_feat_names[i], f"@{graph_feat_names[i]}")
+                    for i in range(np.minimum(graph_dict["feats"].shape[1], 9))
+                ]
+            )
+            hover.tooltips = TOOLTIPS
 
         return
 
@@ -1021,10 +1034,10 @@ def layer_drop_cb(attr):
         vstate.types = resp
         props = s.get(f"http://{host2}:5000/tileserver/getprops")
         vstate.props = json.loads(props.text)
-        #type_cmap_select.options = vstate.props
+        # type_cmap_select.options = vstate.props
         cprop_input.options = vstate.props
-        cprop_input.options.append('None')
-        if not vstate.props == vstate.props_old: 
+        cprop_input.options.append("None")
+        if not vstate.props == vstate.props_old:
             update_mapper()
             vstate.props_old = vstate.props
         initialise_overlay()
@@ -1121,21 +1134,23 @@ def type_cmap_cb(attr, old, new):
         type_cmap_select.options = vstate.types
         return
     if len(new) == 1:
-        #find out what still has to be selected
+        # find out what still has to be selected
         if new[0] in vstate.types:
             type_cmap_select.options = vstate.props + [new[0]]
         elif new[0] in vstate.props:
             type_cmap_select.options = vstate.types + [new[0]]
     else:
-        #both selected, update the renderer
+        # both selected, update the renderer
         if new[1] in vstate.types:
             type_cmap_select.value = [new[1], new[0]]
             return
         s.get(
             f"http://{host2}:5000/tileserver/changesecondarycmap/{new[0]}/{new[1]}/viridis"
         )
-        
-        color_bar.color_mapper.palette = make_color_seq_from_cmap(cm.get_cmap("viridis"))
+
+        color_bar.color_mapper.palette = make_color_seq_from_cmap(
+            cm.get_cmap("viridis")
+        )
         color_bar.visible = True
         vstate.update_state = 1
 
@@ -1277,8 +1292,8 @@ populate_layer_list(Path(vstate.slide_path).stem, overlay_folder)
 box_column = column(children=layer_boxes)
 color_column = column(children=lcolors)
 
-#open up first slide in list
-slide_select_cb(None, None, new = [slide_list[0]])
+# open up first slide in list
+slide_select_cb(None, None, new=[slide_list[0]])
 
 ui_layout = column(
     [
@@ -1288,7 +1303,7 @@ ui_layout = column(
         row([overlay_toggle, overlay_alpha, pt_size_spinner]),
         filter_input,
         cprop_input,
-        #cmap_drop,
+        # cmap_drop,
         row([cmap_drop, blur_spinner, scale_spinner]),
         type_cmap_select,
         opt_buttons,

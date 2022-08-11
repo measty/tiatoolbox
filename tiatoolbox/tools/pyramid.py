@@ -477,14 +477,14 @@ class AnnotationTileGenerator(ZoomifyGenerator):
         tile_size: int = 256,
         downsample: int = 2,
         overlap: int = 0,
-    ):  
+    ):
         super().__init__(None, tile_size, downsample, overlap)
         self.info = info
         self.store = store
         if renderer is None:
             renderer = AnnotationRenderer()
         self.renderer = renderer
-        self.overlap = int(1.5*renderer.blur_radius)
+        self.overlap = int(1.5 * renderer.blur_radius)
 
         output_size = [self.output_tile_size] * 2
         self.empty_img = Image.fromarray(
@@ -637,17 +637,17 @@ class AnnotationTileGenerator(ZoomifyGenerator):
                 The tile with the annotations rendered.
 
         """
-        top_left = np.array(bound_geom.bounds[:2])# - scale*self.overlap
+        top_left = np.array(bound_geom.bounds[:2])  # - scale*self.overlap
         # clip_bound_geom=bound_geom.buffer(scale)
         r = self.renderer
         output_size = [self.output_tile_size] * 2
         if r.zoomed_out_strat == "scale" or r.zoomed_out_strat == "decimate":
-            mpp_sf = np.minimum(self.info.mpp[0]/ 0.25, 1) if self.info.mpp is not None else 1
-            min_area = (
-                0.0005
-                * (self.output_tile_size * scale * mpp_sf)
-                ** 2
+            mpp_sf = (
+                np.minimum(self.info.mpp[0] / 0.25, 1)
+                if self.info.mpp is not None
+                else 1
             )
+            min_area = 0.0005 * (self.output_tile_size * scale * mpp_sf) ** 2
         else:
             min_area = r.zoomed_out_strat
 
@@ -738,7 +738,9 @@ class AnnotationTileGenerator(ZoomifyGenerator):
         elif geom_type == "LineString":
             r.render_line(tile, annotation, top_left, scale)
         elif geom_type == "GeometryCollection":
-            warnings.warn(f"unknown geometry: {geom_type}: {[g.geom_type for g in annotation.geometry.geoms]}")
-            #pass
+            warnings.warn(
+                f"unknown geometry: {geom_type}: {[g.geom_type for g in annotation.geometry.geoms]}"
+            )
+            # pass
         else:
             warnings.warn(f"Unknown geometry: {geom_type}")
