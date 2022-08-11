@@ -797,9 +797,9 @@ class AnnotationStore(ABC, MutableMapping):
         """Query the store for annotation bounding boxes.
 
         Acts similarly to `AnnotationStore.query` except it checks for
-        intersection between sotred and query geometry bounding boxes.
+        intersection between stored and query geometry bounding boxes.
         This may be faster than a regular query in some cases, e.g. for
-        SQliteStore with a alrge number of annotations.
+        SQliteStore with a large number of annotations.
 
         Note that this method only checks for bounding box intersection
         and therefore may give a different result to using
@@ -1144,53 +1144,80 @@ class AnnotationStore(ABC, MutableMapping):
 
     @classmethod
     def from_geojson(cls, fp: Union[IO, str], scale_factor=None) -> "AnnotationStore":
-        geojson = cls._load_cases(
-            fp=fp,
-            string_fn=json.loads,
-            file_fn=json.load,
-        )
+        """Load annotations from a geoJSON file.
+        Args:
+            fp (Union[IO, str, Path]):
+                The file path or handle to load from.
+            scale_factor (float):
+                The scale factor to use when loading the annotations. All coordinates
+                will be multiplied by this factor to allow import of annotations saved
+                at non-baseline resolution.
+        Returns:
+            AnnotationStore:
+                A new annotation store with the annotations loaded from the file.
+        """
+        
         store = cls()
-        if scale_factor is not None:
-            anns = [
-                Annotation(
-                    scale(
-                        feature2geometry(feature["geometry"]),
-                        xfact=scale_factor,
-                        yfact=scale_factor,
-                        origin=(0, 0, 0),
-                    ),
-                    feature["properties"],
-                )
-                for feature in geojson["features"]
-            ]
-        else:
-            anns = [
-                Annotation(feature2geometry(feature["geometry"]), feature["properties"])
-                for feature in geojson["features"]
-            ]
-        store.append_many(anns)
+        store.add_from(fp, scale_factor)
         return store
 
-    def from_dat(
+    @classmethod
+    def from_dat(cls, fp: Union[IO, str], scale_factor=None) -> "AnnotationStore":
+        """Load annotations from a hovernet-style .dat file.
+        Args:
+            fp (Union[IO, str, Path]):
+                The file path or handle to load from.
+            scale_factor (float):
+                The scale factor to use when loading the annotations. All coordinates
+                will be multiplied by this factor to allow import of annotations saved
+                at non-baseline resolution.
+        Returns:
+            AnnotationStore:
+                A new annotation store with the annotations loaded from the file.
+        """
+        
+        store = cls()
+        store.add_from(fp, scale_factor)
+        return store
+
+    def add_from(
         self, fp: Union[IO, str], scale_factor = 1, typedict=None, relative_to=None,
     ) -> "AnnotationStore":
         fp = Path(fp)
+        """Add annotations from a .geojson or .dat file to an existing store. Make a best
+        effort to create valid shapely geometries from provided contours.
 
+        Args:
+            fp (Union[IO, str, Path]):
+                The file path or handle to load from.
+            scale_factor (float):
+                The scale factor to use when loading the annotations. All coordinates
+                will be multiplied by this factor to allow import of annotations saved
+                at non-baseline resolution.
+            typedict (Dict[str, str]):
+                A dictionary mapping annotation types to annotation keys. Annotations
+                with a type that is a key in the dictionary, will have their type replaced by
+                the corresponding value. Useful for providing descriptive names to non-descriptive
+                types, eg {1: 'Epithelial Cell', 2: 'Lymphocyte', 3: ...}.
+            relative_to [float, float]:
+                The x and y coordinates to use as the origin for the annotations.
+        """
         def make_valid_poly(poly, relative_to=None):
-                if poly.is_valid:
-                    return poly
-                poly = poly.buffer(0.01)
-                if poly.is_valid:
-                    return poly
-                poly = make_valid(poly)
-                if len(list(poly)) > 1:
-                    return MultiPolygon(
-                        [p for p in poly if poly.geom_type == "Polygon"]
-                    )
-                if relative_to is not None:
-                    # transform coords to be relative to given pt.
-                    poly = translate(poly, -relative_to[0], -relative_to[1])
+            """Helper function to make a valid polygon."""
+            if poly.is_valid:
                 return poly
+            poly = poly.buffer(0.01)
+            if poly.is_valid:
+                return poly
+            poly = make_valid(poly)
+            if len(list(poly)) > 1:
+                return MultiPolygon(
+                    [p for p in poly if poly.geom_type == "Polygon"]
+                )
+            if relative_to is not None:
+                # transform coords to be relative to given pt.
+                poly = translate(poly, -relative_to[0], -relative_to[1])
+            return poly
 
         if fp.suffix == ".geojson":
             geojson = self._load_cases(
@@ -1198,15 +1225,26 @@ class AnnotationStore(ABC, MutableMapping):
                 string_fn=json.loads,
                 file_fn=json.load,
             )
-            """for feature in geojson["features"]:
-                geometry = feature2geometry(feature["geometry"])
-                properties = feature["properties"]
-                store.append(Annotation(geometry, properties))
-            return store"""
-            anns = [
-                Annotation(make_valid_poly(feature2geometry(feature["geometry"]), relative_to), feature["properties"])
-                for feature in geojson["features"]
-            ]
+            
+            if scale_factor is not None:
+                anns = [
+                    Annotation(
+                        scale(
+                            make_valid_poly(feature2geometry(feature["geometry"]), relative_to),
+                            xfact=scale_factor,
+                            yfact=scale_factor,
+                            origin=(0, 0, 0),
+                        ),
+                        feature["properties"],
+                        )
+                        for feature in geojson["features"]
+                    ]
+            else:
+                anns = [
+                    Annotation(make_valid_poly(feature2geometry(feature["geometry"]), relative_to), feature["properties"])
+                    for feature in geojson["features"]
+                ]
+
         elif fp.suffix == ".dat":
             # hovernet-stype .dat file
             try:
@@ -2090,7 +2128,8 @@ class SQLiteStore(AnnotationStore):
         compress_type=None,
         min_area=None,
     ) -> sqlite3.Cursor:
-        """Common query construction logic for `query` and `iquery`.
+        """Common query construction logic for `query` and `iquery`. Similar
+        to `_query` but can be cached. Does not support where.
 
         Args:
             rows(str):

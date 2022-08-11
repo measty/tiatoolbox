@@ -328,6 +328,7 @@ class TileServer(Flask):
         if self.tia_layers[layer].info.mpp is None:
             self.tia_layers[layer].info.mpp = [1, 1]
         self.slide_mpp = self.tia_layers[layer].info.mpp
+        print(f'renderer is: {self.renderer.score_prop}')
 
         return layer
 
@@ -409,15 +410,14 @@ class TileServer(Flask):
 
         for layer in self.tia_pyramids.values():
             if isinstance(layer, AnnotationTileGenerator):
-                layer.store.from_dat(
+                layer.store.add_from(
                     file_path,
                     np.array(model_mpp) / np.array(self.slide_mpp)
                 )
                 types = self.update_types(layer.store)
                 return json.dumps(types)
 
-        SQ = SQLiteStore(auto_commit=False)
-        SQ.from_dat(file_path, np.array(model_mpp) / np.array(self.slide_mpp))
+        SQ = SQLiteStore.from_dat(file_path, np.array(model_mpp) / np.array(self.slide_mpp))
         self.tia_pyramids["overlay"] = AnnotationTileGenerator(
             self.tia_layers["slide"].info, SQ, self.renderer, overlap=self.overlap,
         )

@@ -430,6 +430,7 @@ class ViewerState:
         self.micron_formatter = None
         self.current_model = "hovernet"
         self.props = []
+        self.props_old = []
 
 
 vstate = ViewerState()
@@ -498,7 +499,6 @@ vstate.micron_formatter = FuncTickFormatter(
 )
 
 do_feats = False
-
 
 p = figure(
     x_range=(0, vstate.dims[0]),
@@ -1010,13 +1010,15 @@ def layer_drop_cb(attr):
 
     if Path(attr.item).suffix in [".db", ".dat", ".geojson"]:
         vstate.types = resp
-        update_mapper()
-        initialise_overlay()
-        change_tiles("overlay")
         props = requests.get(f"http://{host2}:5000/tileserver/getprops")
         vstate.props = json.loads(props.text)
         #type_cmap_select.options = vstate.props
         cprop_input.options = vstate.props
+        if not vstate.props == vstate.props_old: 
+            update_mapper()
+            vstate.props_old = vstate.props
+        initialise_overlay()
+        change_tiles("overlay")
     else:
         add_layer(resp)
         change_tiles(resp)
