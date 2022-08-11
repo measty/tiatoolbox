@@ -97,6 +97,9 @@ def make_ts(route):
     # ts.min_zoom=10
     return ts
 
+def to_float_rgb(rgb):
+    """Helper to convert from int to float rgb(a) tuple"""
+    return tuple(v / 255 for v in rgb)
 
 def to_int_rgb(rgb):
     """Helper to convert from float to int rgb(a) tuple"""
@@ -160,8 +163,8 @@ def update_renderer(prop, value):
                 cm.get_cmap(value)
             )
             color_bar.visible = True
-        return requests.get(f"http://{host2}:5000/tileserver/changecmap/{value}")
-    return requests.get(
+        return s.get(f"http://{host2}:5000/tileserver/changecmap/{value}")
+    return s.get(
         f"http://{host2}:5000/tileserver/updaterenderer/{prop}/{json.dumps(value)}"
     )
 
@@ -212,7 +215,7 @@ def build_predicate_callable():
 
     vstate.renderer.where = pred
     # update_renderer("where", json.dumps(pred))
-    requests.post(
+    s.post(
         f"http://{host2}:5000/tileserver/updatewhere",
         data={"types": json.dumps(get_types), "filter": json.dumps(filter_input.value)},
     )
@@ -379,14 +382,14 @@ def change_tiles(layer_name="overlay"):
                 continue
             grp = tg.get_grp()
             ts = make_ts(
-                f"http://{host}:{port}/tileserver/layer/{layer_key}/zoomify/TileGroup{grp}"
+                f"http://{host}:{port}/tileserver/layer/{layer_key}/{user}/zoomify/TileGroup{grp}"
                 + r"/{z}-{x}-{y}.jpg",
             )
             p.renderers[vstate.layer_dict[layer_key]].tile_source = ts
         return
 
     ts = make_ts(
-        f"http://{host}:{port}/tileserver/layer/{layer_name}/zoomify/TileGroup{grp}"
+        f"http://{host}:{port}/tileserver/layer/{layer_name}/{user}/zoomify/TileGroup{grp}"
         + r"/{z}-{x}-{y}.jpg",
     )
     if layer_name in vstate.layer_dict:
@@ -404,7 +407,7 @@ def change_tiles(layer_name="overlay"):
                 continue
             grp = tg.get_grp()
             ts = make_ts(
-                f"http://{host}:{port}/tileserver/layer/{layer_key}/zoomify/TileGroup{grp}"
+                f"http://{host}:{port}/tileserver/layer/{layer_key}/{user}/zoomify/TileGroup{grp}"
                 + r"/{z}-{x}-{y}.jpg",
             )
             p.renderers[vstate.layer_dict[layer_key]].tile_source = ts
@@ -477,7 +480,7 @@ def run_app():
     app = TileServer(
         title="Testing TileServer",
         layers={
-            "slide": wsi[0],
+            #"slide": wsi[0],
         },
     )
     CORS(app, send_wildcard=True)
@@ -526,8 +529,14 @@ p = figure(
 )
 #p.axis.visible = False
 initialise_slide()
+
+s = requests.Session()
+resp = s.get(f"http://{host2}:5000/tileserver/setup")
+print(f'cookies are: {s.cookies}')
+user = s.cookies.get('user')
+
 ts1 = make_ts(
-    f"http://{host}:{port}/tileserver/layer/slide/zoomify/TileGroup1"
+    f"http://{host}:{port}/tileserver/layer/slide/{user}/zoomify/TileGroup1"
     + r"/{z}-{x}-{y}.jpg",
 )
 print(p.renderers)
@@ -814,13 +823,13 @@ def layer_folder_input_cb(attr, old, new):
 
 def filter_input_cb(attr, old, new):
     """Change predicate to be used to filter annotations"""
-    requests.get(f"http://{host2}:5000/tileserver/changepredicate/{new}")
+    s.get(f"http://{host2}:5000/tileserver/changepredicate/{new}")
     vstate.update_state = 1
 
 
 def cprop_input_cb(attr, old, new):
     """Change property to colour by"""
-    requests.get(f"http://{host2}:5000/tileserver/changeprop/{new[0]}")
+    s.get(f"http://{host2}:5000/tileserver/changeprop/{new[0]}")
     vstate.update_state = 1
 
 
@@ -925,7 +934,7 @@ def slide_select_cb(attr, old, new):
     fname = make_safe_name(str(slide_path))
     print(fname)
     print(vstate.mpp)
-    requests.get(f"http://{host2}:5000/tileserver/changeslide/slide/{fname}")
+    s.get(f"http://{host2}:5000/tileserver/changeslide/slide/{fname}")
     change_tiles("slide")
     # if len(p.renderers)==1:
     # r=p.rect('x', 'y', 'width', 'height', source=box_source, fill_alpha=0)
@@ -1005,15 +1014,16 @@ def layer_drop_cb(attr):
 
     # fname='-*-'.join(attr.item.split('\\'))
     fname = make_safe_name(attr.item)
-    resp = requests.get(f"http://{host2}:5000/tileserver/changeoverlay/{fname}")
+    resp = s.get(f"http://{host2}:5000/tileserver/changeoverlay/{fname}")
     resp = json.loads(resp.text)
 
     if Path(attr.item).suffix in [".db", ".dat", ".geojson"]:
         vstate.types = resp
-        props = requests.get(f"http://{host2}:5000/tileserver/getprops")
+        props = s.get(f"http://{host2}:5000/tileserver/getprops")
         vstate.props = json.loads(props.text)
         #type_cmap_select.options = vstate.props
         cprop_input.options = vstate.props
+        cprop_input.options.append('None')
         if not vstate.props == vstate.props_old: 
             update_mapper()
             vstate.props_old = vstate.props
@@ -1121,7 +1131,7 @@ def type_cmap_cb(attr, old, new):
         if new[1] in vstate.types:
             type_cmap_select.value = [new[1], new[0]]
             return
-        requests.get(
+        s.get(
             f"http://{host2}:5000/tileserver/changesecondarycmap/{new[0]}/{new[1]}/viridis"
         )
         
@@ -1134,7 +1144,7 @@ def save_cb(attr):
     save_path = make_safe_name(
         str(overlay_folder / (vstate.slide_path.stem + "_saved_anns.db"))
     )
-    requests.get(f"http://{host2}:5000/commit/{save_path}")
+    s.get(f"http://{host2}:5000/commit/{save_path}")
 
 
 # run NucleusInstanceSegmentor on a region of wsi defined by the box in box_source
@@ -1179,7 +1189,7 @@ def segment_on_box(attr):
     # fname='-*-'.join('.\\sample_tile_results\\0.dat'.split('\\'))
     fname = make_safe_name(".\\sample_tile_results\\0.dat")
     print(fname)
-    resp = requests.get(
+    resp = s.get(
         f"http://{host2}:5000/tileserver/loadannotations/{fname}/{vstate.model_mpp}"
     )
     vstate.types = json.loads(resp.text)
@@ -1229,7 +1239,7 @@ def nuclick_on_pts(attr):
     # fname='-*-'.join('.\\sample_tile_results\\0.dat'.split('\\'))
     fname = make_safe_name("\\app_data\\sample_tile_results\\0.dat")
     print(fname)
-    resp = requests.get(
+    resp = s.get(
         f"http://{host2}:5000/tileserver/loadannotations/{fname}/{vstate.model_mpp}"
     )
     print(resp.text)
@@ -1266,6 +1276,10 @@ populate_layer_list(Path(vstate.slide_path).stem, overlay_folder)
 
 box_column = column(children=layer_boxes)
 color_column = column(children=lcolors)
+
+#open up first slide in list
+slide_select_cb(None, None, new = [slide_list[0]])
+
 ui_layout = column(
     [
         slide_select,
