@@ -756,6 +756,31 @@ class TestStore:
         assert len(store) == len(store2)
 
     @staticmethod
+    def test_from_dat_str(fill_store, tmp_path, store_cls):
+        """Test loading from geojson with a file path string."""
+        _, store = fill_store(store_cls, tmp_path / "polygon.db")
+        geojson = store.to_geojson()
+        store2 = store_cls.from_geojson(geojson)
+        assert len(store) == len(store2)
+
+    @staticmethod
+    def test_from_dat_file(fill_store, tmp_path, store_cls):
+        """Test loading from geojson with a file handle."""
+        _, store = fill_store(store_cls, tmp_path / "polygon.db")
+        store.to_geojson(tmp_path / "polygon.json")
+        with open(tmp_path / "polygon.json", "r") as file_handle:
+            store2 = store_cls.from_geojson(file_handle)
+        assert len(store) == len(store2)
+
+    @staticmethod
+    def test_from_dat_path(fill_store, tmp_path, store_cls):
+        """Test loading from geojson with a file path."""
+        _, store = fill_store(store_cls, tmp_path / "polygon.db")
+        store.to_geojson(tmp_path / "polygon.json")
+        store2 = store_cls.from_geojson(tmp_path / "polygon.json")
+        assert len(store) == len(store2)
+
+    @staticmethod
     def test_to_geojson_str(fill_store, tmp_path, store_cls):
         """Test exporting to ndjson with a file path string."""
         _, store = fill_store(store_cls, tmp_path / "polygon.db")

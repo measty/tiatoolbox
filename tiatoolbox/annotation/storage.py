@@ -1143,7 +1143,8 @@ class AnnotationStore(ABC, MutableMapping):
         raise IOError("Invalid file handle or path.")
 
     @classmethod
-    def from_geojson(cls, fp: Union[IO, str], scale_factor=None) -> "AnnotationStore":
+    def from_geojson(cls, fp: Union[IO, str], scale_factor=None, typedict=None,
+        relative_to=None,) -> "AnnotationStore":
         """Load annotations from a geoJSON file.
         Args:
             fp (Union[IO, str, Path]):
@@ -1152,17 +1153,26 @@ class AnnotationStore(ABC, MutableMapping):
                 The scale factor to use when loading the annotations. All coordinates
                 will be multiplied by this factor to allow import of annotations saved
                 at non-baseline resolution.
+            typedict (Dict[str, str]):
+                A dictionary mapping annotation types to annotation keys. Annotations
+                with a type that is a key in the dictionary, will have their type replaced by
+                the corresponding value. Useful for providing descriptive names to non-descriptive
+                types, eg {1: 'Epithelial Cell', 2: 'Lymphocyte', 3: ...}.
+            relative_to [float, float]:
+                The x and y coordinates to use as the origin for the annotations.
+
         Returns:
             AnnotationStore:
                 A new annotation store with the annotations loaded from the file.
         """
 
         store = cls()
-        store.add_from(fp, scale_factor)
+        store.add_from(fp, scale_factor, typedict=typedict, relative_to=relative_to)
         return store
 
     @classmethod
-    def from_dat(cls, fp: Union[IO, str], scale_factor=None) -> "AnnotationStore":
+    def from_dat(cls, fp: Union[IO, str], scale_factor=None, typedict=None,
+        relative_to=None,) -> "AnnotationStore":
         """Load annotations from a hovernet-style .dat file.
         Args:
             fp (Union[IO, str, Path]):
@@ -1171,13 +1181,21 @@ class AnnotationStore(ABC, MutableMapping):
                 The scale factor to use when loading the annotations. All coordinates
                 will be multiplied by this factor to allow import of annotations saved
                 at non-baseline resolution.
+            typedict (Dict[str, str]):
+                A dictionary mapping annotation types to annotation keys. Annotations
+                with a type that is a key in the dictionary, will have their type replaced by
+                the corresponding value. Useful for providing descriptive names to non-descriptive
+                types, eg {1: 'Epithelial Cell', 2: 'Lymphocyte', 3: ...}.
+            relative_to [float, float]:
+                The x and y coordinates to use as the origin for the annotations.
+
         Returns:
             AnnotationStore:
                 A new annotation store with the annotations loaded from the file.
         """
 
         store = cls()
-        store.add_from(fp, scale_factor)
+        store.add_from(fp, scale_factor, typedict=typedict, relative_to=relative_to)
         return store
 
     def add_from(
@@ -1186,7 +1204,7 @@ class AnnotationStore(ABC, MutableMapping):
         scale_factor=1,
         typedict=None,
         relative_to=None,
-    ) -> "AnnotationStore":
+    ) -> None:
         fp = Path(fp)
         """Add annotations from a .geojson or .dat file to an existing store. Make a best
         effort to create valid shapely geometries from provided contours.
@@ -2150,7 +2168,7 @@ class SQLiteStore(AnnotationStore):
         compress_type=None,
         min_area=None,
     ) -> sqlite3.Cursor:
-        """Common query construction logic for `query` and `iquery`. Similar
+        """Common query construction logic for `cached_query` and `cached_bquery`. Similar
         to `_query` but can be cached. Does not support where.
 
         Args:
