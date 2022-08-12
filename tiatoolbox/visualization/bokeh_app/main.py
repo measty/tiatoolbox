@@ -56,7 +56,7 @@ from tiatoolbox.visualization.tileserver import TileServer
 from tiatoolbox.visualization.ui_utils import get_level_by_extent
 from tiatoolbox.wsicore.wsireader import WSIReader, OpenSlideWSIReader
 
-is_deployed = True
+is_deployed = False
 # rand_id = token.generate_session_id()
 # print(f'rand id is: {rand_id}')
 
@@ -519,11 +519,16 @@ TOOLTIPS = [
     ("Index", "$index"),
     ("(x,y)", "($x, $y)"),
     ("Score", "@node_exp"),
-    ("Feat1", "@feat1: @exp_val1"),
-    ("Feat2", "@feat2: @exp_val2"),
-    ("Feat3", "@feat3: @exp_val3"),
-    ("Feat4", "@feat4: @exp_val4"),
-    ("Feat5", "@feat5: @exp_val5"),
+    # ("Feat1", "@feat1: @exp_val1"),
+    # ("Feat2", "@feat2: @exp_val2"),
+    # ("Feat3", "@feat3: @exp_val3"),
+    # ("Feat4", "@feat4: @exp_val4"),
+    # ("Feat5", "@feat5: @exp_val5"),
+    ("Feat1", "@feat1"),
+    ("Feat2", "@feat2"),
+    ("Feat3", "@feat3"),
+    ("Feat4", "@feat4"),
+    ("Feat5", "@feat5"),
 ]
 
 # set up main window
