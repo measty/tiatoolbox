@@ -550,15 +550,15 @@ p = figure(
     # width_policy="max",
     # height_policy="max",
     tooltips=TOOLTIPS,
-    tools="pan,wheel_zoom,reset",
+    tools="pan,wheel_zoom,reset,zoom_in,zoom_out",
     active_scroll="wheel_zoom",
     output_backend="canvas",
     hidpi=False,
     match_aspect=False,
-    #lod_factor=100,
-    #lod_interval=500,
-    #lod_threshold=10,
-    #lod_timeout=200,
+    lod_factor=1000,
+    lod_interval=500,
+    lod_threshold=10,
+    lod_timeout=200,
     sizing_mode="stretch_both",
     name="slide_window",
 )
@@ -606,6 +606,17 @@ slide_alpha = Slider(
     end=1,
     step=0.05,
     value=1.0,
+    width=200,
+    max_width=200,
+    sizing_mode="stretch_width",
+)
+
+zoom_slider = Slider(
+    title="Adjust zoom",
+    start=0.1,
+    end=1,
+    step=0.005,
+    value=0.9,
     width=200,
     max_width=200,
     sizing_mode="stretch_width",
@@ -1101,6 +1112,23 @@ def save_cb(attr):
     )
     s.get(f"http://{host2}:5000/commit/{save_path}")
 
+def update_zoom(attr, old, new):
+    #global last_value
+    aspect_ratio = abs((p.x_range.end - p.x_range.start)/(p.y_range.end - p.y_range.start))
+    scale = np.mean([abs(p.x_range.end - p.x_range.start), abs(p.y_range.end - p.y_range.start)])
+    if old is not None:
+        diff = - new + old
+           
+        p.y_range.start = p.y_range.start + diff * scale
+        p.y_range.end = p.y_range.end - diff * scale
+
+        p.x_range.start = p.x_range.start + diff * aspect_ratio * scale
+        p.x_range.end = p.x_range.end - diff * aspect_ratio * scale
+
+    #last_value = new
+
+zoom_slider.on_change('value', update_zoom)
+
 
 # run NucleusInstanceSegmentor on a region of wsi defined by the box in box_source
 def segment_on_box(attr):
@@ -1231,6 +1259,7 @@ box_column = column(children=layer_boxes)
 color_column = column(children=lcolors)
 
 # open up first slide in list
+#slide_select.value = [str(slide_list[0])]
 slide_select_cb(None, None, new=[slide_list[0]])
 #set ticks to microns
 p.xaxis[0].formatter = vstate.micron_formatter
@@ -1243,6 +1272,7 @@ ui_layout = column(
         # save_button,
         layer_drop,
         row([slide_toggle, slide_alpha]),
+        #zoom_slider,
         row([overlay_toggle, overlay_alpha]),
         # filter_input,
         # cprop_input,
