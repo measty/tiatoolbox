@@ -1132,6 +1132,10 @@ def to_model_cb(attr):
 def type_cmap_cb(attr, old, new):
     if len(new) == 0:
         type_cmap_select.options = vstate.types
+        s.get(
+            f"http://{host2}:5000/tileserver/changesecondarycmap/{'None'}/{'None'}/viridis"
+        )
+        vstate.update_state = 1
         return
     if len(new) == 1:
         # find out what still has to be selected
