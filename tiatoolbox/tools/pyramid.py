@@ -223,7 +223,7 @@ class TilePyramidGenerator:
                 interpolation=interpolation,
             )
         # is this needed? get rid of it or do a better way
-        alph = 255 - np.all(tile == 255, axis=2).astype("uint8") * 255
+        alph = 255 - np.all(tile == 0, axis=2).astype("uint8") * 255
         tile = np.dstack((tile, alph))
         return Image.fromarray(tile)
 

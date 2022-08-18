@@ -150,6 +150,23 @@ class Annotation:
         """
         return json.dumps(self.to_feature())
 
+    def to_dict(self) -> Dict:
+        """
+        Return a dictionary representation of this annotation, in
+        same format as hovernet outputs.
+
+        Returns:
+            dict:
+                A dictionary representation of this annotation.
+        """
+        ann_dict = {}
+        ann_dict['box'] = self.geometry.bounds
+        ann_dict['centroid'] = self.geometry.centroid.coords[0]
+        ann_dict['contour'] = self.geometry.exterior.coords[:]
+        for key, value in self.properties.items():
+            ann_dict[key] = value
+        return ann_dict
+
     def __lt__(self, other):
         return self.geometry.area < other.geometry.area
 
@@ -1205,7 +1222,6 @@ class AnnotationStore(ABC, MutableMapping):
         typedict=None,
         relative_to=None,
     ) -> None:
-        fp = Path(fp)
         """Add annotations from a .geojson or .dat file to an existing store. Make a best
         effort to create valid shapely geometries from provided contours.
 
@@ -1224,6 +1240,11 @@ class AnnotationStore(ABC, MutableMapping):
             relative_to [float, float]:
                 The x and y coordinates to use as the origin for the annotations.
         """
+        file_type = 'geo'
+        if isinstance(fp, Path) and fp.suffix == '.dat':
+            file_type = 'dat'
+        if isinstance(fp, IO) and Path(fp.name).suffix == '.dat':
+            file_type = 'dat'        
 
         def make_valid_poly(poly, relative_to=None):
             """Helper function to make a valid polygon."""
@@ -1240,7 +1261,7 @@ class AnnotationStore(ABC, MutableMapping):
                 poly = translate(poly, -relative_to[0], -relative_to[1])
             return poly
 
-        if fp.suffix == ".geojson":
+        if isinstance(fp, str) or file_type=='geo':
             geojson = self._load_cases(
                 fp=fp,
                 string_fn=json.loads,
@@ -1398,6 +1419,35 @@ class AnnotationStore(ABC, MutableMapping):
             fp=fp,
             file_fn=write_geojson_to_file_handle,
             none_fn=lambda: json.dumps(self.to_geodict()),
+        )
+
+    def to_dat(self, fp: Optional[IO] = None) -> Optional[str]:
+        """Serialise the store to .dat. Helper function to facilitate working
+        with hovernet-style .dat files.
+
+        Args:
+             fp (IO):
+                A file-like object supporting `.read`. Defaults to None
+                which returns geoJSON as a string.
+
+        Returns:
+            Optional[str]:
+                None if writing to file or the geoJSON string if `fp` is
+                None.
+
+        """
+
+        def write_dat_to_file_handle(file_handle: IO):
+            """Write the store to a .dat file give a handle.
+
+            """
+            to_write = {key: ann.to_dict() for key, ann in self.items()}
+            joblib.dump(to_write, file_handle)
+
+        return self._dump_cases(
+            fp=fp,
+            file_fn=write_dat_to_file_handle,
+            none_fn=lambda: None,
         )
 
     def to_ndjson(self, fp: Optional[IO] = None) -> Optional[str]:
@@ -2142,7 +2192,7 @@ class SQLiteStore(AnnotationStore):
         if isinstance(where, Callable):
             return {
                 key: Annotation(
-                    geometry=self._unpack_geometry(blob, cx, cy),
+                    geometry=self._unpack_geometry(blob, cx, cy, self.metadata["compression"]),
                     properties=json.loads(properties),
                 )
                 for key, properties, cx, cy, blob in cur.fetchall()
@@ -2150,7 +2200,7 @@ class SQLiteStore(AnnotationStore):
             }
         return {
             key: Annotation(
-                geometry=self._unpack_geometry(blob, cx, cy),
+                geometry=self._unpack_geometry(blob, cx, cy, self.metadata["compression"]),
                 properties=json.loads(properties),
             )
             for key, properties, cx, cy, blob in cur.fetchall()
