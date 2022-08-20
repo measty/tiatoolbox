@@ -144,6 +144,7 @@ class TilePyramidGenerator:
         level: int,
         x: int,
         y: int,
+        res: int = 1,
         pad_mode: str = "constant",
         interpolation: str = "optimise",
     ) -> Image:
@@ -216,8 +217,8 @@ class TilePyramidGenerator:
             warnings.simplefilter("ignore")
             tile = self.wsi.read_rect(
                 coord,
-                size=output_size,
-                resolution=1 / scale,
+                size=[v*res for v in output_size],
+                resolution=res / scale,
                 units="baseline",
                 pad_mode=pad_mode,
                 interpolation=interpolation,
@@ -440,7 +441,7 @@ class ZoomifyGenerator(TilePyramidGenerator):
         """
         g = self.tile_group(level, x, y)
         z = level
-        return Path(f"TileGroup{g}") / f"{z}-{x}-{y}.jpg"
+        return Path(f"TileGroup{g}") / f"{z}-{x}-{y}@1x.jpg"
 
 
 class AnnotationTileGenerator(ZoomifyGenerator):
@@ -547,6 +548,7 @@ class AnnotationTileGenerator(ZoomifyGenerator):
         level: int,
         x: int,
         y: int,
+        res: int = 1,
         pad_mode: str = None,
         interpolation: str = None,
     ) -> Image:
@@ -610,7 +612,7 @@ class AnnotationTileGenerator(ZoomifyGenerator):
 
         bounds = locsize2bounds(coord, [self.output_tile_size * scale] * 2)
         bound_geom = Polygon.from_bounds(*bounds)
-        tile = self.render_annotations(bound_geom, scale)
+        tile = self.render_annotations(bound_geom, scale, res)
 
         return tile
 
@@ -618,6 +620,7 @@ class AnnotationTileGenerator(ZoomifyGenerator):
         self,
         bound_geom: Polygon,
         scale: int,
+        res: int = 1,
     ):
         """Render annotations within given bounds on top on an image.
 
@@ -663,23 +666,23 @@ class AnnotationTileGenerator(ZoomifyGenerator):
                 )
                 if len(anns_dict) == 0:
                     return self.empty_img
-                tile = np.zeros((output_size[0], output_size[1], 4), dtype=np.uint8)
+                tile = np.zeros((output_size[0]*res, output_size[1]*res, 4), dtype=np.uint8)
                 if len(anns_dict) < 40:
                     decimate = 1
                 for i, (key, ann) in enumerate(anns_dict.items()):
                     if ann.geometry.area > min_area:
                         ann = self.store[key]
-                        self.render_by_type(tile, ann, top_left, scale)
+                        self.render_by_type(tile, ann, top_left, scale/2)
                     elif i % decimate == 0:
                         ann = self.store[key]
-                        self.render_by_type(tile, ann, top_left, scale, True)
+                        self.render_by_type(tile, ann, top_left, scale/2, True)
             else:
                 anns = self.store.cached_query(bound_geom.bounds, self.renderer.where)
                 if len(anns) == 0:
                     return self.empty_img
-                tile = np.zeros((output_size[0], output_size[1], 4), dtype=np.uint8)
+                tile = np.zeros((output_size[0]*res, output_size[1]*res, 4), dtype=np.uint8)
                 for ann in anns:
-                    self.render_by_type(tile, ann, top_left, scale)
+                    self.render_by_type(tile, ann, top_left, scale/res)
             return Image.fromarray(tile)
         else:
             # Get only annotations > min_area. Plot them all
@@ -694,9 +697,9 @@ class AnnotationTileGenerator(ZoomifyGenerator):
             if len(anns) == 0:
                 return self.empty_img
 
-            tile = np.zeros((output_size[0], output_size[1], 4), dtype=np.uint8)
+            tile = np.zeros((output_size[0]*res, output_size[1]*res, 4), dtype=np.uint8)
             for ann in anns:
-                self.render_by_type(tile, ann, top_left, scale)
+                self.render_by_type(tile, ann, top_left, scale/res)
         if r.blur is None:
             return Image.fromarray(tile)
         return ImageOps.crop(Image.fromarray(tile).filter(r.blur), self.overlap)

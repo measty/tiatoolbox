@@ -385,14 +385,14 @@ def change_tiles(layer_name="overlay"):
             grp = tg.get_grp()
             ts = make_ts(
                 f"http://{host}:{port}/tileserver/layer/{layer_key}/{user}/zoomify/TileGroup{grp}"
-                + r"/{z}-{x}-{y}.jpg",
+                + r"/{z}-{x}-{y}@2x.jpg",
             )
             p.renderers[vstate.layer_dict[layer_key]].tile_source = ts
         return
 
     ts = make_ts(
         f"http://{host}:{port}/tileserver/layer/{layer_name}/{user}/zoomify/TileGroup{grp}"
-        + r"/{z}-{x}-{y}.jpg",
+        + r"/{z}-{x}-{y}@2x.jpg",
     )
     if layer_name in vstate.layer_dict:
         p.renderers[vstate.layer_dict[layer_name]].tile_source = ts
@@ -410,7 +410,7 @@ def change_tiles(layer_name="overlay"):
             grp = tg.get_grp()
             ts = make_ts(
                 f"http://{host}:{port}/tileserver/layer/{layer_key}/{user}/zoomify/TileGroup{grp}"
-                + r"/{z}-{x}-{y}.jpg",
+                + r"/{z}-{x}-{y}@2x.jpg",
             )
             p.renderers[vstate.layer_dict[layer_key]].tile_source = ts
         vstate.layer_dict[layer_name] = len(p.renderers) - 1
@@ -517,7 +517,7 @@ p = figure(
     # width_policy="max",
     # height_policy="max",
     # tooltips=TOOLTIPS,
-    tools="pan,wheel_zoom,reset",
+    tools="pan,wheel_zoom,reset,save",
     active_scroll="wheel_zoom",
     output_backend="canvas",
     hidpi=True,
@@ -539,7 +539,7 @@ user = s.cookies.get("user")
 
 ts1 = make_ts(
     f"http://{host}:{port}/tileserver/layer/slide/{user}/zoomify/TileGroup1"
-    + r"/{z}-{x}-{y}.jpg",
+    + r"/{z}-{x}-{y}@2x.jpg",
 )
 print(p.renderers)
 print(p.y_range)
