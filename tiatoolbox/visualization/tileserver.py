@@ -103,7 +103,7 @@ class TileServer(Flask):
 
         self.route(
             "/tileserver/layer/<layer>/<user>/zoomify/TileGroup<int:tile_group>/"
-            "<int:z>-<int:x>-<int:y>.jpg"
+            "<int:z>-<int:x>-<int:y>@<int:res>x.jpg"
         )(
             self.zoomify,
         )
@@ -123,7 +123,14 @@ class TileServer(Flask):
         self.route("/tileserver/reset")(self.reset)
 
     def zoomify(
-        self, layer: str, user: str, tile_group: int, z: int, x: int, y: int  # skipcq: PYL-w0613
+        self,
+        layer: str,
+        user: str,
+        tile_group: int,
+        z: int,
+        x: int,
+        y: int,  # skipcq: PYL-w0613
+        res: int,
     ) -> Response:
         """Serve a Zoomify tile for a particular layer.
 
@@ -154,7 +161,7 @@ class TileServer(Flask):
         except KeyError:
             return Response("Layer not found", status=404)
         try:
-            tile_image = pyramid.get_tile(level=z, x=x, y=y)
+            tile_image = pyramid.get_tile(level=z, x=x, y=y, res=res)
         except IndexError:
             return Response("Tile not found", status=404)
         image_io = io.BytesIO()
