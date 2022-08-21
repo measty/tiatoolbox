@@ -211,7 +211,10 @@ class TileServer(Flask):
 
         """
         try:
-            pyramid = self.tia_pyramids[user][layer]
+            if user=="default":
+                pyramid = self.tia_pyramids[layer]
+            else:
+                pyramid = self.tia_pyramids[user][layer]
         except KeyError:
             return Response("Layer not found", status=404)
         try:
@@ -249,7 +252,7 @@ class TileServer(Flask):
         layers = [
             {
                 "name": name,
-                "url": f"/tileserver/layer/{name}/zoomify/{{TileGroup}}/{{z}}-{{x}}-{{y}}.jpg",
+                "url": f"/tileserver/layer/{name}/default/zoomify/{{TileGroup}}/{{z}}-{{x}}-{{y}}@1x.jpg",
                 "size": [int(x) for x in layer.info.slide_dimensions],
                 "mpp": float(np.mean(layer.info.mpp)),
             }
