@@ -610,13 +610,21 @@ class AnnotationRenderer:
                 warnings.warn(
                     "score_prop not found in annotation properties. Using default color."
                 )
-        elif self.secondary_cmap is not None and 'type' in annotation.properties.keys() and annotation.properties['type'] == self.secondary_cmap['type']:
+        elif (
+            self.secondary_cmap is not None
+            and "type" in annotation.properties.keys()
+            and annotation.properties["type"] == self.secondary_cmap["type"]
+        ):
             # use secondary cmap to color annotations of specific type
-            #print(f'using: {self.secondary_cmap}')
+            # print(f'using: {self.secondary_cmap}')
             try:
                 return tuple(
                     int(c * 255)
-                    for c in self.secondary_cmap['mapper'](self.score_fn(annotation.properties[self.secondary_cmap['score_prop']]))
+                    for c in self.secondary_cmap["mapper"](
+                        self.score_fn(
+                            annotation.properties[self.secondary_cmap["score_prop"]]
+                        )
+                    )
                 )
             except KeyError:
                 warnings.warn(
@@ -626,7 +634,9 @@ class AnnotationRenderer:
             try:
                 return tuple(
                     int(c * 255)
-                    for c in self.mapper(self.score_fn(annotation.properties[self.score_prop]))
+                    for c in self.mapper(
+                        self.score_fn(annotation.properties[self.score_prop])
+                    )
                 )
             except KeyError:
                 warnings.warn(
@@ -684,14 +694,14 @@ class AnnotationRenderer:
 
         cnt = self.to_tile_coords(annotation.geometry.exterior.coords, top_left, scale)
         if self.thickness > -1:
-            cv2.drawContours(tile, [cnt], 0, col, self.edge_thickness, lineType=cv2.LINE_8)
+            cv2.drawContours(
+                tile, [cnt], 0, col, self.edge_thickness, lineType=cv2.LINE_8
+            )
         else:
             cv2.drawContours(tile, [cnt], 0, col, self.thickness, lineType=cv2.LINE_8)
         if self.thickness == -1 and self.edge_thickness > 0:
             edge_col = self.get_color_edge(annotation)
-            cv2.drawContours(
-                tile, [cnt], 0, edge_col, 1, lineType=cv2.LINE_8
-            )
+            cv2.drawContours(tile, [cnt], 0, edge_col, 1, lineType=cv2.LINE_8)
 
     def render_multipoly(self, tile, annotation, top_left, scale):
         """render a multipolygon annotation onto a tile using cv2"""
@@ -784,13 +794,13 @@ class AnnotationRenderer:
 
     def __setattr__(self, __name: str, __value) -> None:
         if __name == "blur_radius":
-            #need to change additional settings
+            # need to change additional settings
             if __value > 0:
-                self.__dict__['blur'] = ImageFilter.GaussianBlur(__value)
-                self.__dict__['edge_thickness'] = 0
+                self.__dict__["blur"] = ImageFilter.GaussianBlur(__value)
+                self.__dict__["edge_thickness"] = 0
             else:
-                self.__dict__['blur'] = None
-                self.__dict__['edge_thickness'] = 1
-        
-        #super().__setattr__(__name, __value)"""
+                self.__dict__["blur"] = None
+                self.__dict__["edge_thickness"] = 1
+
+        # super().__setattr__(__name, __value)"""
         self.__dict__[__name] = __value
