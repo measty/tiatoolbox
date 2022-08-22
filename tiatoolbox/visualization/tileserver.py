@@ -393,16 +393,21 @@ class TileServer(Flask):
         user = request.cookies.get("user")
         get_types = json.loads(request.form["types"])
         filter_val = json.loads(request.form["filter"])
-
+        
         if filter_val == "None":
-
-            def pred(props):
-                return props["type"] in get_types
+            if len(get_types) == 0:
+                pred = None
+            else:
+                def pred(props):
+                    return props["type"] in get_types
 
         else:
-
-            def pred(props):
-                return eval(filter_val) and props["type"] in get_types
+            if len(get_types) == 0:
+                def pred(props):
+                    return eval(filter_val)
+            else:
+                def pred(props):
+                    return eval(filter_val) and props["type"] in get_types
 
         self.renderers[user].where = pred
         return "done"

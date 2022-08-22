@@ -199,21 +199,26 @@ def build_predicate():
 
 def build_predicate_callable():
     get_types = [name2type_key(l.label) for l in box_column.children if l.active]
-    if len(get_types) == len(box_column.children):
+    if len(get_types) == len(box_column.children) or len(get_types) == 0:
         if filter_input.value == "None":
             vstate.renderer.where = None
             update_renderer("where", "None")
             return None
 
     if filter_input.value == "None":
-
-        def pred(props):
-            return props["type"] in get_types
+        if len(get_types) == 0:
+            pred = None
+        else:
+            def pred(props):
+                return props["type"] in get_types
 
     else:
-
-        def pred(props):
-            return eval(filter_input.value) and props["type"] in get_types
+        if len(get_types) == 0:
+            def pred(props):
+                return eval(filter_input.value)
+        else:
+            def pred(props):
+                return eval(filter_input.value) and props["type"] in get_types
 
     vstate.renderer.where = pred
     # update_renderer("where", json.dumps(pred))
@@ -827,7 +832,8 @@ def layer_folder_input_cb(attr, old, new):
 
 def filter_input_cb(attr, old, new):
     """Change predicate to be used to filter annotations"""
-    s.get(f"http://{host2}:5000/tileserver/changepredicate/{new}")
+    #s.get(f"http://{host2}:5000/tileserver/changepredicate/{new}")
+    build_predicate_callable()
     vstate.update_state = 1
 
 
