@@ -68,7 +68,7 @@ if is_deployed:
     port = os.environ.get("PORT")
 else:
     host = "127.0.0.1"
-    host2 = "localhost"
+    host2 = "127.0.0.1"
     port = "5000"
 
 # Define helper functions
@@ -490,7 +490,7 @@ def run_app():
         },
     )
     CORS(app, send_wildcard=True)
-    app.run(threaded=False)
+    app.run(host="127.0.0.1", threaded=False)
 
 
 # start tile server
