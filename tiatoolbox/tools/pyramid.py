@@ -702,7 +702,7 @@ class AnnotationTileGenerator(ZoomifyGenerator):
                 self.render_by_type(tile, ann, top_left, scale/res)
         if r.blur is None:
             return Image.fromarray(tile)
-        return ImageOps.crop(Image.fromarray(tile).filter(r.blur), self.overlap)
+        return ImageOps.crop(Image.fromarray(tile).filter(r.blur), self.overlap*res)
 
     def render_by_type(
         self,

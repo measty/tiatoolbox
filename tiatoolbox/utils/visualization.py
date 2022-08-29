@@ -558,7 +558,7 @@ class AnnotationRenderer:
         else:
             self.mapper = mapper
         self.score_prop = score_prop
-        self.score_prop_edge = "cluster"  # need to fix
+        self.score_prop_edge = None
         self.where = where
         self.score_fn = score_fn
         self.max_scale = max_scale
