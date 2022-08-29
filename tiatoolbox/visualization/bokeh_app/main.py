@@ -3,6 +3,8 @@ import operator
 import os
 import pickle
 import sys
+from tkinter import Y
+from turtle import right, width
 import urllib
 from cmath import pi
 from pathlib import Path, PureWindowsPath
@@ -12,6 +14,7 @@ from threading import Thread
 import matplotlib.cm as cm
 import numpy as np
 import requests
+from sklearn.neighbors import KernelDensity
 import torch
 
 # Bokeh basics
@@ -392,6 +395,7 @@ def change_tiles(layer_name="overlay"):
                 + r"/{z}-{x}-{y}@2x.jpg",
             )
             p.renderers[vstate.layer_dict[layer_key]].tile_source = ts
+        print(vstate.layer_dict)
         return
 
     ts = make_ts(
@@ -509,6 +513,32 @@ vstate.micron_formatter = FuncTickFormatter(
 
 do_feats = False
 
+p_hist = figure(width=280,
+    height=160,
+    x_range=(-0.025,1.025),
+    y_range=(0,1),
+    sizing_mode="scale_both",
+    toolbar_location=None,
+)
+line_ds = ColumnDataSource(data=dict(x=np.linspace(0, 1, 100),y=np.zeros(100)))
+p_hist.line(x='x',y='y',source=line_ds)
+
+p_bar = figure(width=280,
+    height=160,
+    x_range=[str(i) for i in range(10)],
+    y_range=(0,1),
+    #name="plot",
+    tools="hover",
+    tooltips = [
+                ("Index", "$index"),
+                ("(x,y)", "(@name, @y)"),
+            ],
+)
+bar_ds = ColumnDataSource(data=dict(x=[str(i) for i in range(10)],y=np.zeros(10), name=[str(i) for i in range(10)]))
+p_bar.vbar(bottom=0, x='x',top='y', width=0.5, source=bar_ds)
+p_bar.xaxis.major_label_orientation = "vertical"
+
+
 p = figure(
     x_range=(0, vstate.dims[0]),
     y_range=(0, -vstate.dims[1]),
@@ -526,9 +556,9 @@ p = figure(
     output_backend="canvas",
     hidpi=True,
     match_aspect=False,
-    # lod_factor=100,
+    lod_factor=10000,
     # lod_interval=500,
-    # lod_threshold=10,
+    # lod_threshold=500,
     # lod_timeout=200,
     sizing_mode="stretch_both",
     name="slide_window",
@@ -601,7 +631,7 @@ overlay_alpha = Slider(
 pt_size_spinner = Spinner(
     title="Pt. Size:",
     low=0,
-    high=10,
+    high=20,
     step=1,
     value=1,
     width=60,
@@ -868,7 +898,7 @@ def overlay_alpha_cb(attr, old, new):
 
 def pt_size_cb(attr, old, new):
     update_renderer("edge_thickness", new)
-    graph.node_renderer.glyph.radius = 20 * new
+    graph.node_renderer.glyph.radius = 10 * new
     vstate.update_state = 1
 
 
@@ -1027,6 +1057,24 @@ def layer_drop_cb(attr):
                 ]
             )
             hover.tooltips = TOOLTIPS
+
+        #make a density plot of the scores
+        cell_scores = graph_dict["score"]
+        #hist,_ = np.histogram(cell_scores, bins=100)
+        kde = KernelDensity(kernel='gaussian', bandwidth=0.02).fit(cell_scores.reshape(-1, 1))
+        x = np.linspace(0, 1, 100)
+        #print(kde.score_samples(x.reshape(-1, 1)))
+        #import pdb; pdb.set_trace()
+        dens = np.exp(kde.score_samples(x.reshape(-1, 1)))
+        line_ds.data['y'] = dens
+        p_hist.y_range.end = 1.1*np.max(dens)
+
+        bar_ds.data['y'] = graph_dict["top_scores"]
+        bar_ds.data['name'] = graph_dict["top_feats"]
+        p_bar.y_range.end = 1.1*np.max(graph_dict["top_scores"])
+        #set x-ticks to be the feature names
+        #p_bar.x_range.factors = graph_dict["top_feats"]
+            
 
         return
 
@@ -1314,10 +1362,12 @@ ui_layout = column(
         cprop_input,
         # cmap_drop,
         row([cmap_drop, blur_spinner, scale_spinner]),
-        type_cmap_select,
+        #type_cmap_select,
         opt_buttons,
-        row([to_model_button, model_drop, save_button]),
+        #row([to_model_button, model_drop, save_button]),
         row(children=[box_column, color_column]),
+        p_hist,
+        p_bar,
     ],
     name="ui_layout",
     sizing_mode="stretch_both",
@@ -1331,7 +1381,8 @@ def cleanup_session(session_context):
 
 def update():
     if vstate.update_state == 2:
-        change_tiles("overlay")
+        if "overlay" in vstate.layer_dict:
+            change_tiles("overlay")
         vstate.update_state = 0
     if vstate.update_state == 1:
         vstate.update_state = 2
@@ -1340,3 +1391,4 @@ def update():
 curdoc().add_periodic_callback(update, 220)
 curdoc().add_root(p)
 curdoc().add_root(ui_layout)
+#curdoc().add_root(p_bar)

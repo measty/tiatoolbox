@@ -2925,6 +2925,7 @@ class SQLiteStore(AnnotationStore):
         # Run ANALYZE to improve performance if needed
         self.con.execute("PRAGMA optimize")
         # Close the connection to the database
+        self._cached_query.cache_clear()
         return super().__del__()
 
     def create_index(

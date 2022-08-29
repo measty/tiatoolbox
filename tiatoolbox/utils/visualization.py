@@ -545,6 +545,7 @@ class AnnotationRenderer:
         edge_thickness=1,
         secondary_cmap=None,
         blur_radius=0,
+        score_prop_edge = None,
     ):
         if mapper is None:
             mapper = cm.get_cmap("jet")
@@ -558,7 +559,7 @@ class AnnotationRenderer:
         else:
             self.mapper = mapper
         self.score_prop = score_prop
-        self.score_prop_edge = "cluster"  # need to fix
+        self.score_prop_edge = score_prop_edge  
         self.where = where
         self.score_fn = score_fn
         self.max_scale = max_scale
@@ -800,7 +801,9 @@ class AnnotationRenderer:
                 self.__dict__["edge_thickness"] = 0
             else:
                 self.__dict__["blur"] = None
-                self.__dict__["edge_thickness"] = 1
+                self.__dict__["edge_thickness"] = self.__dict__["edge_thickness_old"]
+        elif __name == "edge_thickness":
+            self.__dict__["edge_thickness_old"] = __value
 
         # super().__setattr__(__name, __value)"""
         self.__dict__[__name] = __value
