@@ -164,9 +164,10 @@ def update_renderer(prop, value):
                 cm.get_cmap(value)
             )
             color_bar.visible = True
-        return s.get(f"http://{host2}:5000/tileserver/changecmap/{value}")
-    return s.get(
-        f"http://{host2}:5000/tileserver/updaterenderer/{prop}/{json.dumps(value)}"
+        return requests.get(f"http://{host2}:5000/tileserver/changecmap/{value}", cookies=cookies)
+    return requests.get(
+        f"http://{host2}:5000/tileserver/updaterenderer/{prop}/{json.dumps(value)}",
+        cookies=cookies,
     )
 
 
@@ -221,9 +222,10 @@ def build_predicate_callable():
 
     vstate.renderer.where = pred
     # update_renderer("where", json.dumps(pred))
-    s.post(
+    requests.post(
         f"http://{host2}:5000/tileserver/updatewhere",
         data={"types": json.dumps(get_types), "filter": json.dumps(filter_input.value)},
+        cookies=cookies,
     )
     return pred
 
@@ -536,10 +538,11 @@ p = figure(
 # p.axis.visible = False
 initialise_slide()
 
-s = requests.Session()
-resp = s.get(f"http://{host2}:5000/tileserver/setup")
-print(f"cookies are: {s.cookies}")
-user = s.cookies.get("user")
+#s = requests.Session()
+resp = requests.get(f"http://{host2}:5000/tileserver/setup")
+print(f"cookies are: {resp.cookies}")
+cookies=resp.cookies
+user = resp.cookies.get("user")
 
 ts1 = make_ts(
     f"http://{host}:{port}/tileserver/layer/slide/{user}/zoomify/TileGroup1"
@@ -838,7 +841,7 @@ def filter_input_cb(attr, old, new):
 
 def cprop_input_cb(attr, old, new):
     """Change property to colour by"""
-    s.get(f"http://{host2}:5000/tileserver/changeprop/{new[0]}")
+    requests.get(f"http://{host2}:5000/tileserver/changeprop/{new[0]}", cookies=cookies)
     vstate.update_state = 1
 
 
@@ -947,7 +950,7 @@ def slide_select_cb(attr, old, new):
     fname = make_safe_name(str(slide_path))
     print(fname)
     print(vstate.mpp)
-    s.get(f"http://{host2}:5000/tileserver/changeslide/slide/{fname}")
+    requests.get(f"http://{host2}:5000/tileserver/changeslide/slide/{fname}", cookies=cookies)
     change_tiles("slide")
     # if len(p.renderers)==1:
     # r=p.rect('x', 'y', 'width', 'height', source=box_source, fill_alpha=0)
@@ -1032,12 +1035,12 @@ def layer_drop_cb(attr):
 
     # fname='-*-'.join(attr.item.split('\\'))
     fname = make_safe_name(attr.item)
-    resp = s.get(f"http://{host2}:5000/tileserver/changeoverlay/{fname}")
+    resp = requests.get(f"http://{host2}:5000/tileserver/changeoverlay/{fname}", cookies=cookies)
     resp = json.loads(resp.text)
 
     if Path(attr.item).suffix in [".db", ".dat", ".geojson"]:
         vstate.types = resp
-        props = s.get(f"http://{host2}:5000/tileserver/getprops")
+        props = requests.get(f"http://{host2}:5000/tileserver/getprops", cookies=cookies)
         vstate.props = json.loads(props.text)
         # type_cmap_select.options = vstate.props
         cprop_input.options = vstate.props
@@ -1137,8 +1140,9 @@ def to_model_cb(attr):
 def type_cmap_cb(attr, old, new):
     if len(new) == 0:
         type_cmap_select.options = vstate.types
-        s.get(
-            f"http://{host2}:5000/tileserver/changesecondarycmap/{'None'}/{'None'}/viridis"
+        requests.get(
+            f"http://{host2}:5000/tileserver/changesecondarycmap/{'None'}/{'None'}/viridis",
+            cookies=cookies,
         )
         vstate.update_state = 1
         return
@@ -1153,8 +1157,9 @@ def type_cmap_cb(attr, old, new):
         if new[1] in vstate.types:
             type_cmap_select.value = [new[1], new[0]]
             return
-        s.get(
-            f"http://{host2}:5000/tileserver/changesecondarycmap/{new[0]}/{new[1]}/viridis"
+        requests.get(
+            f"http://{host2}:5000/tileserver/changesecondarycmap/{new[0]}/{new[1]}/viridis",
+            cookies=cookies,
         )
 
         color_bar.color_mapper.palette = make_color_seq_from_cmap(
@@ -1168,7 +1173,7 @@ def save_cb(attr):
     save_path = make_safe_name(
         str(overlay_folder / (vstate.slide_path.stem + "_saved_anns.db"))
     )
-    s.get(f"http://{host2}:5000/commit/{save_path}")
+    requests.get(f"http://{host2}:5000/commit/{save_path}", cookies=cookies)
 
 
 # run NucleusInstanceSegmentor on a region of wsi defined by the box in box_source
@@ -1213,8 +1218,9 @@ def segment_on_box(attr):
     # fname='-*-'.join('.\\sample_tile_results\\0.dat'.split('\\'))
     fname = make_safe_name(".\\sample_tile_results\\0.dat")
     print(fname)
-    resp = s.get(
-        f"http://{host2}:5000/tileserver/loadannotations/{fname}/{vstate.model_mpp}"
+    resp = requests.get(
+        f"http://{host2}:5000/tileserver/loadannotations/{fname}/{vstate.model_mpp}",
+        cookies=cookies,
     )
     vstate.types = json.loads(resp.text)
     update_mapper()
@@ -1263,8 +1269,9 @@ def nuclick_on_pts(attr):
     # fname='-*-'.join('.\\sample_tile_results\\0.dat'.split('\\'))
     fname = make_safe_name("\\app_data\\sample_tile_results\\0.dat")
     print(fname)
-    resp = s.get(
-        f"http://{host2}:5000/tileserver/loadannotations/{fname}/{vstate.model_mpp}"
+    resp = requests.get(
+        f"http://{host2}:5000/tileserver/loadannotations/{fname}/{vstate.model_mpp}",
+        cookies=cookies,
     )
     print(resp.text)
     vstate.types = json.loads(resp.text)
