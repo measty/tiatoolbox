@@ -4412,7 +4412,7 @@ class AnnotationStoreReader(WSIReader):
             location=location, size=baseline_read_size
         )
         bound_geom = Polygon.from_bounds(*bounds)
-        im_region = self.render_annotations(bound_geom, 1)
+        im_region = self.render_annotations(bound_geom, np.rint(self.info.level_downsamples[read_level]))
 
         im_region = utils.transforms.imresize(
             img=im_region,
@@ -4459,7 +4459,7 @@ class AnnotationStoreReader(WSIReader):
             )
 
         bound_geom = Polygon.from_bounds(*bounds_at_baseline)
-        im_region = self.render_annotations(bound_geom, 1)
+        im_region = self.render_annotations(bound_geom, np.rint(self.info.level_downsamples[read_level]))
 
         if coord_space == "resolution":
             # do this to enforce output size is as defined by input bounds
@@ -4501,7 +4501,7 @@ class AnnotationStoreReader(WSIReader):
         top_left = np.array(bound_geom.bounds[:2])# - scale*self.overlap
         # clip_bound_geom=bound_geom.buffer(scale)
         r = self.renderer
-        output_size = [int(bound_geom.bounds[2]-bound_geom.bounds[0])] * 2
+        output_size = [int((bound_geom.bounds[2]-bound_geom.bounds[0])/scale)] * 2
         if r.zoomed_out_strat == "scale" or r.zoomed_out_strat == "decimate":
             mpp_sf = np.minimum(self.info.mpp[0]/ 0.25, 1) if self.info.mpp is not None else 1
             min_area = (
