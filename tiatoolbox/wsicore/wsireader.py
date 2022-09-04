@@ -24,6 +24,7 @@ from tiatoolbox import utils
 from tiatoolbox.tools import tissuemask
 from tiatoolbox.utils.env_detection import pixman_warning
 from tiatoolbox.utils.exceptions import FileNotSupported
+from tiatoolbox.utils.transforms import background_composite
 from tiatoolbox.wsicore.metadata.ngff import Multiscales
 from tiatoolbox.wsicore.wsimeta import WSIMeta
 from tiatoolbox.annotation.storage import AnnotationStore, SQLiteStore, Annotation
@@ -4356,6 +4357,8 @@ class AnnotationStoreReader(WSIReader):
     def __init__(self, path, info: WSIMeta,
         #store: AnnotationStore,
         renderer: AnnotationRenderer = None,
+        base_wsi_reader: WSIReader = None,
+        alpha = 1.0,
         **kwargs):
         super().__init__(path, **kwargs)
         self.info = info
@@ -4364,8 +4367,11 @@ class AnnotationStoreReader(WSIReader):
         if renderer is None:
             renderer = AnnotationRenderer()
         self.renderer = renderer
-
-        
+        self.base_wsi_reader = base_wsi_reader
+        if base_wsi_reader is not None:
+            self.info = base_wsi_reader.info
+            self.on_slide = True
+        self.alpha = alpha    
 
     def _info(self):
         return self.info
@@ -4472,7 +4478,25 @@ class AnnotationStoreReader(WSIReader):
                 scale_factor=post_read_scale,
                 output_size=size_at_requested,
             )
-
+        if self.base_wsi_reader is not None:
+            #overlay imregion on the base wsi
+            base_region = self.base_wsi_reader.read_bounds(
+                bounds,
+                resolution=resolution,
+                units=units,
+                interpolation=interpolation,
+                pad_mode=pad_mode,
+                pad_constant_values=pad_constant_values,
+                coord_space=coord_space,
+                **kwargs,
+            )
+            base_region = Image.fromarray(background_composite(base_region, alpha=True))
+            im_region = Image.fromarray(im_region)
+            if self.alpha < 1.0:
+                im_region.putalpha(im_region.getchannel("A").point(lambda i: i * self.alpha))
+            #base_region.paste(im_region, (0, 0), im_region)
+            base_region = Image.alpha_composite(base_region, im_region)
+            return np.array(base_region)
         return im_region
 
     def render_annotations(

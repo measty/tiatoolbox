@@ -30,6 +30,7 @@ from tiatoolbox.utils.misc import imread
 from tiatoolbox.utils.transforms import imresize, locsize2bounds
 from tiatoolbox.wsicore import wsireader
 from tiatoolbox.wsicore.wsireader import (
+    AnnotationStoreReader,
     ArrayView,
     DICOMWSIReader,
     NGFFWSIReader,
@@ -1922,6 +1923,7 @@ class TestReader:
             "OmnyxJP2WSIReader",
             {"reader_class": OmnyxJP2WSIReader, "sample_key": "jp2-omnyx-1"},
         ),
+        ("AnnotationReader", {"reader_class": AnnotationStoreReader, "sample_key": "svs-1"}),
     ]
 
     @staticmethod

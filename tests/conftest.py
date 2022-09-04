@@ -421,3 +421,23 @@ def moving_mask(remote_sample) -> pathlib.Path:
     Download moving mask for pytest.
     """
     return remote_sample("moving_mask")
+
+
+@pytest.fixture(scope="session")
+def sample_db(remote_sample) -> pathlib.Path:
+    """Sample pytest fixture for annotation store db.
+    Download a database of sample annotations for pytest.
+
+    """
+    #return remote_sample("annotation_store_svs_1")
+    return _fetch_remote_sample("annotation_store_svs_1", r"E:\TTB_vis_folder")
+
+
+@pytest.fixture(scope="session")
+def sample_rendered_db(remote_sample) -> pathlib.Path:
+    """Sample pytest fixture for rendered annotations.
+    Download a .tiff of rendererd annotations.
+
+    """
+    #return remote_sample("rendered_annotations_svs_1")
+    return _fetch_remote_sample("rendered_annotations_svs_1", r"E:\TTB_vis_folder")
