@@ -427,7 +427,7 @@ class TileServer(Flask):
                 return json.dumps(types)
 
         SQ = SQLiteStore.from_dat(
-            file_path, np.array(model_mpp) / np.array(self.slide_mpp)
+            file_path, np.array(model_mpp) / np.array(self.slide_mpps[user])
         )
         self.tia_pyramids[user]["overlay"] = AnnotationTileGenerator(
             self.tia_layers[user]["slide"].info,
@@ -511,4 +511,5 @@ class TileServer(Flask):
                 else:
                     layer.store.commit()
                     layer.store.dump(str(save_path))
+                    print(f'db saved to {save_path}')
         return "done"
