@@ -1240,7 +1240,7 @@ def nuclick_on_pts(attr):
     y = -np.round(np.array(pt_source.data["y"]))
 
     model = NuClick(5, 1)
-    pretrained_weights = r"/app_data/NuClick_Nuclick_40xAll.pth"
+    pretrained_weights = r"C:\Users\meast\app_data\NuClick_Nuclick_40xAll.pth"
     saved_state_dict = torch.load(pretrained_weights, map_location="cpu")
     model.load_state_dict(saved_state_dict, strict=True)
     vstate.model_mpp = 0.25
