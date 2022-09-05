@@ -39,6 +39,7 @@ from tiatoolbox.wsicore.wsireader import (
     TIFFWSIReader,
     VirtualWSIReader,
     WSIReader,
+    WSIMeta,
     is_ngff,
     is_zarr,
 )
@@ -1906,42 +1907,43 @@ def test_is_ngff_regular_zarr(tmp_path):
 
 class TestReader:
     scenarios = [
+        ("AnnotationReader", {"reader_class": AnnotationStoreReader, "sample_key": "annotation_store_svs_1","kwargs": {"info": WSIMeta(**{'objective_power': 20.0, 'slide_dimensions': (2220, 2967), 'level_count': 1, 'level_dimensions': ((2220, 2967),), 'level_downsamples': [1.0], 'vendor': 'aperio', 'mpp': (0.499, 0.499), 'file_path': 'E:/TTB_vis_folder/slides/CMU-1-Small-Region.svs', 'axes': 'YXS'})}},),
         (
             "TIFFReader",
             {
                 "reader_class": TIFFWSIReader,
                 "sample_key": "ome-brightfield-pyramid-1-small",
+                "kwargs": {},
             },
         ),
-        ("DICOMReader", {"reader_class": DICOMWSIReader, "sample_key": "dicom-1"}),
-        ("NGFFWSIReader", {"reader_class": NGFFWSIReader, "sample_key": "ngff-1"}),
+        ("DICOMReader", {"reader_class": DICOMWSIReader, "sample_key": "dicom-1","kwargs": {},}),
+        ("NGFFWSIReader", {"reader_class": NGFFWSIReader, "sample_key": "ngff-1","kwargs": {},}),
         (
             "OpenSlideWSIReader (Small SVS)",
-            {"reader_class": OpenSlideWSIReader, "sample_key": "svs-1-small"},
+            {"reader_class": OpenSlideWSIReader, "sample_key": "svs-1-small","kwargs": {},},
         ),
         (
             "OmnyxJP2WSIReader",
-            {"reader_class": OmnyxJP2WSIReader, "sample_key": "jp2-omnyx-1"},
+            {"reader_class": OmnyxJP2WSIReader, "sample_key": "jp2-omnyx-1","kwargs": {},},
         ),
-        ("AnnotationReader", {"reader_class": AnnotationStoreReader, "sample_key": "svs-1"}),
     ]
 
     @staticmethod
-    def test_base_open(sample_key, reader_class):
+    def test_base_open(sample_key, reader_class, kwargs):
         """Checks that WSIReader.open detects the type correctly."""
         sample = _fetch_remote_sample(sample_key)
         wsi = WSIReader.open(sample)
         assert isinstance(wsi, reader_class)
 
     @staticmethod
-    def test_wsimeta_attrs(sample_key, reader_class):
+    def test_wsimeta_attrs(sample_key, reader_class, kwargs):
         """Check for expected attrs in .info / WSIMeta.
 
         Checks for existence of expected attrs but not their contents.
 
         """
         sample = _fetch_remote_sample(sample_key)
-        wsi = reader_class(sample)
+        wsi = reader_class(sample, **kwargs)
         info = wsi.info
         expected_attrs = [
             "slide_dimensions",
@@ -1958,7 +1960,7 @@ class TestReader:
             assert hasattr(info, attr)
 
     @staticmethod
-    def test_read_rect_level_consistency(sample_key, reader_class):
+    def test_read_rect_level_consistency(sample_key, reader_class, kwargs):
         """Compare the same region at each stored resolution level.
 
         Read the same region at each stored resolution level and compare
@@ -1967,7 +1969,7 @@ class TestReader:
 
         """
         sample = _fetch_remote_sample(sample_key)
-        wsi = reader_class(sample)
+        wsi = reader_class(sample, **kwargs)
         location = (0, 0)
         size = np.array([1024, 1024])
 
@@ -1996,7 +1998,7 @@ class TestReader:
                 assert error < 0.125
 
     @staticmethod
-    def test_read_bounds_level_consistency(sample_key, reader_class):
+    def test_read_bounds_level_consistency(sample_key, reader_class, kwargs):
         """Compare the same region at each stored resolution level.
 
         Read the same region at each stored resolution level and compare
@@ -2005,14 +2007,14 @@ class TestReader:
 
         """
         sample = _fetch_remote_sample(sample_key)
-        wsi = reader_class(sample)
+        wsi = reader_class(sample, **kwargs)
         bounds = (0, 0, 1024, 1024)
         # This logic can be moved from the helper to here when other
         # reader classes have been parameterised into scenarios also.
         read_bounds_level_consistency(wsi, bounds)
 
     @staticmethod
-    def test_fuzz_read_region_baseline_size(sample_key, reader_class):
+    def test_fuzz_read_region_baseline_size(sample_key, reader_class, kwargs):
         """Fuzz test for `read_bounds` output size at level 0 (baseline).
 
         - Tests that the output image size matches the input bounds size.
@@ -2023,7 +2025,7 @@ class TestReader:
         """
         random.seed(123)
         sample = _fetch_remote_sample(sample_key)
-        wsi = reader_class(sample)
+        wsi = reader_class(sample, **kwargs)
         width, height = wsi.info.slide_dimensions
         iterations = 50
         for _ in range(iterations):
@@ -2037,7 +2039,7 @@ class TestReader:
             assert region.shape[:2][::-1] == size
 
     @staticmethod
-    def test_read_rect_coord_space_consistency(sample_key, reader_class):
+    def test_read_rect_coord_space_consistency(sample_key, reader_class, kwargs):
         """Test that read_rect coord_space modes are consistent.
 
         Using `read_rect` with `coord_space="baseline"` and
@@ -2050,7 +2052,7 @@ class TestReader:
 
         """
         sample = _fetch_remote_sample(sample_key)
-        reader = reader_class(sample)
+        reader = reader_class(sample, **kwargs)
         roi1 = reader.read_rect(
             np.array([500, 500]),
             np.array([2000, 2000]),
@@ -2082,7 +2084,7 @@ class TestReader:
             assert ssim > 0.9
 
     @staticmethod
-    def test_file_path_does_not_exist(sample_key, reader_class):
+    def test_file_path_does_not_exist(sample_key, reader_class, kwargs):
         """Test that FileNotFoundError is raised when file does not exist."""
         with pytest.raises(FileNotFoundError):
-            _ = reader_class("./foo.bar")
+            _ = reader_class("./foo.bar", **kwargs)

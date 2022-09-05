@@ -4365,7 +4365,11 @@ class AnnotationStoreReader(WSIReader):
         #self.store = store
         self.store = SQLiteStore(path)
         if renderer is None:
-            renderer = AnnotationRenderer()
+            types = self.store.pquery("props['type']")
+            if len(types) == 0:
+                renderer = AnnotationRenderer()
+            else:
+                renderer = AnnotationRenderer('type', types)
         self.renderer = renderer
         self.base_wsi_reader = base_wsi_reader
         if base_wsi_reader is not None:
