@@ -1176,7 +1176,7 @@ def save_cb(attr):
     save_path = make_safe_name(
         str(overlay_folder / (vstate.slide_path.stem + "_saved_anns.db"))
     )
-    s.get(f"http://{host2}:5000/commit/{save_path}")
+    s.get(f"http://{host2}:5000/tileserver/commit/{save_path}")
 
 
 # run NucleusInstanceSegmentor on a region of wsi defined by the box in box_source
