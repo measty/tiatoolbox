@@ -43,7 +43,7 @@ extensions = [
     "sphinx.ext.intersphinx",
     "sphinx.ext.mathjax",
     "sphinx_toolbox.collapse",
-    "recommonmark",
+    "myst_parser",
     "nbsphinx",
     "sphinx_gallery.load_style",
 ]
@@ -137,7 +137,7 @@ def setup(app):
     app.connect(
         "builder-inited", lambda app: app.config.html_static_path.append("_static")
     )
-    app.add_stylesheet("sg_gallery.css")
+    app.add_css_file("sg_gallery.css")
 
 
 # -- Options for HTMLHelp output ---------------------------------------
