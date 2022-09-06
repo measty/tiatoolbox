@@ -222,6 +222,9 @@ class WSIReader:
         _, _, suffixes = utils.misc.split_path_name_ext(input_path)
         last_suffix = suffixes[-1]
 
+        if last_suffix == ".db":
+            return AnnotationStoreReader(input_path)
+
         if last_suffix in (".zarr",):
             if not is_ngff(input_path):
                 raise FileNotSupported(
@@ -292,6 +295,7 @@ class WSIReader:
             ".jpg",
             ".jpeg",
             ".zarr",
+            ".db",
         ]:
             raise FileNotSupported(f"File {input_path} is not a supported file format.")
 
@@ -4345,37 +4349,75 @@ class NGFFWSIReader(WSIReader):
         return im_region
 
 
-
-
 class AnnotationStoreReader(WSIReader):
-    """Reader for Annotation store.
+    """Reader for Annotation stores.
 
-    Support is currently experimental. 
+    This reader is used to read annotation store data as if it were a WSI,
+    rendering the annotations in the specified region to be read. Can be used
+    either to render annotations as a stand-alone mask, or to render annotations
+    on top of its parent WSI as a virtual 'annotated slide'.
+
+    Args:
+        path (str): 
+            Path to annotation store.
+        info (WSIMeta): 
+            Metadata of the base WSi for the annotations in the store.
+            If this is not provided, will attempt to read it read from 
+            the store metadata, or the base_wsi_reader if provided.
+            If no source of metadata is found, will raise an error.
+        renderer (AnnotationRenderer):
+            Renderer to use for rendering annotations. Providing a renderer
+            allows for customisation of the rendering process. If not provided,
+            a sensible default will be created.
+        base_wsi_reader (WSIReader):
+            Base WSI reader to use for reading the base WSI. Annotations
+            will be rendered on top of the base WSI. If not provided,
+            will render annotation masks without a base image.
+        alpha (float):
+            Opacity of the overlaid annotations. Must be between 0 and 1. 
+            Has no effect if base_wsi_reader is not provided.
 
     """
 
-    def __init__(self, path, info: WSIMeta,
-        #store: AnnotationStore,
+    def __init__(
+        self,
+        path,
+        info: Optional[WSIMeta] = None,
         renderer: AnnotationRenderer = None,
         base_wsi_reader: WSIReader = None,
-        alpha = 1.0,
-        **kwargs):
+        alpha=1.0,
+        **kwargs,
+    ):
         super().__init__(path, **kwargs)
-        self.info = info
-        #self.store = store
+        # self.store = store
         self.store = SQLiteStore(path)
+        if info is None:
+            if base_wsi_reader is not None:
+                # get the metadata from the base reader
+                info = base_wsi_reader.info
+            else:
+                # try to get metadata from store
+                try:
+                    self.info = WSIMeta(**json.loads(self.store.metadata["wsi_meta"]))
+                except:
+                    raise ValueError(
+                        "No metadata found in store. Please provide either info or base slide."
+                    )
+        else:
+            self.info = info
         if renderer is None:
             types = self.store.pquery("props['type']")
             if len(types) == 0:
                 renderer = AnnotationRenderer()
             else:
-                renderer = AnnotationRenderer('type', types)
+                renderer = AnnotationRenderer("type", list(types))
+        renderer.edge_thickness = 0
         self.renderer = renderer
         self.base_wsi_reader = base_wsi_reader
         if base_wsi_reader is not None:
             self.info = base_wsi_reader.info
             self.on_slide = True
-        self.alpha = alpha    
+        self.alpha = alpha
 
     def _info(self):
         return self.info
@@ -4422,7 +4464,9 @@ class AnnotationStoreReader(WSIReader):
             location=location, size=baseline_read_size
         )
         bound_geom = Polygon.from_bounds(*bounds)
-        im_region = self.render_annotations(bound_geom, np.rint(self.info.level_downsamples[read_level]))
+        im_region = self.render_annotations(
+            bound_geom, np.rint(self.info.level_downsamples[read_level])
+        )
 
         im_region = utils.transforms.imresize(
             img=im_region,
@@ -4431,7 +4475,30 @@ class AnnotationStoreReader(WSIReader):
             interpolation=interpolation,
         )
 
-        return utils.transforms.background_composite(image=im_region)
+        # return utils.transforms.background_composite(image=im_region)
+        if self.base_wsi_reader is not None:
+            # overlay imregion on the base wsi
+            base_region = self.base_wsi_reader.read_rect(
+                location,
+                size,
+                resolution=resolution,
+                units=units,
+                interpolation=interpolation,
+                pad_mode=pad_mode,
+                pad_constant_values=pad_constant_values,
+                coord_space=coord_space,
+                **kwargs,
+            )
+            base_region = Image.fromarray(background_composite(base_region, alpha=True))
+            im_region = Image.fromarray(im_region)
+            if self.alpha < 1.0:
+                im_region.putalpha(
+                    im_region.getchannel("A").point(lambda i: i * self.alpha)
+                )
+            base_region = Image.alpha_composite(base_region, im_region)
+            base_region = base_region.convert("RGB")
+            return np.array(base_region)
+        return im_region
 
     def read_bounds(
         self,
@@ -4469,7 +4536,9 @@ class AnnotationStoreReader(WSIReader):
             )
 
         bound_geom = Polygon.from_bounds(*bounds_at_baseline)
-        im_region = self.render_annotations(bound_geom, np.rint(self.info.level_downsamples[read_level]))
+        im_region = self.render_annotations(
+            bound_geom, np.rint(self.info.level_downsamples[read_level])
+        )
 
         if coord_space == "resolution":
             # do this to enforce output size is as defined by input bounds
@@ -4483,7 +4552,7 @@ class AnnotationStoreReader(WSIReader):
                 output_size=size_at_requested,
             )
         if self.base_wsi_reader is not None:
-            #overlay imregion on the base wsi
+            # overlay imregion on the base wsi
             base_region = self.base_wsi_reader.read_bounds(
                 bounds,
                 resolution=resolution,
@@ -4497,9 +4566,11 @@ class AnnotationStoreReader(WSIReader):
             base_region = Image.fromarray(background_composite(base_region, alpha=True))
             im_region = Image.fromarray(im_region)
             if self.alpha < 1.0:
-                im_region.putalpha(im_region.getchannel("A").point(lambda i: i * self.alpha))
-            #base_region.paste(im_region, (0, 0), im_region)
+                im_region.putalpha(
+                    im_region.getchannel("A").point(lambda i: i * self.alpha)
+                )
             base_region = Image.alpha_composite(base_region, im_region)
+            base_region = base_region.convert("RGB")
             return np.array(base_region)
         return im_region
 
@@ -4526,17 +4597,20 @@ class AnnotationStoreReader(WSIReader):
                 The tile with the annotations rendered.
 
         """
-        top_left = np.array(bound_geom.bounds[:2])# - scale*self.overlap
+        top_left = np.array(bound_geom.bounds[:2])  # - scale*self.overlap
         # clip_bound_geom=bound_geom.buffer(scale)
         r = self.renderer
-        output_size = [int((bound_geom.bounds[2]-bound_geom.bounds[0])/scale)] * 2
+        output_size = [
+            int((bound_geom.bounds[3] - bound_geom.bounds[1]) / scale),
+            int((bound_geom.bounds[2] - bound_geom.bounds[0]) / scale),
+        ]
         if r.zoomed_out_strat == "scale" or r.zoomed_out_strat == "decimate":
-            mpp_sf = np.minimum(self.info.mpp[0]/ 0.25, 1) if self.info.mpp is not None else 1
-            min_area = (
-                0.0005
-                * (self.output_tile_size * scale * mpp_sf)
-                ** 2
+            mpp_sf = (
+                np.minimum(self.info.mpp[0] / 0.25, 1)
+                if self.info.mpp is not None
+                else 1
             )
+            min_area = 0.0005 * (self.output_tile_size * scale * mpp_sf) ** 2
         else:
             min_area = r.zoomed_out_strat
 
@@ -4564,8 +4638,8 @@ class AnnotationStoreReader(WSIReader):
                         self.render_by_type(tile, ann, top_left, scale, True)
             else:
                 anns = self.store.cached_query(bound_geom.bounds, self.renderer.where)
-                #if len(anns) == 0:
-                   ## return self.empty_img
+                # if len(anns) == 0:
+                ## return self.empty_img
                 tile = np.zeros((output_size[0], output_size[1], 4), dtype=np.uint8)
                 for ann in anns:
                     self.render_by_type(tile, ann, top_left, scale)
@@ -4580,15 +4654,17 @@ class AnnotationStoreReader(WSIReader):
                 )
             else:
                 anns = self.store.cached_query(bound_geom.bounds, self.renderer.where)
-            #if len(anns) == 0:
-                #return self.empty_img
+            # if len(anns) == 0:
+            # return self.empty_img
 
             tile = np.zeros((output_size[0], output_size[1], 4), dtype=np.uint8)
             for ann in anns:
                 self.render_by_type(tile, ann, top_left, scale)
         if r.blur is None:
             return tile
-        return np.array(ImageOps.crop(Image.fromarray(tile).filter(r.blur), self.overlap))
+        return np.array(
+            ImageOps.crop(Image.fromarray(tile).filter(r.blur), self.overlap)
+        )
 
     def render_by_type(
         self,
@@ -4627,7 +4703,9 @@ class AnnotationStoreReader(WSIReader):
         elif geom_type == "LineString":
             r.render_line(tile, annotation, top_left, scale)
         elif geom_type == "GeometryCollection":
-            warnings.warn(f"unknown geometry: {geom_type}: {[g.geom_type for g in annotation.geometry.geoms]}")
-            #pass
+            warnings.warn(
+                f"unknown geometry: {geom_type}: {[g.geom_type for g in annotation.geometry.geoms]}"
+            )
+            # pass
         else:
             warnings.warn(f"Unknown geometry: {geom_type}")
