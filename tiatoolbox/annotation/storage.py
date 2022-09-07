@@ -1759,7 +1759,7 @@ class SQLiteStore(AnnotationStore):
                 cy INTEGER NOT NULL,     -- Y of centroid/representative point
                 geometry BLOB,           -- Detailed geometry
                 properties TEXT,         -- JSON properties
-                area FLOAT               -- Area (for ordering)
+                area INTEGER NOT NULL    -- Area (for ordering)
             )
             """
         )
@@ -1909,7 +1909,7 @@ class SQLiteStore(AnnotationStore):
             "max_y": geometry.bounds[3],
             "geom_type": geometry.geom_type,
             "properties": json.dumps(annotation.properties, separators=(",", ":")),
-            "area": geometry.area,
+            "area": int(geometry.area),
         }
 
     def append_many(
