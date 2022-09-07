@@ -2078,14 +2078,7 @@ class TestReader:
             units="baseline",
         )
         # Make the regions the same size for comparison of content
-        import matplotlib.pyplot as plt
-
         roi2 = imresize(roi2, output_size=[2000, 2000])
-        plt.subplot(1, 2, 1)
-        plt.imshow(roi1)
-        plt.subplot(1, 2, 2)
-        plt.imshow(roi2)
-        plt.show()
 
         # Check MSE
         mse = np.mean((roi1 - roi2) ** 2)

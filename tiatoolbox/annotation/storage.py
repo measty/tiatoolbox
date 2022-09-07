@@ -2043,6 +2043,7 @@ class SQLiteStore(AnnotationStore):
         unique: bool = False,
         no_constraints_ok: bool = False,
         index_warning: bool = False,
+        min_area=None,
     ) -> sqlite3.Cursor:
         """Common query construction logic for `query` and `iquery`.
 
@@ -2100,6 +2101,9 @@ class SQLiteStore(AnnotationStore):
             query_geometry, query_parameters, geometry_predicate, columns, where
         )
 
+        if min_area is not None:
+            query_string += f"\nAND area > {min_area}"
+
         if unique:
             query_string = query_string.replace("SELECT", "SELECT DISTINCT")
 
@@ -2145,6 +2149,7 @@ class SQLiteStore(AnnotationStore):
         geometry: Optional[QueryGeometry] = None,
         where: Optional[Predicate] = None,
         geometry_predicate: str = "intersects",
+        min_area=None,
     ) -> Dict[str, Annotation]:
         query_geometry = geometry
         cur = self._query(
@@ -2152,12 +2157,14 @@ class SQLiteStore(AnnotationStore):
             geometry=query_geometry,
             geometry_predicate=geometry_predicate,
             where=where,
+            min_area=min_area,
         )
+        comp = self.metadata["compression"]
         if isinstance(where, Callable):
             return {
                 key: Annotation(
                     geometry=self._unpack_geometry(
-                        blob, cx, cy, self.metadata["compression"]
+                        blob, cx, cy, comp
                     ),
                     properties=json.loads(properties),
                 )
@@ -2167,7 +2174,7 @@ class SQLiteStore(AnnotationStore):
         return {
             key: Annotation(
                 geometry=self._unpack_geometry(
-                    blob, cx, cy, self.metadata["compression"]
+                    blob, cx, cy, comp
                 ),
                 properties=json.loads(properties),
             )
@@ -2180,7 +2187,7 @@ class SQLiteStore(AnnotationStore):
         rows: str,
         geometry: Optional[Iterable] = None,
         callable_rows: Optional[str] = None,
-        geometry_predicate="intersects",
+        geometry_predicate="bbox_intersects",
         con=None,
         bbox=True,
         compress_type=None,
@@ -2304,6 +2311,7 @@ class SQLiteStore(AnnotationStore):
         self,
         geometry: Optional[Tuple] = None,
         where: Callable[[Dict[str, Any]], bool] = None,
+        geometry_predicate="bbox_intersects",
         min_area=None,
     ) -> Dict[str, Annotation]:
         """Query the store for annotations.
@@ -2329,7 +2337,7 @@ class SQLiteStore(AnnotationStore):
         data = self._cached_query(
             rows="[key], properties, min_x, min_y, max_x, max_y",
             geometry=geometry,
-            geometry_predicate="bbox_intersects",
+            geometry_predicate=geometry_predicate,
             callable_rows="[key], properties, min_x, min_y, max_x, max_y",
             con=self.con,
             bbox=True,
@@ -2344,6 +2352,7 @@ class SQLiteStore(AnnotationStore):
         self,
         geometry: Optional[Tuple] = None,
         where: Callable[[Dict[str, Any]], bool] = None,
+        geometry_predicate="bbox_intersects",
         min_area=None,
     ) -> List[Annotation]:
         """Query the store for annotations.
@@ -2369,7 +2378,7 @@ class SQLiteStore(AnnotationStore):
         data = self._cached_query(
             rows="properties, cx, cy, geometry",
             geometry=geometry,
-            geometry_predicate="bbox_intersects",
+            geometry_predicate=geometry_predicate,
             con=self.con,
             bbox=False,
             compress_type=self.metadata["compression"],
@@ -2383,6 +2392,7 @@ class SQLiteStore(AnnotationStore):
         self,
         geometry: Optional[QueryGeometry] = None,
         where: Union[str, bytes, Callable[[Geometry, Dict[str, Any]], bool]] = None,
+        min_area=None,
     ) -> Dict[str, Tuple[float, float, float, float]]:
         cur = self._query(
             columns="[key], min_x, min_y, max_x, max_y",
