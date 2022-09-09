@@ -508,11 +508,10 @@ class AnnotationTileGenerator(ZoomifyGenerator):
         """
         slide_dims = np.array(self.info.slide_dimensions)
         tile_dim = self.tile_size + self.overlap
-        scale = self.level_downsample(self.info.level_count - 1)
+        scale = self.level_downsample(self.level_count - 1)
         out_dims = np.round(slide_dims / slide_dims.max() * tile_dim).astype(int)
         bounds = (0, 0, *slide_dims)
-        bound_geom = Polygon.from_bounds(*bounds)
-        thumb = self.renderer.render_annotations(self.store, bound_geom, scale)
+        thumb = self.renderer.render_annotations(self.store, bounds, scale)
         return Image.fromarray(thumb)
 
     def level_dimensions(self, level: int) -> Tuple[int, int]:

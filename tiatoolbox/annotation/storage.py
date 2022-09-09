@@ -2413,7 +2413,7 @@ class SQLiteStore(AnnotationStore):
         min_area=None,
     ) -> Dict[str, Tuple[float, float, float, float]]:
         cur = self._query(
-            columns="[key], min_x, min_y, max_x, max_y",
+            columns="[key], properties, min_x, min_y, max_x, max_y",
             geometry=geometry,
             geometry_predicate="bbox_intersects",
             where=where,
@@ -2426,7 +2426,10 @@ class SQLiteStore(AnnotationStore):
                 for key, properties, *bounds in cur.fetchall()
                 if where(json.loads(properties))
             }
-        return {key: bounds for key, *bounds in cur.fetchall()}
+        return {
+                key: Annotation(Polygon.from_bounds(*bounds), json.loads(properties))
+                for key, properties, *bounds in cur.fetchall()
+            }
 
     @staticmethod
     def _handle_pickle_callable_pquery(

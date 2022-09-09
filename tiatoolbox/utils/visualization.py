@@ -863,7 +863,6 @@ class AnnotationRenderer:
                 anns_dict = store.bquery(
                     bound_geom,
                     self.where,
-                    geometry_predicate="bbox_intersects",
                 )
                 
                 tile = np.zeros((output_size[0]*res, output_size[1]*res, 4), dtype=np.uint8)
