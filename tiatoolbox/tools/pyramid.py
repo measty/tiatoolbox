@@ -508,12 +508,11 @@ class AnnotationTileGenerator(ZoomifyGenerator):
         """
         slide_dims = np.array(self.info.slide_dimensions)
         tile_dim = self.tile_size + self.overlap
-        scale = self.level_downsample(self.info.level_count - 1)
+        scale = self.level_downsample(self.level_count - 1)
         out_dims = np.round(slide_dims / slide_dims.max() * tile_dim).astype(int)
         bounds = (0, 0, *slide_dims)
-        bound_geom = Polygon.from_bounds(*bounds)
-        thumb = self.render_annotations(bound_geom, scale)
-        return thumb
+        thumb = self.renderer.render_annotations(self.store, bounds, scale)
+        return Image.fromarray(thumb)
 
     def level_dimensions(self, level: int) -> Tuple[int, int]:
         """The total pixel dimensions of the tile pyramid at a given level.
@@ -611,139 +610,7 @@ class AnnotationTileGenerator(ZoomifyGenerator):
             raise IndexError
 
         bounds = locsize2bounds(coord, [self.output_tile_size * scale] * 2)
-        bound_geom = Polygon.from_bounds(*bounds)
-        tile = self.render_annotations(bound_geom, scale, res)
+        #bound_geom = Polygon.from_bounds(*bounds)
+        tile = self.renderer.render_annotations(self.store, bounds, scale, res, self.overlap)
 
-        return tile
-
-    def render_annotations(
-        self,
-        bound_geom: Polygon,
-        scale: int,
-        res: int = 1,
-    ):
-        """Render annotations within given bounds on top on an image.
-
-        This gets annotations as bounding boxes or geometries according to
-        zoom level, and renders them. Large collections of small
-        annotation geometries are decimated if appropriate.
-
-        Args:
-            rgb (np.ndarray):
-                The image to render the annotation on.
-            bound_geom (Polygon):
-                A polygon representing the bounding box of the tile.
-            scale (int):
-                The scale at which we are rendering the tile.
-        Returns:
-            np.ndarray:
-                The tile with the annotations rendered.
-
-        """
-        top_left = np.array(bound_geom.bounds[:2])  # - scale*self.overlap
-        # clip_bound_geom=bound_geom.buffer(scale)
-        r = self.renderer
-        output_size = [self.output_tile_size] * 2
-        if r.zoomed_out_strat == "scale" or r.zoomed_out_strat == "decimate":
-            mpp_sf = (
-                np.minimum(self.info.mpp[0] / 0.25, 1)
-                if self.info.mpp is not None
-                else 1
-            )
-            min_area = 0.0005 * (self.output_tile_size * scale * mpp_sf) ** 2
-        else:
-            min_area = r.zoomed_out_strat
-
-        if r.zoomed_out_strat == "decimate":
-            decimate = int(scale / self.renderer.max_scale) + 1
-            if scale > 100:
-                decimate = decimate * 2
-
-            if scale > self.renderer.max_scale:
-                anns_dict = self.store.cached_bquery(
-                    bound_geom.bounds,
-                    self.renderer.where,
-                )
-                if len(anns_dict) == 0:
-                    return self.empty_img
-                tile = np.zeros((output_size[0]*res, output_size[1]*res, 4), dtype=np.uint8)
-                if len(anns_dict) < 40:
-                    decimate = 1
-                for i, (key, ann) in enumerate(anns_dict.items()):
-                    if ann.geometry.area > min_area:
-                        ann = self.store[key]
-                        self.render_by_type(tile, ann, top_left, scale/2)
-                    elif i % decimate == 0:
-                        ann = self.store[key]
-                        self.render_by_type(tile, ann, top_left, scale/2, True)
-            else:
-                anns = self.store.cached_query(bound_geom.bounds, self.renderer.where)
-                if len(anns) == 0:
-                    return self.empty_img
-                tile = np.zeros((output_size[0]*res, output_size[1]*res, 4), dtype=np.uint8)
-                for ann in anns:
-                    self.render_by_type(tile, ann, top_left, scale/res)
-            return Image.fromarray(tile)
-        else:
-            # Get only annotations > min_area. Plot them all
-            if scale > self.renderer.max_scale:
-                anns = self.store.cached_query(
-                    bound_geom.bounds,
-                    self.renderer.where,
-                    min_area=min_area,
-                )
-            else:
-                anns = self.store.cached_query(bound_geom.bounds, self.renderer.where)
-            if len(anns) == 0:
-                return self.empty_img
-
-            tile = np.zeros((output_size[0]*res, output_size[1]*res, 4), dtype=np.uint8)
-            for ann in anns:
-                self.render_by_type(tile, ann, top_left, scale/res)
-        if r.blur is None:
-            return Image.fromarray(tile)
-        return ImageOps.crop(Image.fromarray(tile).filter(r.blur), self.overlap*res)
-
-    def render_by_type(
-        self,
-        tile: np.ndarray,
-        annotation: Annotation,
-        top_left: Tuple[float, float],
-        scale: int,
-        poly_as_box: bool = False,
-    ):
-        """Render annotation appropriately to its geometry type.
-
-        Args:
-            tile (np.ndarray):
-                The rgb(a) tile image to render the annotation on.
-            annotation (Annotation):
-                The annotation to render.
-            top_left (Tuple[int, int]):
-                The top left coordinate of the tile.
-            scale (int):
-                The scale at which we are rendering the tile.
-            poly_as_box (bool):
-                Whether to render polygons as boxes.
-
-        """
-        r = self.renderer
-        geom_type = annotation.geometry.geom_type
-        if geom_type == "Point":
-            r.render_pt(tile, annotation, top_left, scale)
-        elif geom_type == "Polygon":
-            if poly_as_box:
-                r.render_rect(tile, annotation, top_left, scale)
-            else:
-                r.render_poly(tile, annotation, top_left, scale)
-        elif geom_type == "MultiPolygon":
-            r.render_multipoly(tile, annotation, top_left, scale)
-        elif geom_type == "LineString":
-            r.render_line(tile, annotation, top_left, scale)
-        elif geom_type == "GeometryCollection":
-            warnings.warn(
-                f"unknown geometry: {geom_type}: {[g.geom_type for g in annotation.geometry.geoms]}"
-            )
-            # pass
-        else:
-            warnings.warn(f"Unknown geometry: {geom_type}")
+        return Image.fromarray(tile)

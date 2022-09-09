@@ -328,5 +328,5 @@ def test_colour_prop_warning(fill_store, tmp_path):
     _, store = fill_store(SQLiteStore, tmp_path / "test.db")
     renderer = AnnotationRenderer(score_prop="nonexistant_prop")
     tg = AnnotationTileGenerator(wsi.info, store, renderer, tile_size=256)
-    with pytest.warns(UserWarning, match="score_prop not found in properties"):
+    with pytest.warns(UserWarning, match="not found in annotation properties"):
         tg.get_tile(1, 0, 0)
