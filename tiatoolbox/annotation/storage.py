@@ -1246,6 +1246,9 @@ class AnnotationStore(ABC, MutableMapping):
 
         def make_valid_poly(poly, relative_to=None):
             """Helper function to make a valid polygon."""
+            if relative_to is not None:
+                # transform coords to be relative to given pt.
+                poly = translate(poly, -relative_to[0], -relative_to[1])
             if poly.is_valid:
                 return poly
             poly = poly.buffer(0.01)
@@ -1254,9 +1257,7 @@ class AnnotationStore(ABC, MutableMapping):
             poly = make_valid(poly)
             if len(list(poly)) > 1:
                 return MultiPolygon([p for p in poly if poly.geom_type == "Polygon"])
-            if relative_to is not None:
-                # transform coords to be relative to given pt.
-                return translate(poly, -relative_to[0], -relative_to[1])
+            
             return poly
 
         def anns_from_hoverdict(data, props, typedict):
