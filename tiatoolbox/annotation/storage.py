@@ -1943,6 +1943,7 @@ class SQLiteStore(AnnotationStore):
 
         if min_area is not None and "area" in self.table_columns:
             query_string += f"\nAND area > {min_area}"
+            print(min_area)
         elif min_area is not None:
             raise ValueError("Cannot use `min_area` without an area column.")
 

@@ -16,7 +16,7 @@ from tiatoolbox.models.dataset.interactive_segmentation import (
     InteractiveSegmentorDataset,
 )
 from tiatoolbox.models.architecture import get_pretrained_model
-from tiatoolbox.models.abc import IOConfigABC
+from tiatoolbox.models.models_abc import IOConfigABC
 from tiatoolbox.utils import misc
 
 
