@@ -11,7 +11,7 @@ from typing import Dict, List, Union
 
 import matplotlib.cm as cm
 import numpy as np
-from flask import Flask, Response, request, send_file, make_response
+from flask import Flask, Response, make_response, request, send_file
 from flask.templating import render_template
 from PIL import Image
 
@@ -137,7 +137,7 @@ class TileServer(Flask):
         Args:
             layer (str | ndarray | WSIReader):
                 A reference to an image or annotations to be displayed.
-            meta (WSImeta):
+            meta (WSIMeta):
                 The metadata of the base slide.
 
         Returns:
@@ -151,7 +151,7 @@ class TileServer(Flask):
                 # Assume it's a low-res heatmap.
                 layer = np.array(Image.open(layer_path))
             elif layer_path.suffix == ".db":
-                # Assume its an annotation store.
+                # Assume it's an annotation store.
                 layer = AnnotationTileGenerator(
                     meta,
                     SQLiteStore(layer_path),

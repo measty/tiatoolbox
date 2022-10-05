@@ -16,8 +16,8 @@ import torch.nn.functional as functional
 from scipy import ndimage
 from skimage import morphology
 
-from tiatoolbox.models.abc import ModelABC
 from tiatoolbox.models.architecture.hovernet import HoVerNet
+from tiatoolbox.models.models_abc import ModelABC
 from tiatoolbox.utils import misc
 
 
@@ -121,7 +121,7 @@ def group1_arch_branch(in_ch: int, resized_in_ch: int, out_ch: int):
             Number of output channels.
 
     Returns:
-        torch.nn.ModuleDict:
+        :class:`torch.nn.ModuleDict`:
             An output of type :class:`torch.nn.ModuleDict`
 
     """
