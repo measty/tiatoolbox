@@ -1,12 +1,17 @@
 import torch
-from tiatoolbox.models.engine.nucleus_instance_segmentor import IOSegmentorConfig, NucleusInstanceSegmentor
+from tiatoolbox.models.engine.nucleus_instance_segmentor import (
+    IOSegmentorConfig,
+    NucleusInstanceSegmentor,
+)
 from tiatoolbox.models.architecture.nuclick import NuClick
 from tiatoolbox.models.engine.nucleus_instance_segmentor import NucleusInstanceSegmentor
-from tiatoolbox.models.engine.interactive_segmentor import InteractiveSegmentor, IOInteractiveSegmentorConfig
+from tiatoolbox.models.engine.interactive_segmentor import (
+    InteractiveSegmentor,
+    IOInteractiveSegmentorConfig,
+)
 
 
 class InteractiveModel:
-
     def __init__(self, input_type, ioconfig, run_function, name) -> None:
         self.input_type = input_type
         self.ioconfig = ioconfig
@@ -17,8 +22,7 @@ class InteractiveModel:
         return self.run_function(slide, input, self.ioconfig)
 
 
-
-models={}
+models = {}
 
 """define models to be available in visualization tool here. To add a model,
 the following must be provided.
@@ -37,9 +41,14 @@ more details
 the output is expected to be in
 """
 
-#Add Hovernet
-input_type = 'mask'
-ioconfig = IOSegmentorConfig(input_resolutions=[{'resolution':0.25, 'units':'mpp'}], output_resolutions=[{'resolution':0.25, 'units':'mpp'}])
+# Add Hovernet
+input_type = "mask"
+ioconfig = IOSegmentorConfig(
+    input_resolutions=[{"resolution": 0.25, "units": "mpp"}],
+    output_resolutions=[{"resolution": 0.25, "units": "mpp"}],
+)
+
+
 def run_hovernet(slide, input, ioconfig):
     inst_segmentor = NucleusInstanceSegmentor(
         pretrained_model="hovernet_fast-pannuke",
@@ -59,15 +68,20 @@ def run_hovernet(slide, input, ioconfig):
 
     return output
 
-models['hovernet']=InteractiveModel(input_type, ioconfig, run_hovernet, 'hovernet')
+
+models["hovernet"] = InteractiveModel(input_type, ioconfig, run_hovernet, "hovernet")
 
 
-#Add nuclick
-input_type = 'points'
-ioconfig = IOInteractiveSegmentorConfig(input_resolutions=[{'resolution': 0.25, 'units': 'mpp'}], patch_size=(128, 128))
-def run_nuclick(slide, input, ioconfig):   
+# Add nuclick
+input_type = "points"
+ioconfig = IOInteractiveSegmentorConfig(
+    input_resolutions=[{"resolution": 0.25, "units": "mpp"}], patch_size=(128, 128)
+)
+
+
+def run_nuclick(slide, input, ioconfig):
     model = NuClick(5, 1)
-    pretrained_weights=r'E:\TTB_vis_folder\NuClick_Nuclick_40xAll.pth'
+    pretrained_weights = r"E:\TTB_vis_folder\NuClick_Nuclick_40xAll.pth"
     saved_state_dict = torch.load(pretrained_weights, map_location="cpu")
     model.load_state_dict(saved_state_dict, strict=True)
 
@@ -82,13 +96,14 @@ def run_nuclick(slide, input, ioconfig):
         [input],
         ioconfig=ioconfig,
         save_dir="sample_tile_results/",
-        patch_size=(128,128),
+        patch_size=(128, 128),
         resolution=0.25,
-        units='mpp',
+        units="mpp",
         on_gpu=True,
         save_output=True,
     )
 
     return nuclick_output
 
-models['nuclick']=InteractiveModel(input_type, ioconfig, run_nuclick, 'nuclick')
+
+models["nuclick"] = InteractiveModel(input_type, ioconfig, run_nuclick, "nuclick")

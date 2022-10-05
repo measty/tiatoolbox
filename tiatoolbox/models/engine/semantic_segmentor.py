@@ -674,11 +674,11 @@ class SemanticSegmentor:
             mask_reader = mask_path
         elif mask_path is not None:
             if os.path.isfile(mask_path):
-                #raise ValueError("`mask_path` must be a valid file path.")
+                # raise ValueError("`mask_path` must be a valid file path.")
                 mask = imread(mask_path)  # assume to be gray
             else:
                 mask = mask_path
-            #mask = cv2.cvtColor(mask, cv2.COLOR_RGB2GRAY)
+            # mask = cv2.cvtColor(mask, cv2.COLOR_RGB2GRAY)
             mask = np.array(mask > 0, dtype=np.uint8)
 
             mask_reader = VirtualWSIReader(mask)
@@ -686,7 +686,9 @@ class SemanticSegmentor:
         elif auto_get_mask and mode == "wsi" and mask_path is None:
             # if no mask provided and `wsi` mode, generate basic tissue
             # mask on the fly
-            mask_reader = reader.tissue_mask('morphological', resolution=1.25, units="power")
+            mask_reader = reader.tissue_mask(
+                "morphological", resolution=1.25, units="power"
+            )
             mask_reader.info = reader.info
         return reader, mask_reader
 

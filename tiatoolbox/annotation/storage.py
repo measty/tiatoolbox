@@ -1257,7 +1257,7 @@ class AnnotationStore(ABC, MutableMapping):
             poly = make_valid(poly)
             if len(list(poly)) > 1:
                 return MultiPolygon([p for p in poly if poly.geom_type == "Polygon"])
-            
+
             return poly
 
         def anns_from_hoverdict(data, props, typedict):
@@ -2157,9 +2157,7 @@ class SQLiteStore(AnnotationStore):
         if isinstance(where, Callable):
             return {
                 key: Annotation(
-                    geometry=self._unpack_geometry(
-                        blob, cx, cy, comp
-                    ),
+                    geometry=self._unpack_geometry(blob, cx, cy, comp),
                     properties=json.loads(properties),
                 )
                 for key, properties, cx, cy, blob in cur.fetchall()
@@ -2167,9 +2165,7 @@ class SQLiteStore(AnnotationStore):
             }
         return {
             key: Annotation(
-                geometry=self._unpack_geometry(
-                    blob, cx, cy, comp
-                ),
+                geometry=self._unpack_geometry(blob, cx, cy, comp),
                 properties=json.loads(properties),
             )
             for key, properties, cx, cy, blob in cur.fetchall()
@@ -2428,9 +2424,9 @@ class SQLiteStore(AnnotationStore):
                 if where(json.loads(properties))
             }
         return {
-                key: Annotation(Polygon.from_bounds(*bounds), json.loads(properties))
-                for key, properties, *bounds in cur.fetchall()
-            }
+            key: Annotation(Polygon.from_bounds(*bounds), json.loads(properties))
+            for key, properties, *bounds in cur.fetchall()
+        }
 
     @staticmethod
     def _handle_pickle_callable_pquery(
