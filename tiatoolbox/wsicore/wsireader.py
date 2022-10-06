@@ -20,8 +20,7 @@ import zarr
 from PIL import Image
 
 from tiatoolbox import utils
-from tiatoolbox.annotation.storage import Annotation, AnnotationStore, SQLiteStore
-from tiatoolbox.tools import tissuemask
+from tiatoolbox.annotation.storage import SQLiteStore
 from tiatoolbox.utils.env_detection import pixman_warning
 from tiatoolbox.utils.exceptions import FileNotSupported
 from tiatoolbox.utils.transforms import background_composite
@@ -1302,6 +1301,8 @@ class WSIReader:
                 Extra kwargs passed to the masker class.
 
         """
+        from tiatoolbox.tools import tissuemask
+
         thumbnail = self.slide_thumbnail(resolution, units)
         if method not in ["otsu", "morphological"]:
             raise ValueError(f"Invalid tissue masking method: {method}.")
