@@ -130,6 +130,7 @@ class TileServer(Flask):
         )
         self.route("/tileserver/getprops")(self.get_properties)
         self.route("/tileserver/reset")(self.reset)
+        self.route("/tileserver/addpostproc/<layer>/<postproc>")(self.add_post_proc)
 
     def _get_layer_as_wsireader(self, layer, meta):
         """Gets appropriate image provider for layer.
@@ -453,16 +454,17 @@ class TileServer(Flask):
             SQ = SQLiteStore.from_geojson(overlay_path)
         elif overlay_path.suffix == ".dat":
             SQ = SQLiteStore.from_dat(overlay_path, 1)  # 1 / np.array(self.slide_mpp))
-        elif overlay_path.suffix in [".jpg", ".png", ".tiff"]:
+        elif overlay_path.suffix in [".jpg", ".png", ".tiff", ".ndpi", ".svs", ".mxrs"]:
             layer = f"layer{len(self.tia_pyramids[user])}"
-            if overlay_path.suffix == ".tiff":
-                self.tia_layers[user][layer] = OpenSlideWSIReader(
-                    overlay_path, mpp=self.tia_layers[user]["slide"].info.mpp[0]
-                )
-            else:
+            if overlay_path.suffix in ["jpg", "png"]:
                 self.tia_layers[user][layer] = VirtualWSIReader(
                     Path(overlay_path), info=self.tia_layers[user]["slide"].info
                 )
+            else:
+                self.tia_layers[user][layer] = OpenSlideWSIReader(
+                    overlay_path, mpp=self.tia_layers[user]["slide"].info.mpp[0]
+                )
+
             self.tia_pyramids[user][layer] = ZoomifyGenerator(
                 self.tia_layers[user][layer]
             )
@@ -516,4 +518,13 @@ class TileServer(Flask):
                     layer.store.commit()
                     layer.store.dump(str(save_path))
                     print(f"db saved to {save_path}")
+        return "done"
+
+    def add_post_proc(self, layer, fn_name):
+        user = request.cookies.get("user")
+        data = json.loads(request.form["data"])
+        self.tia_pyramids[user][layer].post_proc = {
+            "fn": eval(data["fn_source"]),
+            "kwargs": data["kwargs"],
+        }
         return "done"

@@ -559,6 +559,7 @@ class AnnotationRenderer:
         secondary_cmap=None,
         blur_radius=0,
         score_prop_edge=None,
+        post_proc=None,
     ):
         if mapper is None:
             mapper = cm.get_cmap("jet")
@@ -582,6 +583,7 @@ class AnnotationRenderer:
         self.zoomed_out_strat = zoomed_out_strat
         self.secondary_cmap = secondary_cmap
         self.blur_radius = blur_radius
+        self.post_proc = post_proc
         if blur_radius > 0:
             self.blur = ImageFilter.GaussianBlur(blur_radius)
             self.edge_thickness = 0
@@ -866,11 +868,13 @@ class AnnotationRenderer:
             for ann in anns.values():
                 self.render_by_type(tile, ann, top_left, scale / res)
 
-        if self.blur is None:
+        if self.blur is not None:
+            tile = np.array(
+                ImageOps.crop(Image.fromarray(tile).filter(self.blur), border * res)
+            )
+        if self.post_proc is None:
             return tile
-        return np.array(
-            ImageOps.crop(Image.fromarray(tile).filter(self.blur), border * res)
-        )
+        return self.post_proc(tile)
 
     def render_by_type(
         self,
