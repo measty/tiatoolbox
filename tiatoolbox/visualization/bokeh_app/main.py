@@ -47,6 +47,7 @@ from bokeh.models import (
 from bokeh.models.tiles import WMTSTileSource
 from bokeh.plotting import figure
 from bokeh.util import token
+from demux import restain_tile
 from flask_cors import CORS
 from requests.adapters import HTTPAdapter, Retry
 
@@ -108,6 +109,23 @@ def make_ts(route):
     # ts.max_zoom=10
     # ts.min_zoom=10
     return ts
+
+
+def setup_session():
+    s = requests.Session()
+
+    retries = Retry(
+        total=5,
+        backoff_factor=0.1,
+    )
+    # status_forcelist=[ 500, 502, 503, 504 ])
+    s.mount("http://", HTTPAdapter(max_retries=retries))
+
+    resp = s.get(f"http://{host2}:5000/tileserver/setup")
+    print(f"cookies are: {resp.cookies}")
+    cookies = resp.cookies
+    user = resp.cookies.get("user")
+    return s, user
 
 
 def to_float_rgb(rgb):
@@ -179,18 +197,19 @@ def update_renderer(prop, value):
                 cm.get_cmap(value)
             )
             color_bar.visible = True
-        return s.get(f"http://{host2}:5000/tileserver/changecmap/{value}")
-    return s.get(
+        return s[active].get(f"http://{host2}:5000/tileserver/changecmap/{value}")
+    return s[active].get(
         f"http://{host2}:5000/tileserver/updaterenderer/{prop}/{json.dumps(value)}"
     )
 
 
 def add_post_proc(layer, fn: Callable, kwargs: dict = None):
     """add a post-processing function to a layer"""
-    s.post(
-        f"http://{host2}:5000/tileserver/addpostproc/{layer}/{fn.__name__}",
+    s[active].post(
+        f"http://{host2}:5000/tileserver/addpostproc",
         data={
-            "fn_source": json.dumps(inspect.getsource(fn)),
+            "layer": layer,
+            "fn_source": inspect.getsource(fn),
             "kwargs": json.dumps(kwargs),
         },
     )
@@ -251,7 +270,7 @@ def build_predicate_callable():
 
     vstate[active].renderer.where = pred
     # update_renderer("where", json.dumps(pred))
-    s.post(
+    s[active].post(
         f"http://{host2}:5000/tileserver/updatewhere",
         data={"types": json.dumps(get_types), "filter": json.dumps(filter_input.value)},
     )
@@ -324,9 +343,6 @@ def initialise_slide():
     plot_size = np.array([ps[active].width, ps[active].height])
     aspect_ratio = plot_size[0] / plot_size[1]
     large_dim = np.argmax(np.array(vstate[active].dims) / plot_size)
-    import pdb
-
-    pdb.set_trace()
     vstate[active].micron_formatter.args["mpp"] = vstate[active].mpp[0]
     if large_dim == 1:
         ps[active].x_range.start = (
@@ -485,17 +501,15 @@ def change_tiles(layer_name="overlay"):
                 continue
             grp = tg.get_grp()
             ts = make_ts(
-                f"http://{host}:{port}/tileserver/layer/{layer_key}/{user}/zoomify/TileGroup{grp}"
+                f"http://{host}:{port}/tileserver/layer/{layer_key}/{user[active]}/zoomify/TileGroup{grp}"
                 + r"/{z}-{x}-{y}@2x.jpg",
             )
             ps[active].renderers[vstate[active].layer_dict[layer_key]].tile_source = ts
 
         return
-    import pdb
 
-    pdb.set_trace()
     ts = make_ts(
-        f"http://{host}:{port}/tileserver/layer/{layer_name}/{user}/zoomify/TileGroup{grp}"
+        f"http://{host}:{port}/tileserver/layer/{layer_name}/{user[active]}/zoomify/TileGroup{grp}"
         + r"/{z}-{x}-{y}@2x.jpg",
     )
     if layer_name in vstate[active].layer_dict:
@@ -514,7 +528,7 @@ def change_tiles(layer_name="overlay"):
                 continue
             grp = tg.get_grp()
             ts = make_ts(
-                f"http://{host}:{port}/tileserver/layer/{layer_key}/{user}/zoomify/TileGroup{grp}"
+                f"http://{host}:{port}/tileserver/layer/{layer_key}/{user[active]}/zoomify/TileGroup{grp}"
                 + r"/{z}-{x}-{y}@2x.jpg",
             )
             ps[active].renderers[vstate[active].layer_dict[layer_key]].tile_source = ts
@@ -575,7 +589,10 @@ renderer = AnnotationRenderer(
     zoomed_out_strat="scale",
     max_scale=8,
 )
-vstate[active].renderer = renderer
+vstate[
+    active
+].renderer = renderer  # do i need to store renderer in this file? better to remove.
+vstate[1 - active].renderer = renderer
 
 wsi = [WSIReader.open(vstate[active].slide_path)]
 vstate[active].dims = wsi[0].info.slide_dimensions
@@ -603,7 +620,13 @@ if not is_deployed:
 
 
 # set up main window
-vstate[active].micron_formatter = FuncTickFormatter(
+vstate[0].micron_formatter = FuncTickFormatter(
+    args={"mpp": 0.1},
+    code="""
+    return Math.round(tick*mpp)
+    """,
+)
+vstate[1].micron_formatter = FuncTickFormatter(
     args={"mpp": 0.1},
     code="""
     return Math.round(tick*mpp)
@@ -622,22 +645,13 @@ slide_wins = row(
 )
 initialise_slide()
 
-s = requests.Session()
-
-retries = Retry(
-    total=5,
-    backoff_factor=0.1,
-)
-# status_forcelist=[ 500, 502, 503, 504 ])
-s.mount("http://", HTTPAdapter(max_retries=retries))
-
-resp = s.get(f"http://{host2}:5000/tileserver/setup")
-print(f"cookies are: {resp.cookies}")
-cookies = resp.cookies
-user = resp.cookies.get("user")
+s1, user1 = setup_session()
+s2, user2 = setup_session()
+s = [s1, s2]
+user = [user1, user2]
 
 ts1 = make_ts(
-    f"http://{host}:{port}/tileserver/layer/slide/{user}/zoomify/TileGroup1"
+    f"http://{host}:{port}/tileserver/layer/slide/{user[active]}/zoomify/TileGroup1"
     + r"/{z}-{x}-{y}@2x.jpg",
 )
 print(ps[active].renderers)
@@ -845,6 +859,62 @@ opt_buttons = CheckboxButtonGroup(
 save_button = Button(
     label="Save", button_type="success", max_width=90, sizing_mode="stretch_width"
 )
+post_proc_button = Button(
+    label="Post Process",
+    button_type="success",
+)
+wdh_slider = Slider(
+    title="Wdh",
+    start=0,
+    end=1,
+    step=0.05,
+    value=0.75,
+    width=200,
+    height=40,
+    max_width=200,
+    sizing_mode="stretch_width",
+)
+wde_slider = Slider(
+    title="Wde",
+    start=0,
+    end=1,
+    step=0.05,
+    value=0.75,
+    width=200,
+    height=40,
+    max_width=200,
+    sizing_mode="stretch_width",
+)
+weh_slider = Slider(
+    title="Weh",
+    start=0,
+    end=1,
+    step=0.05,
+    value=0.75,
+    width=200,
+    height=40,
+    max_width=200,
+    sizing_mode="stretch_width",
+)
+wed_slider = Slider(
+    title="Wed",
+    start=0,
+    end=1,
+    step=0.05,
+    value=0.75,
+    width=200,
+    height=40,
+    max_width=200,
+    sizing_mode="stretch_width",
+)
+stain_select = Dropdown(
+    label="Choose Stain",
+    button_type="warning",
+    menu=["H&E", "H&IHC"],
+    width=120,
+    max_width=120,
+    sizing_mode="stretch_width",
+)
 
 
 # Define UI callbacks
@@ -929,14 +999,14 @@ def layer_folder_input_cb(attr, old, new):
 
 def filter_input_cb(attr, old, new):
     """Change predicate to be used to filter annotations"""
-    # s.get(f"http://{host2}:5000/tileserver/changepredicate/{new}")
+    # s[active].get(f"http://{host2}:5000/tileserver/changepredicate/{new}")
     build_predicate_callable()
     vstate[active].update_state = 1
 
 
 def cprop_input_cb(attr, old, new):
     """Change property to colour by"""
-    s.get(f"http://{host2}:5000/tileserver/changeprop/{new[0]}")
+    s[active].get(f"http://{host2}:5000/tileserver/changeprop/{new[0]}")
     vstate[active].update_state = 1
 
 
@@ -1014,15 +1084,25 @@ def scale_spinner_cb(attr, old, new):
     vstate[active].update_state = 1
 
 
+def post_proc_cb(attr):
+    kwargs = {
+        "wdh": 0.7,
+        "wde": 0.4,
+        "weh": 0.8,
+        "wed": 0.8,
+        "sigma": 5.0,
+        "stains": "HE",
+        "lev": 10,
+    }
+    add_post_proc("slide", restain_tile, kwargs)
+
+
 def slide_select_cb(attr, old, new):
     print(active)
     """setup the newly chosen slide"""
     if len(new) == 0:
         return
     slide_path = Path(slide_folder) / Path(new[0])
-    if active == 1:
-        layer_drop_cb(DummyWidget(slide_path))
-        return
     pt_source.data = {"x": [], "y": []}
     box_source.data = {"x": [], "y": [], "width": [], "height": []}
     if len(ps[active].renderers) > 3:
@@ -1049,7 +1129,7 @@ def slide_select_cb(attr, old, new):
     fname = make_safe_name(str(slide_path))
     print(fname)
     print(vstate[active].mpp)
-    s.get(f"http://{host2}:5000/tileserver/changeslide/slide/{fname}")
+    s[active].get(f"http://{host2}:5000/tileserver/changeslide/slide/{fname}")
     change_tiles("slide")
     # if len(ps[active].renderers)==1:
     # r=ps[active].rect('x', 'y', 'width', 'height', source=box_source, fill_alpha=0)
@@ -1134,12 +1214,12 @@ def layer_drop_cb(attr):
 
     # fname='-*-'.join(attr.item.split('\\'))
     fname = make_safe_name(attr.item)
-    resp = s.get(f"http://{host2}:5000/tileserver/changeoverlay/{fname}")
+    resp = s[active].get(f"http://{host2}:5000/tileserver/changeoverlay/{fname}")
     resp = json.loads(resp.text)
 
     if Path(attr.item).suffix in [".db", ".dat", ".geojson"]:
         vstate[active].types = resp
-        props = s.get(f"http://{host2}:5000/tileserver/getprops")
+        props = s[active].get(f"http://{host2}:5000/tileserver/getprops")
         vstate[active].props = json.loads(props.text)
         # type_cmap_select.options = vstate[active].props
         cprop_input.options = vstate[active].props
@@ -1250,7 +1330,7 @@ def to_model_cb(attr):
 def type_cmap_cb(attr, old, new):
     if len(new) == 0:
         type_cmap_select.options = vstate[active].types
-        s.get(
+        s[active].get(
             f"http://{host2}:5000/tileserver/changesecondarycmap/{'None'}/{'None'}/viridis"
         )
         vstate[active].update_state = 1
@@ -1266,7 +1346,7 @@ def type_cmap_cb(attr, old, new):
         if new[1] in vstate[active].types:
             type_cmap_select.value = [new[1], new[0]]
             return
-        s.get(
+        s[active].get(
             f"http://{host2}:5000/tileserver/changesecondarycmap/{new[0]}/{new[1]}/viridis"
         )
 
@@ -1281,7 +1361,7 @@ def save_cb(attr):
     save_path = make_safe_name(
         str(overlay_folder / (vstate[active].slide_path.stem + "_saved_anns.db"))
     )
-    s.get(f"http://{host2}:5000/tileserver/commit/{save_path}")
+    s[active].get(f"http://{host2}:5000/tileserver/commit/{save_path}")
 
 
 def active_win_cb(attr, old, new):
@@ -1331,7 +1411,7 @@ def segment_on_box(attr):
     # fname='-*-'.join('.\\sample_tile_results\\0.dat'.split('\\'))
     fname = make_safe_name(".\\sample_tile_results\\0.dat")
     print(fname)
-    resp = s.get(
+    resp = s[active].get(
         f"http://{host2}:5000/tileserver/loadannotations/{fname}/{vstate[active].model_mpp}"
     )
     vstate[active].types = json.loads(resp.text)
@@ -1344,13 +1424,13 @@ def segment_on_box(attr):
     return tile_output
 
 
-# run nuclick on user selected points in pt_source
+# run nuclick on user[active] selected points in pt_source
 def nuclick_on_pts(attr):
     x = np.round(np.array(pt_source.data["x"]))
     y = -np.round(np.array(pt_source.data["y"]))
 
     model = NuClick(5, 1)
-    pretrained_weights = r"C:\Users\meast\app_data\NuClick_Nuclick_40xAll.pth"
+    pretrained_weights = r"C:\user[active]s\meast\app_data\NuClick_Nuclick_40xAll.pth"
     saved_state_dict = torch.load(pretrained_weights, map_location="cpu")
     model.load_state_dict(saved_state_dict, strict=True)
     vstate[active].model_mpp = 0.25
@@ -1383,7 +1463,7 @@ def nuclick_on_pts(attr):
     # fname='-*-'.join('.\\sample_tile_results\\0.dat'.split('\\'))
     fname = make_safe_name("\\app_data\\sample_tile_results\\0.dat")
     print(fname)
-    resp = s.get(
+    resp = s[active].get(
         f"http://{host2}:5000/tileserver/loadannotations/{fname}/{vstate[active].model_mpp}"
     )
     print(resp.text)
@@ -1415,6 +1495,7 @@ node_source.selected.on_change("indices", node_select_cb)
 type_cmap_select.on_change("value", type_cmap_cb)
 swap_button.on_click(swap_cb)
 active_win_buttons.on_change("active", active_win_cb)
+post_proc_button.on_click(post_proc_cb)
 
 populate_slide_list(slide_folder)
 populate_layer_list(Path(vstate[active].slide_path).stem, overlay_folder)
@@ -1440,6 +1521,7 @@ ui_layout = column(
         opt_buttons,
         row([to_model_button, model_drop, save_button]),
         row(children=[box_column, color_column]),
+        post_proc_button,
     ],
     name="ui_layout",
     sizing_mode="stretch_both",

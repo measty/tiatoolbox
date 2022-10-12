@@ -4,6 +4,7 @@ from __future__ import annotations
 import io
 import json
 import os
+import pickle
 import secrets
 import urllib
 from pathlib import Path
@@ -11,6 +12,7 @@ from typing import Dict, List, Union
 
 import matplotlib.cm as cm
 import numpy as np
+from demux import restain_tile
 from flask import Flask, Response, make_response, request, send_file
 from flask.templating import render_template
 from PIL import Image
@@ -130,7 +132,7 @@ class TileServer(Flask):
         )
         self.route("/tileserver/getprops")(self.get_properties)
         self.route("/tileserver/reset")(self.reset)
-        self.route("/tileserver/addpostproc/<layer>/<postproc>")(self.add_post_proc)
+        self.route("/tileserver/addpostproc", methods=["POST"])(self.add_post_proc)
 
     def _get_layer_as_wsireader(self, layer, meta):
         """Gets appropriate image provider for layer.
@@ -456,7 +458,7 @@ class TileServer(Flask):
             SQ = SQLiteStore.from_dat(overlay_path, 1)  # 1 / np.array(self.slide_mpp))
         elif overlay_path.suffix in [".jpg", ".png", ".tiff", ".ndpi", ".svs", ".mxrs"]:
             layer = f"layer{len(self.tia_pyramids[user])}"
-            if overlay_path.suffix in ["jpg", "png"]:
+            if overlay_path.suffix in [".jpg", ".png"]:
                 self.tia_layers[user][layer] = VirtualWSIReader(
                     Path(overlay_path), info=self.tia_layers[user]["slide"].info
                 )
@@ -520,11 +522,18 @@ class TileServer(Flask):
                     print(f"db saved to {save_path}")
         return "done"
 
-    def add_post_proc(self, layer, fn_name):
+    def add_post_proc(self):
         user = request.cookies.get("user")
-        data = json.loads(request.form["data"])
-        self.tia_pyramids[user][layer].post_proc = {
-            "fn": eval(data["fn_source"]),
-            "kwargs": data["kwargs"],
+        # import pdb; pdb.set_trace()
+        f_path = Path(
+            r"E:\PRISMATIC\Mitosis_Ki67_IHC_and_IHC+HE_Trial_Asmaa\matchers_Case_4_Ki_IHC+H_and_E.pkl"
+        )
+        with open(f_path, "rb") as f:
+            matchers = pickle.load(f)
+        kwargs = json.loads(request.form["kwargs"])
+        kwargs["matchers"] = matchers
+        self.tia_pyramids[user][request.form["layer"]].post_proc = {
+            "fn": restain_tile,  # json.loads(request.form["fn_source"]),
+            "kwargs": kwargs,
         }
         return "done"
