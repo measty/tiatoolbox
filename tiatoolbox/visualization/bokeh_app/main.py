@@ -1086,12 +1086,12 @@ def scale_spinner_cb(attr, old, new):
 
 def post_proc_cb(attr):
     kwargs = {
-        "wdh": 0.7,
-        "wde": 0.4,
-        "weh": 0.8,
-        "wed": 0.8,
+        "wdh": wdh_slider.value,
+        "wde": wde_slider.value,
+        "weh": weh_slider.value,
+        "wed": wed_slider.value,
         "sigma": 5.0,
-        "stains": "HE",
+        "stains": stain_select.value,
         "lev": 10,
     }
     add_post_proc("slide", restain_tile, kwargs)
@@ -1497,6 +1497,7 @@ swap_button.on_click(swap_cb)
 active_win_buttons.on_change("active", active_win_cb)
 post_proc_button.on_click(post_proc_cb)
 
+
 populate_slide_list(slide_folder)
 populate_layer_list(Path(vstate[active].slide_path).stem, overlay_folder)
 
@@ -1522,6 +1523,11 @@ ui_layout = column(
         row([to_model_button, model_drop, save_button]),
         row(children=[box_column, color_column]),
         post_proc_button,
+        wde_slider,
+        wdh_slider,
+        weh_slider,
+        wed_slider,
+        stain_select,
     ],
     name="ui_layout",
     sizing_mode="stretch_both",
