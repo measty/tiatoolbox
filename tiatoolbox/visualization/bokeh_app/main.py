@@ -37,6 +37,7 @@ from bokeh.models import (
     Panel,
     PointDrawTool,
     RadioGroup,
+    Select,
     Slider,
     Spinner,
     StaticLayoutProvider,
@@ -555,6 +556,7 @@ class ViewerState:
         self.current_model = "hovernet"
         self.props = []
         self.props_old = []
+        self.to_update = set()
 
 
 vstate = {}
@@ -907,10 +909,10 @@ wed_slider = Slider(
     max_width=200,
     sizing_mode="stretch_width",
 )
-stain_select = Dropdown(
-    label="Choose Stain",
-    button_type="warning",
-    menu=["H&E", "H&IHC"],
+stain_select = Select(
+    title="Choose Stain",
+    value="HE",
+    options=["HE", "HD"],
     width=120,
     max_width=120,
     sizing_mode="stretch_width",
@@ -932,6 +934,7 @@ def node_select_cb(attr, old, new):
     vstate[active].renderer.mapper = lambda x: vstate[active].mapper[x]
     update_renderer("mapper", vstate[active].mapper)
     vstate[active].update_state = 1
+    vstate[active].to_update.update(["overlay"])
 
 
 def overlay_toggle_cb(attr):
@@ -1002,12 +1005,14 @@ def filter_input_cb(attr, old, new):
     # s[active].get(f"http://{host2}:5000/tileserver/changepredicate/{new}")
     build_predicate_callable()
     vstate[active].update_state = 1
+    vstate[active].to_update.update(["overlay"])
 
 
 def cprop_input_cb(attr, old, new):
     """Change property to colour by"""
     s[active].get(f"http://{host2}:5000/tileserver/changeprop/{new[0]}")
     vstate[active].update_state = 1
+    vstate[active].to_update.update(["overlay"])
 
 
 def set_graph_alpha(g_renderer, value):
@@ -1038,6 +1043,7 @@ def pt_size_cb(attr, old, new):
     update_renderer("edge_thickness", new)
     graph.node_renderer.glyph.radius = 20 * new
     vstate[active].update_state = 1
+    vstate[active].to_update.update(["overlay"])
 
 
 def opt_buttons_cb(attr, old, new):
@@ -1050,6 +1056,7 @@ def opt_buttons_cb(attr, old, new):
         update_renderer("thickness", 1)
     if old_thickness != vstate[active].renderer.thickness:
         vstate[active].update_state = 1
+        vstate[active].to_update.update(["overlay"])
     if 1 in new:
         ps[active].xaxis[0].formatter = vstate[active].micron_formatter
         ps[active].yaxis[0].formatter = vstate[active].micron_formatter
@@ -1072,16 +1079,19 @@ def cmap_drop_cb(attr):
     update_renderer("mapper", attr.item)
     # change_tiles('overlay')
     vstate[active].update_state = 1
+    vstate[active].to_update.update(["overlay"])
 
 
 def blur_spinner_cb(attr, old, new):
     update_renderer("blur_radius", new)
     vstate[active].update_state = 1
+    vstate[active].to_update.update(["overlay"])
 
 
 def scale_spinner_cb(attr, old, new):
     update_renderer("max_scale", new)
     vstate[active].update_state = 1
+    vstate[active].to_update.update(["overlay"])
 
 
 def post_proc_cb(attr):
@@ -1092,9 +1102,15 @@ def post_proc_cb(attr):
         "wed": wed_slider.value,
         "sigma": 5.0,
         "stains": stain_select.value,
-        "lev": 10,
+        "lev": 1,
     }
     add_post_proc("slide", restain_tile, kwargs)
+    vstate[active].update_state = 1
+    vstate[active].to_update.update(["slide"])
+
+
+def post_proc_val_cb(attr, old, new):
+    post_proc_cb(attr)
 
 
 def slide_select_cb(attr, old, new):
@@ -1238,6 +1254,7 @@ def layer_select_cb(attr):
     build_predicate_callable()
     # change_tiles('overlay')
     vstate[active].update_state = 1
+    vstate[active].to_update.update(["overlay"])
 
 
 def fixed_layer_select_cb(obj, attr):
@@ -1287,6 +1304,7 @@ def color_input_cb(obj, attr, old, new):
         update_renderer("mapper", vstate[active].mapper)
     # change_tiles('overlay')
     vstate[active].update_state = 1
+    vstate[active].to_update.update(["overlay"])
 
 
 def bind_cb_obj(cb_obj, cb):
@@ -1334,6 +1352,7 @@ def type_cmap_cb(attr, old, new):
             f"http://{host2}:5000/tileserver/changesecondarycmap/{'None'}/{'None'}/viridis"
         )
         vstate[active].update_state = 1
+        vstate[active].to_update.update(["overlay"])
         return
     if len(new) == 1:
         # find out what still has to be selected
@@ -1355,6 +1374,7 @@ def type_cmap_cb(attr, old, new):
         )
         color_bar.visible = True
         vstate[active].update_state = 1
+        vstate[active].to_update.update(["overlay"])
 
 
 def save_cb(attr):
@@ -1496,6 +1516,11 @@ type_cmap_select.on_change("value", type_cmap_cb)
 swap_button.on_click(swap_cb)
 active_win_buttons.on_change("active", active_win_cb)
 post_proc_button.on_click(post_proc_cb)
+wde_slider.on_change("value", post_proc_val_cb)
+wdh_slider.on_change("value", post_proc_val_cb)
+wed_slider.on_change("value", post_proc_val_cb)
+weh_slider.on_change("value", post_proc_val_cb)
+stain_select.on_change("value", post_proc_val_cb)
 
 
 populate_slide_list(slide_folder)
@@ -1541,8 +1566,10 @@ def cleanup_session(session_context):
 
 def update():
     if vstate[active].update_state == 2:
-        change_tiles("overlay")
+        for layer in vstate[active].to_update:
+            change_tiles(layer)
         vstate[active].update_state = 0
+        vstate[active].to_update = set()
     if vstate[active].update_state == 1:
         vstate[active].update_state = 2
 
