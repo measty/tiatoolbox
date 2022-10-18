@@ -56,7 +56,7 @@ from tiatoolbox.visualization.tileserver import TileServer
 from tiatoolbox.visualization.ui_utils import get_level_by_extent
 from tiatoolbox.wsicore.wsireader import WSIReader, OpenSlideWSIReader
 
-is_deployed = True
+is_deployed = False
 # rand_id = token.generate_session_id()
 # print(f'rand id is: {rand_id}')
 
@@ -1307,3 +1307,4 @@ def update():
 curdoc().add_periodic_callback(update, 220)
 curdoc().add_root(p)
 curdoc().add_root(ui_layout)
+curdoc().title = "IGUANA for colon biopsy classification"

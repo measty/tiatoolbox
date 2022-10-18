@@ -1650,15 +1650,20 @@ class SQLiteStore(AnnotationStore):
 
         # Set up metadata
         self.metadata = SQLiteMetadata(self.con)
-        self.metadata["version"] = "1.0.0"
-        self.metadata["compression"] = compression
-        self.metadata["compression_level"] = compression_level
+        if not exists:
+            self.metadata["version"] = "1.0.0"
+            self.metadata["compression"] = compression
+            self.metadata["compression_level"] = compression_level
+
+        # store locally as constantly fetching from db in (de)serialization is slow
+        self.compression = self.metadata["compression"]
+        self.compression_level = self.metadata["compression_level"]
 
         # Register predicate functions as custom SQLite functions
         def wkb_predicate(name: str, wkb_a: bytes, b: bytes, cx: int, cy: int) -> bool:
             """Wrapper function to allow WKB as inputs to binary predicates."""
             a = wkb.loads(wkb_a)
-            b = self._unpack_geometry(b, cx, cy, self.metadata["compression"])
+            b = self._unpack_geometry(b, cx, cy, self.compression)
             return self._geometry_predicate(name, a, b)
 
         def pickle_expression(pickle_bytes: bytes, properties: str) -> bool:
@@ -1752,10 +1757,10 @@ class SQLiteStore(AnnotationStore):
 
         """
         data = geometry.wkb
-        if self.metadata["compression"] is None:
+        if self.compression is None:
             return data
-        if self.metadata["compression"] == "zlib":
-            return zlib.compress(data, level=self.metadata["compression_level"])
+        if self.compression == "zlib":
+            return zlib.compress(data, level=self.compression_level)
         raise ValueError("Unsupported compression method.")
 
     @staticmethod
@@ -1806,9 +1811,9 @@ class SQLiteStore(AnnotationStore):
                 The deserialised Shapely geometry.
 
         """
-        if self.metadata["compression"] == "zlib":
+        if self.compression == "zlib":
             data = zlib.decompress(data)
-        elif self.metadata["compression"] is not None:
+        elif self.compression is not None:
             raise ValueError("Unsupported compression method.")
         if isinstance(data, str):
             return wkt.loads(data)
@@ -2271,7 +2276,7 @@ class SQLiteStore(AnnotationStore):
             callable_rows="[key], properties, min_x, min_y, max_x, max_y",
             con=self.con,
             bbox=True,
-            compress_type=self.metadata["compression"],
+            compress_type=self.compression,
             min_area=min_area,
         )
         if where is None:
@@ -2290,7 +2295,7 @@ class SQLiteStore(AnnotationStore):
             geometry_predicate="bbox_intersects",
             con=self.con,
             bbox=False,
-            compress_type=self.metadata["compression"],
+            compress_type=self.compression,
             min_area=min_area,
         )
         if where is None:
@@ -2624,7 +2629,7 @@ class SQLiteStore(AnnotationStore):
         serialised_geometry, serialised_properties, cx, cy = row
         properties = json.loads(serialised_properties or "{}")
         geometry = self._unpack_geometry(
-            serialised_geometry, cx, cy, self.metadata["compression"]
+            serialised_geometry, cx, cy, self.compression
         )
         return Annotation(geometry, properties)
 
@@ -2664,7 +2669,7 @@ class SQLiteStore(AnnotationStore):
             key, cx, cy, serialised_geometry, serialised_properties = row
             if serialised_geometry is not None:
                 geometry = self._unpack_geometry(
-                    serialised_geometry, cx, cy, self.metadata["compression"]
+                    serialised_geometry, cx, cy, self.compression
                 )
             else:
                 geometry = Point(cx, cy)
