@@ -339,7 +339,7 @@ class SlideGraphConstructor:  # noqa: PIE798
             neighbour_indexes_singlepoint = neighbour_indexes_ckd[i][
                 : len(neighbour_distances_singlepoint)
             ]
-            '''neighbour_distances_singlepoint, neighbour_indexes_singlepoint = kd_tree.query(
+            """neighbour_distances_singlepoint, neighbour_indexes_singlepoint = kd_tree.query(
                 x=points[i], k=500, distance_upper_bound=neighbour_search_radius
             )
 
@@ -347,7 +347,7 @@ class SlideGraphConstructor:  # noqa: PIE798
                 neighbour_distances_singlepoint < neighbour_search_radius
             ]
             neighbour_indexes_singlepoint = neighbour_indexes_singlepoint[
-                : len(neighbour_distances_singlepoint)]'''
+                : len(neighbour_distances_singlepoint)]"""
 
             # Called f in the paper
             neighbour_feature_similarities = np.exp(
@@ -389,7 +389,7 @@ class SlideGraphConstructor:  # noqa: PIE798
         cluster_inds = np.zeros_like(clusters)
         for i, c in enumerate(unique_clusters):
             (idx,) = np.where(clusters == c)
-            cluster_inds[idx]=i
+            cluster_inds[idx] = i
             # Find the xy and feature space averages of the cluster
             point_centroids.append(np.round(points[idx, :].mean(axis=0)))
             feature_centroids.append(features[idx, :].mean(axis=0))

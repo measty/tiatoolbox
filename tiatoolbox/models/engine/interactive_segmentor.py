@@ -12,7 +12,9 @@ import torch
 import tqdm
 from tiatoolbox.models.architecture.nuclick import NuClick
 
-from tiatoolbox.models.dataset.interactive_segmentation import InteractiveSegmentorDataset
+from tiatoolbox.models.dataset.interactive_segmentation import (
+    InteractiveSegmentorDataset,
+)
 from tiatoolbox.models.architecture import get_pretrained_model
 from tiatoolbox.models.abc import IOConfigABC
 from tiatoolbox.utils import misc
@@ -23,8 +25,9 @@ class IOInteractiveSegmentorConfig(IOConfigABC):
 
     input_resolutions (list): Resolution of each input head of model
         inference, must be in the same order as target model.forward().
-    
+
     """
+
     input_resolutions = None
     output_resolutions = None
 
@@ -34,13 +37,12 @@ class IOInteractiveSegmentorConfig(IOConfigABC):
         patch_size: Tuple[int, int],
         **kwargs,
     ):
-        
+
         self.input_resolutions = input_resolutions
         self.patch_size = patch_size
 
 
 class InteractiveSegmentor:
-
     def __init__(
         self,
         batch_size=8,
@@ -70,7 +72,7 @@ class InteractiveSegmentor:
             pretrained_weights (str): Path to the weight of the corresponding
                 `pretrained_model`.
             verbose (bool): Whether to output logging information.
-            
+
         """
         super().__init__()
 
@@ -147,20 +149,22 @@ class InteractiveSegmentor:
         for _, batch_data in enumerate(dataloader):
 
             input = batch_data["input"]
-            #for patch in dataset:
-            #plt.imshow(np.transpose(np.squeeze(input[0,0:3,:,:]),(1,2,0)))
-            #plt.show()
+            # for patch in dataset:
+            # plt.imshow(np.transpose(np.squeeze(input[0,0:3,:,:]),(1,2,0)))
+            # plt.show()
             nuc_points = batch_data["input"][:, 3, :, :].numpy()
             bounding_boxes = batch_data["bounding_box"].tolist()
 
-            batch_output_probabilities = self.model.infer_batch(
-                model, input, on_gpu
-            )
+            batch_output_probabilities = self.model.infer_batch(model, input, on_gpu)
 
             # Nuclick post-processing:
             batch_output_predictions = NuClick.postproc(
-                preds = batch_output_probabilities, thresh=0.5, minSize=10, 
-                minHole=30, doReconstruction=True, nucPoints=nuc_points
+                preds=batch_output_probabilities,
+                thresh=0.5,
+                minSize=10,
+                minHole=30,
+                doReconstruction=True,
+                nucPoints=nuc_points,
             )
 
             # tolist might be very expensive
@@ -184,8 +188,8 @@ class InteractiveSegmentor:
         points,
         labels=None,
         on_gpu=True,
-        ioconfig: IOInteractiveSegmentorConfig=None,
-        patch_size: Tuple[int, int]=None,
+        ioconfig: IOInteractiveSegmentorConfig = None,
+        patch_size: Tuple[int, int] = None,
         resolution=None,
         units=None,
         save_dir=None,
@@ -195,7 +199,7 @@ class InteractiveSegmentor:
 
         Args:
             imgs (list): List of inputs to process. The input must be a list of file paths.
-            points (list): List of path to files containing points('clicks') for each image. 
+            points (list): List of path to files containing points('clicks') for each image.
             labels: List of labels for each image, Optional.
             on_gpu (bool): whether to run model on the GPU.
             patch_input_shape (tuple): Size of patches input to the model. Patches
@@ -252,7 +256,7 @@ class InteractiveSegmentor:
                 raise ValueError(
                     f"len(labels) != len(imgs) : " f"{len(labels)} != {len(imgs)}"
                 )
-        if  len(points) != len(imgs):
+        if len(points) != len(imgs):
             raise ValueError(
                 f"len(points) != len(imgs) : " f"{len(points)} != {len(imgs)}"
             )
@@ -284,7 +288,6 @@ class InteractiveSegmentor:
                 patch_size=patch_size,
             )
 
-
         if len(imgs) > 1:
             warnings.warn(
                 "When providing multiple whole-slide images / tiles, "
@@ -305,8 +308,6 @@ class InteractiveSegmentor:
             save_dir = pathlib.Path(save_dir)
             save_dir.mkdir(parents=True, exist_ok=False)
 
-
-
         # None if no output
         outputs = None
 
@@ -320,10 +321,11 @@ class InteractiveSegmentor:
             points_path = points[idx]
 
             dataset = InteractiveSegmentorDataset(
-                img_path = img_path, points = points_path,
-                resolution = self._ioconfig.input_resolutions[0]["resolution"], 
-                units = self._ioconfig.input_resolutions[0]["units"],
-                patch_size = self._ioconfig.patch_size
+                img_path=img_path,
+                points=points_path,
+                resolution=self._ioconfig.input_resolutions[0]["resolution"],
+                units=self._ioconfig.input_resolutions[0]["units"],
+                patch_size=self._ioconfig.patch_size,
             )
 
             output_inst_dict = self._predict_engine(
@@ -341,7 +343,6 @@ class InteractiveSegmentor:
                 save_info["dat"] = dat_save_path
                 joblib.dump(output_inst_dict, dat_save_path)
                 file_dict[str(img_path)] = save_info
-
 
         output = file_dict if len(imgs) > 1 or save_output else output_inst_dict
 

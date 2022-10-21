@@ -211,7 +211,7 @@ class TileServer(Flask):
 
         """
         try:
-            if user=="default":
+            if user == "default":
                 pyramid = self.tia_pyramids[layer]
             else:
                 pyramid = self.tia_pyramids[user][layer]
@@ -393,19 +393,23 @@ class TileServer(Flask):
         user = request.cookies.get("user")
         get_types = json.loads(request.form["types"])
         filter_val = json.loads(request.form["filter"])
-        
+
         if filter_val == "None":
             if len(get_types) == 0:
                 pred = None
             else:
+
                 def pred(props):
                     return props["type"] in get_types
 
         else:
             if len(get_types) == 0:
+
                 def pred(props):
                     return eval(filter_val)
+
             else:
+
                 def pred(props):
                     return eval(filter_val) and props["type"] in get_types
 
@@ -511,5 +515,5 @@ class TileServer(Flask):
                 else:
                     layer.store.commit()
                     layer.store.dump(str(save_path))
-                    print(f'db saved to {save_path}')
+                    print(f"db saved to {save_path}")
         return "done"

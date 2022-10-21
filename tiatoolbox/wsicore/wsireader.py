@@ -4358,11 +4358,11 @@ class AnnotationStoreReader(WSIReader):
     on top of its parent WSI as a virtual 'annotated slide'.
 
     Args:
-        path (str): 
+        path (str):
             Path to annotation store.
-        info (WSIMeta): 
+        info (WSIMeta):
             Metadata of the base WSi for the annotations in the store.
-            If this is not provided, will attempt to read it read from 
+            If this is not provided, will attempt to read it read from
             the store metadata, or the base_wsi_reader if provided.
             If no source of metadata is found, will raise an error.
         renderer (AnnotationRenderer):
@@ -4374,7 +4374,7 @@ class AnnotationStoreReader(WSIReader):
             will be rendered on top of the base WSI. If not provided,
             will render annotation masks without a base image.
         alpha (float):
-            Opacity of the overlaid annotations. Must be between 0 and 1. 
+            Opacity of the overlaid annotations. Must be between 0 and 1.
             Has no effect if base_wsi_reader is not provided.
 
     """
@@ -4463,7 +4463,7 @@ class AnnotationStoreReader(WSIReader):
         bounds = utils.transforms.locsize2bounds(
             location=location, size=baseline_read_size
         )
-        #bound_geom = Polygon.from_bounds(*bounds)
+        # bound_geom = Polygon.from_bounds(*bounds)
         im_region = self.renderer.render_annotations(
             self.store, bounds, np.rint(self.info.level_downsamples[read_level])
         )
@@ -4535,9 +4535,11 @@ class AnnotationStoreReader(WSIReader):
                 bounds_at_baseline, resolution=resolution, units=units
             )
 
-        #bound_geom = Polygon.from_bounds(*bounds_at_baseline)
+        # bound_geom = Polygon.from_bounds(*bounds_at_baseline)
         im_region = self.renderer.render_annotations(
-            self.store, bounds_at_baseline, np.rint(self.info.level_downsamples[read_level])
+            self.store,
+            bounds_at_baseline,
+            np.rint(self.info.level_downsamples[read_level]),
         )
 
         if coord_space == "resolution":

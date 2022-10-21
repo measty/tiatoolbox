@@ -217,7 +217,7 @@ class TilePyramidGenerator:
             warnings.simplefilter("ignore")
             tile = self.wsi.read_rect(
                 coord,
-                size=[v*res for v in output_size],
+                size=[v * res for v in output_size],
                 resolution=res / scale,
                 units="baseline",
                 pad_mode=pad_mode,
@@ -610,7 +610,9 @@ class AnnotationTileGenerator(ZoomifyGenerator):
             raise IndexError
 
         bounds = locsize2bounds(coord, [self.output_tile_size * scale] * 2)
-        #bound_geom = Polygon.from_bounds(*bounds)
-        tile = self.renderer.render_annotations(self.store, bounds, scale, res, self.overlap)
+        # bound_geom = Polygon.from_bounds(*bounds)
+        tile = self.renderer.render_annotations(
+            self.store, bounds, scale, res, self.overlap
+        )
 
         return Image.fromarray(tile)

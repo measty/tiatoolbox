@@ -15,7 +15,7 @@ import click
     respectively. It is also possible to provide a slide and overlay path separately""",
     multiple=True,
 )
-@click.option('--port', type=int)
+@click.option("--port", type=int)
 def visualize(img_input, port):
     """Launches the visualization tool for the given directory(s).
     If only one path is given, Slides and overlays to be visualized are expected in

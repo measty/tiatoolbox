@@ -17,6 +17,7 @@ from numpy.typing import ArrayLike
 from PIL import ImageFilter, Image, ImageOps
 
 from tiatoolbox.annotation.storage import Annotation, AnnotationStore
+
 if speedups.available:  # pragma: no branch
     speedups.enable()
 
@@ -839,18 +840,20 @@ class AnnotationRenderer:
         bound_geom = Polygon.from_bounds(*bounds)
         top_left = np.array(bounds[:2])  # - scale*self.overlap
         # clip_bound_geom=bound_geom.buffer(scale)
-        #output_size = [self.output_tile_size] * 2
+        # output_size = [self.output_tile_size] * 2
         output_size = [
             int((bounds[3] - bounds[1]) / scale),
             int((bounds[2] - bounds[0]) / scale),
         ]
         if self.zoomed_out_strat == "scale" or self.zoomed_out_strat == "decimate":
             mpp_sf = (
-                np.minimum(self.info['mpp'][0] / 0.25, 1)
-                if self.info['mpp'] is not None
+                np.minimum(self.info["mpp"][0] / 0.25, 1)
+                if self.info["mpp"] is not None
                 else 1
             )
-            min_area = 0.0005 * (output_size[0]*output_size[1]) * (scale * mpp_sf) ** 2
+            min_area = (
+                0.0005 * (output_size[0] * output_size[1]) * (scale * mpp_sf) ** 2
+            )
         else:
             min_area = self.zoomed_out_strat
 
@@ -864,23 +867,31 @@ class AnnotationRenderer:
                     bound_geom,
                     self.where,
                 )
-                
-                tile = np.zeros((output_size[0]*res, output_size[1]*res, 4), dtype=np.uint8)
+
+                tile = np.zeros(
+                    (output_size[0] * res, output_size[1] * res, 4), dtype=np.uint8
+                )
                 if len(anns_dict) < 40:
                     decimate = 1
                 for i, (key, ann) in enumerate(anns_dict.items()):
                     if ann.geometry.area > min_area:
                         ann = store[key]
-                        self.render_by_type(tile, ann, top_left, scale/res)
+                        self.render_by_type(tile, ann, top_left, scale / res)
                     elif i % decimate == 0:
                         ann = store[key]
-                        self.render_by_type(tile, ann, top_left, scale/res, True)
+                        self.render_by_type(tile, ann, top_left, scale / res, True)
             else:
-                anns = store.query(bound_geom, self.where, geometry_predicate="bbox_intersects",)
-                
-                tile = np.zeros((output_size[0]*res, output_size[1]*res, 4), dtype=np.uint8)
+                anns = store.query(
+                    bound_geom,
+                    self.where,
+                    geometry_predicate="bbox_intersects",
+                )
+
+                tile = np.zeros(
+                    (output_size[0] * res, output_size[1] * res, 4), dtype=np.uint8
+                )
                 for ann in anns.values():
-                    self.render_by_type(tile, ann, top_left, scale/res)
+                    self.render_by_type(tile, ann, top_left, scale / res)
             return tile
         else:
             # Get only annotations > min_area. Plot them all
@@ -892,14 +903,22 @@ class AnnotationRenderer:
                     geometry_predicate="bbox_intersects",
                 )
             else:
-                anns = store.query(bound_geom, self.where, geometry_predicate="bbox_intersects",)
+                anns = store.query(
+                    bound_geom,
+                    self.where,
+                    geometry_predicate="bbox_intersects",
+                )
 
-            tile = np.zeros((output_size[0]*res, output_size[1]*res, 4), dtype=np.uint8)
+            tile = np.zeros(
+                (output_size[0] * res, output_size[1] * res, 4), dtype=np.uint8
+            )
             for ann in anns.values():
-                self.render_by_type(tile, ann, top_left, scale/res)
+                self.render_by_type(tile, ann, top_left, scale / res)
         if self.blur is None:
             return tile
-        return np.array(ImageOps.crop(Image.fromarray(tile).filter(self.blur), border*res))
+        return np.array(
+            ImageOps.crop(Image.fromarray(tile).filter(self.blur), border * res)
+        )
 
     def render_by_type(
         self,

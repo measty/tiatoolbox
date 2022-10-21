@@ -209,14 +209,18 @@ def build_predicate_callable():
         if len(get_types) == 0:
             pred = None
         else:
+
             def pred(props):
                 return props["type"] in get_types
 
     else:
         if len(get_types) == 0:
+
             def pred(props):
                 return eval(filter_input.value)
+
         else:
+
             def pred(props):
                 return eval(filter_input.value) and props["type"] in get_types
 
@@ -539,14 +543,16 @@ initialise_slide()
 
 s = requests.Session()
 
-retries = Retry(total=5,
-                backoff_factor=0.1,)
-                #status_forcelist=[ 500, 502, 503, 504 ])
-s.mount('http://', HTTPAdapter(max_retries=retries))
+retries = Retry(
+    total=5,
+    backoff_factor=0.1,
+)
+# status_forcelist=[ 500, 502, 503, 504 ])
+s.mount("http://", HTTPAdapter(max_retries=retries))
 
 resp = s.get(f"http://{host2}:5000/tileserver/setup")
 print(f"cookies are: {resp.cookies}")
-cookies=resp.cookies
+cookies = resp.cookies
 user = resp.cookies.get("user")
 
 ts1 = make_ts(
@@ -839,7 +845,7 @@ def layer_folder_input_cb(attr, old, new):
 
 def filter_input_cb(attr, old, new):
     """Change predicate to be used to filter annotations"""
-    #s.get(f"http://{host2}:5000/tileserver/changepredicate/{new}")
+    # s.get(f"http://{host2}:5000/tileserver/changepredicate/{new}")
     build_predicate_callable()
     vstate.update_state = 1
 

@@ -159,7 +159,9 @@ def test_zoomed_out_rendering(fill_store, tmp_path):
     array = np.ones((1024, 1024))
     wsi = wsireader.VirtualWSIReader(array, mpp=(1, 1))
     _, store = fill_store(SQLiteStore, tmp_path / "test.db")
-    renderer = AnnotationRenderer(max_scale=1, edge_thickness=0, zoomed_out_strat='decimate')
+    renderer = AnnotationRenderer(
+        max_scale=1, edge_thickness=0, zoomed_out_strat="decimate"
+    )
     tg = AnnotationTileGenerator(wsi.info, store, renderer, tile_size=256)
 
     thumb = tg.get_tile(1, 0, 0)
@@ -176,7 +178,7 @@ def test_decimation(fill_store, tmp_path):
     array = np.ones((1024, 1024))
     wsi = wsireader.VirtualWSIReader(array, mpp=(1, 1))
     _, store = fill_store(SQLiteStore, tmp_path / "test.db")
-    renderer = AnnotationRenderer(max_scale=1, zoomed_out_strat='decimate')
+    renderer = AnnotationRenderer(max_scale=1, zoomed_out_strat="decimate")
     tg = AnnotationTileGenerator(wsi.info, store, renderer, tile_size=256)
 
     thumb = tg.get_tile(1, 1, 1)
