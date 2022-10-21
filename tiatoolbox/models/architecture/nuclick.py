@@ -4,7 +4,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import cv2
 
-from tiatoolbox.models.abc import ModelABC
+from tiatoolbox.models.models_abc import ModelABC
 from tiatoolbox.utils import misc
 
 from skimage.morphology import (

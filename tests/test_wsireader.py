@@ -24,6 +24,7 @@ from skimage.morphology import binary_dilation, disk, remove_small_objects
 from skimage.registration import phase_cross_correlation
 
 from tiatoolbox import cli, rcParam, utils
+from tiatoolbox.annotation.storage import SQLiteStore
 from tiatoolbox.data import _fetch_remote_sample
 from tiatoolbox.utils.exceptions import FileNotSupported
 from tiatoolbox.utils.misc import imread
@@ -60,6 +61,16 @@ SVS_TEST_TISSUE_SIZE = (1000, 1000)
 JP2_TEST_TISSUE_BOUNDS = (32768, 42880, 33792, 43904)
 JP2_TEST_TISSUE_LOCATION = (32768, 42880)
 JP2_TEST_TISSUE_SIZE = (1024, 1024)
+
+COLOR_DICT = {
+    0: (200, 0, 0, 255),
+    1: (0, 200, 0, 255),
+    2: (0, 0, 200, 255),
+    3: (155, 155, 0, 255),
+    4: (155, 0, 155, 255),
+    5: (0, 155, 155, 255),
+}
+
 
 # -------------------------------------------------------------------------------------
 # Generate Parameterized Tests
@@ -1869,30 +1880,153 @@ def test_is_ngff_regular_zarr(tmp_path):
     assert is_zarr(zarr_path)
     assert not is_ngff(zarr_path)
 
+    # check we get the appropriate error message if we open it
+    with pytest.raises(FileNotSupported, match="does not appear to be a v0.4"):
+        WSIReader.open(zarr_path)
+
+
+def test_store_reader_no_info(tmp_path):
+    """Test AnnotationStoreReader with no info."""
+    SQLiteStore(tmp_path / "store.db")
+    with pytest.raises(ValueError, match="No metadata found"):
+        AnnotationStoreReader(tmp_path / "store.db")
+
+
+def test_store_reader_explicit_info(remote_sample, tmp_path):
+    """Test AnnotationStoreReader with explicit info."""
+    SQLiteStore(tmp_path / "store.db")
+    wsi_reader = WSIReader.open(remote_sample("svs-1-small"))
+    reader = AnnotationStoreReader(tmp_path / "store.db", wsi_reader.info)
+    assert reader._info().as_dict() == wsi_reader.info.as_dict()
+
+
+def test_store_reader_alpha(remote_sample):
+    """Test AnnotationStoreReader with alpha channel."""
+    wsi_reader = WSIReader.open(remote_sample("svs-1-small"))
+    store_reader = AnnotationStoreReader(
+        remote_sample("annotation_store_svs_1"),
+        wsi_reader.info,
+        base_wsi_reader=wsi_reader,
+    )
+    wsi_thumb = wsi_reader.slide_thumbnail()
+    wsi_tile = wsi_reader.read_rect((500, 500), (1000, 1000))
+    store_thumb = store_reader.slide_thumbnail()
+    store_tile = store_reader.read_rect((500, 500), (1000, 1000))
+    store_reader.alpha = 0.2
+    store_thumb_alpha = store_reader.slide_thumbnail()
+    store_tile_alpha = store_reader.read_rect((500, 500), (1000, 1000))
+    # the thumbnail with low alpha should be closer to wsi_thumb
+    assert np.mean(np.abs(store_thumb_alpha - wsi_thumb)) < np.mean(
+        np.abs(store_thumb - wsi_thumb)
+    )
+    # the tile with low alpha should be closer to wsi_tile
+    assert np.mean(np.abs(store_tile_alpha - wsi_tile)) < np.mean(
+        np.abs(store_tile - wsi_tile)
+    )
+
+
+def test_store_reader_no_types(tmp_path, remote_sample):
+    """Test AnnotationStoreReader with no types."""
+    SQLiteStore(tmp_path / "store.db")
+    wsi_reader = WSIReader.open(remote_sample("svs-1-small"))
+    reader = AnnotationStoreReader(tmp_path / "store.db", wsi_reader.info)
+    # shouldn't try to color by type if not present
+    assert reader.renderer.score_prop is None
+
+
+def test_ngff_zattrs_non_micrometer_scale_mpp(tmp_path):
+    """Test that mpp is None if scale is not in micrometers."""
+    sample = _fetch_remote_sample("ngff-1")
+    # Create a copy of the sample with a non-micrometer scale
+    sample_copy = tmp_path / "ngff-1"
+    shutil.copytree(sample, sample_copy)
+    with open(sample_copy / ".zattrs", "r") as fh:
+        zattrs = json.load(fh)
+    zattrs["multiscales"][0]["axes"][0]["unit"] = "foo"
+    with open(sample_copy / ".zattrs", "w") as fh:
+        json.dump(zattrs, fh, indent=2)
+    with pytest.warns(UserWarning, match="micrometer"):
+        wsi = wsireader.NGFFWSIReader(sample_copy)
+    assert wsi.info.mpp is None
+
+
+def test_ngff_zattrs_missing_axes_mpp(tmp_path):
+    """Test that mpp is None if axes are missing."""
+    sample = _fetch_remote_sample("ngff-1")
+    # Create a copy of the sample with no axes
+    sample_copy = tmp_path / "ngff-1"
+    shutil.copytree(sample, sample_copy)
+    with open(sample_copy / ".zattrs", "r") as fh:
+        zattrs = json.load(fh)
+    zattrs["multiscales"][0]["axes"] = []
+    with open(sample_copy / ".zattrs", "w") as fh:
+        json.dump(zattrs, fh, indent=2)
+    wsi = wsireader.NGFFWSIReader(sample_copy)
+    assert wsi.info.mpp is None
+
+
+def test_ngff_empty_datasets_mpp(tmp_path):
+    """Test that mpp is None if there are no datasets."""
+    sample = _fetch_remote_sample("ngff-1")
+    # Create a copy of the sample with no axes
+    sample_copy = tmp_path / "ngff-1"
+    shutil.copytree(sample, sample_copy)
+    with open(sample_copy / ".zattrs", "r") as fh:
+        zattrs = json.load(fh)
+    zattrs["multiscales"][0]["datasets"] = []
+    with open(sample_copy / ".zattrs", "w") as fh:
+        json.dump(zattrs, fh, indent=2)
+    wsi = wsireader.NGFFWSIReader(sample_copy)
+    assert wsi.info.mpp is None
+
+
+def test_nff_no_scale_transforms_mpp(tmp_path):
+    """Test that mpp is None if no scale transforms are present."""
+    sample = _fetch_remote_sample("ngff-1")
+    # Create a copy of the sample with no axes
+    sample_copy = tmp_path / "ngff-1"
+    shutil.copytree(sample, sample_copy)
+    with open(sample_copy / ".zattrs", "r") as fh:
+        zattrs = json.load(fh)
+    for i, _ in enumerate(zattrs["multiscales"][0]["datasets"]):
+        datasets = zattrs["multiscales"][0]["datasets"][i]
+        datasets["coordinateTransformations"][0]["type"] = "identity"
+    with open(sample_copy / ".zattrs", "w") as fh:
+        json.dump(zattrs, fh, indent=2)
+    wsi = wsireader.NGFFWSIReader(sample_copy)
+    assert wsi.info.mpp is None
+
 
 class TestReader:
     scenarios = [
         (
-            "AnnotationReader",
+            "AnnotationReaderOverlaid",
             {
                 "reader_class": AnnotationStoreReader,
                 "sample_key": "annotation_store_svs_1",
                 "kwargs": {
                     "renderer": AnnotationRenderer(
                         "type",
-                        {
-                            0: (200, 0, 0, 255),
-                            1: (0, 200, 0, 255),
-                            2: (0, 0, 200, 255),
-                            3: (155, 155, 0, 255),
-                            4: (155, 0, 155, 255),
-                            5: (0, 155, 155, 255),
-                        },
+                        COLOR_DICT,
                     ),
                     "base_wsi_reader": WSIReader.open(
                         _fetch_remote_sample("svs-1-small")
                     ),
                     "alpha": 0.5,
+                },
+            },
+        ),
+        (
+            "AnnotationReaderMaskOnly",
+            {
+                "reader_class": AnnotationStoreReader,
+                "sample_key": "annotation_store_svs_1",
+                "kwargs": {
+                    "renderer": AnnotationRenderer(
+                        "type",
+                        COLOR_DICT,
+                        blur_radius=3,
+                    ),
                 },
             },
         ),
@@ -2097,4 +2231,11 @@ class TestReader:
     def test_file_path_does_not_exist(sample_key, reader_class, kwargs):
         """Test that FileNotFoundError is raised when file does not exist."""
         with pytest.raises(FileNotFoundError):
-            _ = reader_class("./foo.bar", **kwargs)
+            _ = reader_class("./foo.bar")
+
+    @staticmethod
+    def test_read_mpp(sample_key, reader_class, kwargs):
+        """Test that the mpp is read correctly."""
+        sample = _fetch_remote_sample(sample_key)
+        wsi = reader_class(sample, **kwargs)
+        assert wsi.info.mpp == pytest.approx(0.25, 1)
