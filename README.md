@@ -1,6 +1,21 @@
 This visualization tool is in the process of being added to tiatoolbox, but for the moment is not usable there. This tiatoolbox fork makes it available, but it is a work in progress and will probably have a few issues. If you find one let me know! also, if there is any sort of visualization task you'd like to do which seems like it might fit in this tool but which can't be easily done with it at the moment, please suggest it.
 
-## Setup
+# Setup
+
+## If you already have a tiatoolbox install
+
+If you already have tiatoolbox set up, it should be sufficient to crete a new branch for your local tiatoolbox git from this repository, and switch to that when you want to do some visualization stuff.
+
+git remote add tiavis https://github.com/measty/tiatoolbox   
+git fetch tiavis  
+git checkout -b feature-add-gui tiafork/feature-add-gui
+
+You will also need to add a couple of extra packages to your environment:
+
+conda install bokeh -c bokeh  
+conda install flask-cors  
+
+## From scratch
 
 Install tiatoolbox into a conda environment as normal from this fork.  
 Install a couple of additional dependencies with:  
@@ -11,6 +26,8 @@ conda install flask-cors
 enter command:  
 python setup.py install      
 while in the cloned tiatoolbox top directory.  
+
+# Usage
 
 start the interface using:  
 
