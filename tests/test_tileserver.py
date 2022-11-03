@@ -66,17 +66,19 @@ def fill_store(cell_grid, points_grid):
 
 
 @pytest.fixture()
-def app(sample_ndpi, tmp_path, fill_store) -> TileServer:
+def app(remote_sample, tmp_path, fill_store) -> TileServer:
     """Create a testing TileServer WSGI app."""
 
     # Make a low-res .jpg of the right shape to be used as
     # a low-res overlay.
-    wsi = WSIReader.open(Path(sample_ndpi))
+    sample_svs = Path(remote_sample("svs-1-small"))
+    wsi = WSIReader.open(sample_svs)
     thumb = wsi.slide_thumbnail()
     thumb_path = tmp_path / "thumb.jpg"
     imwrite(thumb_path, thumb)
 
-    _, store = fill_store(SQLiteStore, tmp_path / "test.db")
+    sample_store = Path(remote_sample("annotation_store_svs_1"))
+    store = SQLiteStore(sample_store)
     geo_path = tmp_path / "test.geojson"
     store.to_geojson(geo_path)
     store.commit()
@@ -87,11 +89,11 @@ def app(sample_ndpi, tmp_path, fill_store) -> TileServer:
     app = TileServer(
         "Testing TileServer",
         [
-            str(Path(sample_ndpi)),
+            str(Path(sample_svs)),
             str(thumb_path),
             np.zeros(wsi.slide_dimensions(1.25, "power"), dtype=np.uint8).T,
             tmp_path / "test.geojson",
-            str(tmp_path / "test.db"),
+            str(sample_store),
         ],
     )
     app.config.from_mapping({"TESTING": True})
