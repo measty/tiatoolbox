@@ -236,7 +236,7 @@ class TileServer(Flask):
             "type",
             {"class1": (1, 0, 0, 1), "class2": (0, 0, 1, 1), "class3": (0, 1, 0, 1)},
             thickness=-1,
-            edge_thickness=1,
+            edge_thickness=2,
             zoomed_out_strat="scale",
             max_scale=8,
         )

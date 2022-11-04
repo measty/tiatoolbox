@@ -70,6 +70,15 @@ else:
     port = "5000"
     # host = "127.0.0.1"
 
+#slide initial windows
+slide_windows = {'hyperplastic1': [0,-19000,35000,-44000],
+                    'hyperplastic2': [44000,-60500,69500,-78000],
+                    'inflammatory1': [39000,-2000,61000,-17200],
+                    'inflammatory2': [14900,-42100,23200,-49400],
+                    'neoplastic1': [29000,-53200,50800,-68000],
+                    'normal1': [42000,-43600,54000,-52000],
+                    }
+custom_windows = True
 
 class DummyAttr:
     def __init__(self, val):
@@ -235,6 +244,8 @@ def build_predicate_callable():
 def initialise_slide():
     vstate.mpp = wsi[0].info.mpp
     vstate.dims = wsi[0].info.slide_dimensions
+    slide_name = wsi[0].info.file_path.stem
+    zoom_factor=1
 
     pad = int(np.mean(vstate.dims) / 10)
     plot_size = np.array([p.width, p.height])
@@ -242,27 +253,35 @@ def initialise_slide():
     large_dim = np.argmax(np.array(vstate.dims) / plot_size)
 
     vstate.micron_formatter.args["mpp"] = 0.275
-    if large_dim == 1:
-        p.x_range.start = (
-            -0.5 * (vstate.dims[1] * aspect_ratio - vstate.dims[0]) - aspect_ratio * pad
-        )
-        p.x_range.end = (
-            vstate.dims[1] * aspect_ratio
-            - 0.5 * (vstate.dims[1] * aspect_ratio - vstate.dims[0])
-            + aspect_ratio * pad
-        )
-        p.y_range.start = -vstate.dims[1] - pad
-        p.y_range.end = pad
-        # p.x_range.min_interval = ?
+    
+    if custom_windows:
+        lims = slide_windows[slide_name]
+        p.x_range.start = lims[0]
+        p.x_range.end = lims[2]
+        p.y_range.start = lims[3]
+        p.y_range.end = lims[1]
     else:
-        p.x_range.start = -aspect_ratio * pad
-        p.x_range.end = vstate.dims[0] + pad * aspect_ratio
-        p.y_range.start = (
-            -vstate.dims[0] / aspect_ratio
-            + 0.5 * (vstate.dims[0] / aspect_ratio - vstate.dims[1])
-            - pad
-        )
-        p.y_range.end = 0.5 * (vstate.dims[0] / aspect_ratio - vstate.dims[1]) + pad
+        if large_dim == 1:
+            p.x_range.start = (
+                -0.5 * (vstate.dims[1] * aspect_ratio - vstate.dims[0]) - aspect_ratio * pad
+            )/zoom_factor
+            p.x_range.end = (
+                vstate.dims[1] * aspect_ratio
+                - 0.5 * (vstate.dims[1] * aspect_ratio - vstate.dims[0])
+                + aspect_ratio * pad
+            )/zoom_factor
+            p.y_range.start = (-vstate.dims[1] - pad)/zoom_factor
+            p.y_range.end = pad/zoom_factor
+            # p.x_range.min_interval = ?
+        else:
+            p.x_range.start = -aspect_ratio * pad / zoom_factor
+            p.x_range.end = (vstate.dims[0] + pad * aspect_ratio) / zoom_factor
+            p.y_range.start = (
+                -vstate.dims[0] / aspect_ratio
+                + 0.5 * (vstate.dims[0] / aspect_ratio - vstate.dims[1])
+                - pad
+            )/zoom_factor
+            p.y_range.end = (0.5 * (vstate.dims[0] / aspect_ratio - vstate.dims[1]) + pad)/zoom_factor
 
     # p.x_range.bounds = (p.x_range.start - 2 * pad, p.x_range.end + 2 * pad)
     # p.y_range.bounds = (p.y_range.start - 2 * pad, p.y_range.end + 2 * pad)
@@ -337,7 +356,7 @@ def add_layer(lname):
     box_column.children.append(
         Toggle(
             label=lname,
-            active=True,
+            active=graph.node_renderer.glyph.fill_alpha>0,
             width=130,
             max_width=130,
             height=30,
@@ -388,15 +407,15 @@ def change_tiles(layer_name="overlay"):
     if layer_name == "graph" and layer_name not in vstate.layer_dict.keys():
         p.renderers.append(graph)
         vstate.layer_dict[layer_name] = len(p.renderers) - 1
-        for layer_key in vstate.layer_dict.keys():
-            if layer_key in ["rect", "pts", "graph"]:
-                continue
-            grp = tg.get_grp()
-            ts = make_ts(
-                f"http://{host}:{port}/tileserver/layer/{layer_key}/{user}/zoomify/TileGroup{grp}"
-                + r"/{z}-{x}-{y}@2x.jpg",
-            )
-            p.renderers[vstate.layer_dict[layer_key]].tile_source = ts
+        # for layer_key in vstate.layer_dict.keys():
+        #     if layer_key in ["rect", "pts", "graph"]:
+        #         continue
+        #     grp = tg.get_grp()
+        #     ts = make_ts(
+        #         f"http://{host}:{port}/tileserver/layer/{layer_key}/{user}/zoomify/TileGroup{grp}"
+        #         + r"/{z}-{x}-{y}@2x.jpg",
+        #     )
+        #     p.renderers[vstate.layer_dict[layer_key]].tile_source = ts
         return
 
     ts = make_ts(
@@ -413,15 +432,15 @@ def change_tiles(layer_name="overlay"):
             level="underlay",
             render_parents=False,
         )
-        for layer_key in vstate.layer_dict.keys():
-            if layer_key in ["rect", "pts", "graph"]:
-                continue
-            grp = tg.get_grp()
-            ts = make_ts(
-                f"http://{host}:{port}/tileserver/layer/{layer_key}/{user}/zoomify/TileGroup{grp}"
-                + r"/{z}-{x}-{y}@2x.jpg",
-            )
-            p.renderers[vstate.layer_dict[layer_key]].tile_source = ts
+        # for layer_key in vstate.layer_dict.keys():
+        #     if layer_key in ["rect", "pts", "graph"]:
+        #         continue
+        #     grp = tg.get_grp()
+        #     ts = make_ts(
+        #         f"http://{host}:{port}/tileserver/layer/{layer_key}/{user}/zoomify/TileGroup{grp}"
+        #         + r"/{z}-{x}-{y}@2x.jpg",
+        #     )
+        #     p.renderers[vstate.layer_dict[layer_key]].tile_source = ts
         vstate.layer_dict[layer_name] = len(p.renderers) - 1
 
     print(vstate.layer_dict)
@@ -562,6 +581,7 @@ p = figure(
     sizing_mode="stretch_both",
     name="slide_window",
 )
+p.axis.visible = False
 initialise_slide()
 
 s = requests.Session()
@@ -597,7 +617,9 @@ graph = GraphRenderer()
 graph.node_renderer.data_source = node_source
 graph.edge_renderer.data_source = edge_source
 graph.node_renderer.glyph = Circle(radius=50, radius_units="data", fill_color="green")
-
+graph.edge_renderer.glyph.line_alpha = 0
+graph.node_renderer.glyph.line_alpha = 0
+graph.node_renderer.glyph.fill_alpha = 0
 
 # Define UI elements
 slide_alpha = Slider(
@@ -634,10 +656,13 @@ overlay_alpha = Slider(
 )
 
 color_bar = ColorBar(
-    color_mapper=LinearColorMapper(make_color_seq_from_cmap(cm.get_cmap("viridis"))),
+    color_mapper=LinearColorMapper(make_color_seq_from_cmap(cm.get_cmap("coolwarm"))),
     label_standoff=12,
+    major_label_overrides={0: "low", 1: "high"},
 )
 p.add_layout(color_bar, "below")
+color_bar.color_mapper.palette = make_color_seq_from_cmap(cm.get_cmap("coolwarm"))
+color_bar.visible = True
 slide_toggle = Toggle(
     label="Slide",
     button_type="success",
@@ -869,8 +894,8 @@ def opt_buttons_cb(attr, old, new):
         vstate.renderer.thickness = -1
         update_renderer("thickness", -1)
     else:
-        vstate.renderer.thickness = 1
-        update_renderer("thickness", 1)
+        vstate.renderer.thickness = 2
+        update_renderer("thickness", 2)
     if old_thickness != vstate.renderer.thickness:
         vstate.update_state = 1
     if 1 in new:
@@ -1027,13 +1052,9 @@ def fixed_layer_select_cb(obj, attr):
     key = vstate.layer_dict[obj.label]
     if obj.label == "graph":
         if p.renderers[key].node_renderer.glyph.fill_alpha == 0:
-            p.renderers[key].node_renderer.glyph.fill_alpha = overlay_alpha.value
-            p.renderers[key].node_renderer.glyph.line_alpha = overlay_alpha.value
-            p.renderers[key].edge_renderer.glyph.line_alpha = overlay_alpha.value
+            set_graph_alpha(p.renderers[key], overlay_alpha.value)
         else:
-            p.renderers[key].node_renderer.glyph.fill_alpha = 0.0
-            p.renderers[key].node_renderer.glyph.line_alpha = 0.0
-            p.renderers[key].edge_renderer.glyph.line_alpha = 0.0
+            set_graph_alpha(p.renderers[key], 0)
     else:
         if p.renderers[key].alpha == 0:
             p.renderers[key].alpha = overlay_alpha.value
