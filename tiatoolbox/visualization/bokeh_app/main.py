@@ -1291,7 +1291,7 @@ ui_layout = column(
     [
         slide_select,
         # save_button,
-        layer_drop,
+        #layer_drop,
         row([slide_toggle, slide_alpha]),
         #zoom_slider,
         row([overlay_toggle, overlay_alpha]),
