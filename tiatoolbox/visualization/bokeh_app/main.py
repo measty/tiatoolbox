@@ -407,15 +407,15 @@ def change_tiles(layer_name="overlay"):
     if layer_name == "graph" and layer_name not in vstate.layer_dict.keys():
         p.renderers.append(graph)
         vstate.layer_dict[layer_name] = len(p.renderers) - 1
-        # for layer_key in vstate.layer_dict.keys():
-        #     if layer_key in ["rect", "pts", "graph"]:
-        #         continue
-        #     grp = tg.get_grp()
-        #     ts = make_ts(
-        #         f"http://{host}:{port}/tileserver/layer/{layer_key}/{user}/zoomify/TileGroup{grp}"
-        #         + r"/{z}-{x}-{y}@2x.jpg",
-        #     )
-        #     p.renderers[vstate.layer_dict[layer_key]].tile_source = ts
+        for layer_key in vstate.layer_dict.keys():
+            if layer_key in ["rect", "pts", "graph"]:
+                continue
+            grp = tg.get_grp()
+            ts = make_ts(
+                f"http://{host}:{port}/tileserver/layer/{layer_key}/{user}/zoomify/TileGroup{grp}"
+                + r"/{z}-{x}-{y}@2x.jpg",
+            )
+            p.renderers[vstate.layer_dict[layer_key]].tile_source = ts
         return
 
     ts = make_ts(
