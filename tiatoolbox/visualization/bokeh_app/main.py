@@ -24,6 +24,7 @@ from bokeh.models import (
     Button,
     CheckboxButtonGroup,
     Circle,
+    Line,
     ColorBar,
     ColorPicker,
     ColumnDataSource,
@@ -527,10 +528,10 @@ p = figure(
     output_backend="canvas",
     hidpi=True,
     match_aspect=False,
-    # lod_factor=100,
-    # lod_interval=500,
-    # lod_threshold=10,
-    # lod_timeout=200,
+    lod_factor=200000,
+    #lod_interval=500,
+    #lod_threshold=10,
+    #lod_timeout=200,
     sizing_mode="stretch_both",
     name="slide_window",
 )
@@ -574,13 +575,12 @@ p.renderers[0].tile_source.max_zoom = 10
 
 node_source = ColumnDataSource({"index": [], "node_color": []})
 edge_source = ColumnDataSource({"start": [], "end": []})
-graph = GraphRenderer()  # level='overlay')
+graph = GraphRenderer()
 graph.node_renderer.data_source = node_source
 graph.edge_renderer.data_source = edge_source
 graph.node_renderer.glyph = Circle(
-    radius=50, radius_units="data", fill_color="node_color"
+    size=5, fill_color="node_color"
 )
-
 
 # Define UI elements
 slide_alpha = Slider(
@@ -1339,7 +1339,8 @@ def cleanup_session(session_context):
 
 def update():
     if vstate.update_state == 2:
-        change_tiles("overlay")
+        if "overlay" in vstate.layer_dict:
+            change_tiles("overlay")
         vstate.update_state = 0
     if vstate.update_state == 1:
         vstate.update_state = 2
