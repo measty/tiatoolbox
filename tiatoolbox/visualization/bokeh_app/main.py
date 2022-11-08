@@ -309,7 +309,8 @@ def initialise_overlay():
                         color=to_int_rgb(vstate.mapper[t][0:3]),
                         name=str(t),
                         width=60,
-                        max_width=60,
+                        min_width=60,
+                        max_width=70,
                         height=30,
                         sizing_mode="stretch_width",
                     )
@@ -322,6 +323,7 @@ def initialise_overlay():
                         width=60,
                         height=30,
                         min_width=60,
+                        max_width=70,
                         sizing_mode="stretch_width",
                     )
                 )
@@ -876,15 +878,13 @@ def set_graph_alpha(g_renderer, value):
 
 
 def slide_alpha_cb(attr, old, new):
-    print("meep")
     p.renderers[0].alpha = new
     # p.renderers[0].tile_source.max_zoom=7
     # p.renderers[1].tile_source.max_zoom=7
 
 
 def overlay_alpha_cb(attr, old, new):
-    print("meep")
-    for i in range(3, len(p.renderers)):
+    for i in range(5, len(p.renderers)):
         if isinstance(p.renderers[i], GraphRenderer):
             # set_graph_alpha(p.renderers[i], new)
             pass
