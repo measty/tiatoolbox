@@ -151,7 +151,7 @@ def make_safe_name(name):
 def update_mapper():
     if vstate.types is not None:
         type_cmap_select.options = [str(t) for t in vstate.types]
-        if len(node_source.data['x']) > 0:
+        if len(node_source.data['x_']) > 0:
             type_cmap_select.options.append("graph_overlay")
         colors = random_colors(len(vstate.types))
         vstate.mapper = {key: (*color, 1) for key, color in zip(vstate.types, colors)}
@@ -202,7 +202,7 @@ def build_predicate():
 
 
 def build_predicate_callable():
-    get_types = [name2type_key(l.label) for l in box_column.children if l.active]
+    get_types = [name2type_key(l.label) for l in box_column.children if l.active and l.label in vstate.types]
     if len(get_types) == len(box_column.children) or len(get_types) == 0:
         if filter_input.value == "None":
             vstate.renderer.where = None
@@ -398,15 +398,15 @@ def change_tiles(layer_name="overlay"):
 
     if layer_name == "graph" and layer_name not in vstate.layer_dict.keys():
         
-        for layer_key in vstate.layer_dict.keys():
-            if layer_key in ["rect", "pts", "nodes", "edges"]:
-                continue
-            grp = tg.get_grp()
-            ts = make_ts(
-                f"http://{host}:{port}/tileserver/layer/{layer_key}/{user}/zoomify/TileGroup{grp}"
-                + r"/{z}-{x}-{y}@2x.jpg",
-            )
-            p.renderers[vstate.layer_dict[layer_key]].tile_source = ts
+        # for layer_key in vstate.layer_dict.keys():
+        #     if layer_key in ["rect", "pts", "nodes", "edges"]:
+        #         continue
+        #     grp = tg.get_grp()
+        #     ts = make_ts(
+        #         f"http://{host}:{port}/tileserver/layer/{layer_key}/{user}/zoomify/TileGroup{grp}"
+        #         + r"/{z}-{x}-{y}@2x.jpg",
+        #     )
+        #     p.renderers[vstate.layer_dict[layer_key]].tile_source = ts
         return
 
     ts = make_ts(
@@ -589,10 +589,10 @@ tslist = []
 
 p.renderers[0].tile_source.max_zoom = 10
 
-node_source = ColumnDataSource({"x": [], "y": [], "node_color": []})
-edge_source = ColumnDataSource({"x0": [], "y0": [], "x1": [], "y1": []})
-vstate.graph_node = Circle(x="x", y="y", fill_color="node_color", size=5)
-vstate.graph_edge = Segment(x0='x0', y0='y0', x1='x1', y1='y1')
+node_source = ColumnDataSource({"x_": [], "y_": [], "node_color_": []})
+edge_source = ColumnDataSource({"x0_": [], "y0_": [], "x1_": [], "y1_": []})
+vstate.graph_node = Circle(x="x_", y="y_", fill_color="node_color_", size=5)
+vstate.graph_edge = Segment(x0='x0_', y0='y0_', x1='x1_', y1='y1_')
 p.add_glyph(node_source, vstate.graph_node)
 p.add_glyph(edge_source, vstate.graph_edge)
 p.renderers[-1].visible = False
@@ -950,8 +950,8 @@ def slide_select_cb(attr, old, new):
     # reset the data sources for glyph overlays
     pt_source.data = {"x": [], "y": []}
     box_source.data = {"x": [], "y": [], "width": [], "height": []}
-    node_source.data = {"x": [], "y": [], "node_color": []}
-    edge_source.data = {"x0": [], "y0": [], "x1": [], "y1": []}
+    node_source.data = {"x_": [], "y_": [], "node_color_": []}
+    edge_source.data = {"x0_": [], "y0_": [], "x1_": [], "y1_": []}
     if len(p.renderers) > 5:
         for r in p.renderers[5:].copy():
             p.renderers.remove(r)
@@ -996,22 +996,22 @@ def layer_drop_cb(attr):
         num_nodes = graph_dict["coordinates"].shape[0]
         if "score" in graph_dict:
             node_source.data = {
-                "x": graph_dict["coordinates"][:, 0],
-                "y": -graph_dict["coordinates"][:, 1],
-                "node_color": [rgb2hex(node_cm(v)) for v in graph_dict["score"]],
+                "x_": graph_dict["coordinates"][:, 0],
+                "y_": -graph_dict["coordinates"][:, 1],
+                "node_color_": [rgb2hex(node_cm(v)) for v in graph_dict["score"]],
             }
         else:
             # default to green
             node_source.data = {
-                "x": graph_dict["coordinates"][:, 0],
-                "y": -graph_dict["coordinates"][:, 1],
-                "node_color": [rgb2hex((0, 1, 0))] * num_nodes,
+                "x_": graph_dict["coordinates"][:, 0],
+                "y_": -graph_dict["coordinates"][:, 1],
+                "node_color_": [rgb2hex((0, 1, 0))] * num_nodes,
             }
         edge_source.data = {
-            "x0": [graph_dict["coordinates"][i, 0] for i in graph_dict["edge_index"][0, :]],
-            "y0": [-graph_dict["coordinates"][i, 1] for i in graph_dict["edge_index"][0, :]],
-            "x1": [graph_dict["coordinates"][i, 0] for i in graph_dict["edge_index"][1, :]],
-            "y1": [-graph_dict["coordinates"][i, 1] for i in graph_dict["edge_index"][1, :]],
+            "x0_": [graph_dict["coordinates"][i, 0] for i in graph_dict["edge_index"][0, :]],
+            "y0_": [-graph_dict["coordinates"][i, 1] for i in graph_dict["edge_index"][0, :]],
+            "x1_": [graph_dict["coordinates"][i, 0] for i in graph_dict["edge_index"][1, :]],
+            "y1_": [-graph_dict["coordinates"][i, 1] for i in graph_dict["edge_index"][1, :]],
         }
         # edge_source.data = {
         #     "xs": [[graph_dict["coordinates"][inds[0], 0], graph_dict["coordinates"][inds[1], 0]] for inds in graph_dict["edge_index"].T],
@@ -1192,7 +1192,7 @@ def type_cmap_cb(attr, old, new):
         # find out what still has to be selected
         if new[0] in vstate.types + ["graph_overlay"]:
             if new[0] == "graph_overlay":
-                type_cmap_select.options = [key for key in node_source.data.keys() if key not in ["x", "y", "node_color"]] + [new[0]]
+                type_cmap_select.options = [key for key in node_source.data.keys() if key not in ["x_", "y_", "node_color_"]] + [new[0]]
             else:
                 type_cmap_select.options = vstate.props + [new[0]]
         elif new[0] in vstate.props:
@@ -1207,7 +1207,7 @@ def type_cmap_cb(attr, old, new):
             #adjust the node color in source if prop exists
             if new[1] in node_source.data:
                 node_cm = cm.get_cmap("viridis")
-                node_source.data["node_color"] = [rgb2hex(node_cm(v)) for v in node_source.data[new[1]]]
+                node_source.data["node_color_"] = [rgb2hex(node_cm(v)) for v in node_source.data[new[1]]]
             return
         s.get(
             f"http://{host2}:5000/tileserver/changesecondarycmap/{new[0]}/{new[1]}/viridis"
