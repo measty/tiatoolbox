@@ -72,7 +72,7 @@ else:
 
 #slide initial windows
 slide_windows = {'hyperplastic1': [0,-19000,35000,-44000],
-                    'hyperplastic2': [44000,-60500,69500,-78000],
+                    'hyperplastic2': [44200,-59100,69700,-76600],
                     'inflammatory1': [39000,-2000,61000,-17200],
                     'inflammatory2': [14900,-42100,23200,-49400],
                     'neoplastic1': [29000,-53200,50800,-68000],
@@ -499,7 +499,7 @@ slide_list = []
 for ext in ["*.svs", "*ndpi", "*.tiff", "*.mrxs"]:  # ,'*.png','*.jpg']:
     slide_list.extend(list(slide_folder.glob(ext)))
     slide_list.extend(list(slide_folder.glob(str(Path("*") / ext))))
-vstate.slide_path = slide_list[0]
+vstate.slide_path = slide_folder / "hyperplastic2.tiff"
 
 renderer = AnnotationRenderer(
     "type",
@@ -629,7 +629,7 @@ slide_alpha = Slider(
     step=0.05,
     value=1.0,
     width=200,
-    max_width=200,
+    max_width=300,
     sizing_mode="stretch_width",
 )
 
@@ -651,7 +651,7 @@ overlay_alpha = Slider(
     step=0.05,
     value=0.75,
     width=200,
-    max_width=200,
+    max_width=300,
     sizing_mode="stretch_width",
 )
 
@@ -666,8 +666,8 @@ color_bar.visible = True
 slide_toggle = Toggle(
     label="Slide",
     button_type="success",
-    width=90,
-    max_width=90,
+    width=100,
+    max_width=100,
     sizing_mode="stretch_width",
 )
 overlay_toggle = Toggle(
@@ -686,7 +686,8 @@ cprop_input = TextInput(
 slide_select = MultiChoice(
     title="Select Slide:",
     max_items=1,
-    options=["*"],
+    options=["hyperplastic2"],
+    value=["hyperplastic2"],
     search_option_limit=5000,
     max_width=300,
     sizing_mode="stretch_width",
@@ -1257,7 +1258,6 @@ def nuclick_on_pts(attr):
 # associate callback functions to the widgets
 slide_alpha.on_change("value", slide_alpha_cb)
 overlay_alpha.on_change("value", overlay_alpha_cb)
-slide_select.on_change("value", slide_select_cb)
 save_button.on_click(save_cb)
 cmap_drop.on_click(cmap_drop_cb)
 type_mapper_select.on_click(type_mapper_select_cb)
@@ -1274,6 +1274,7 @@ type_cmap_select.on_change("value", type_cmap_cb)
 swap_button.on_click(swap_cb)
 
 populate_slide_list(slide_folder)
+slide_select.value = ["hyperplastic2.tiff"]
 populate_layer_list(Path(vstate.slide_path).stem, overlay_folder)
 
 box_column = column(children=layer_boxes)
@@ -1281,7 +1282,8 @@ color_column = column(children=lcolors)
 
 # open up first slide in list
 #slide_select.value = [str(slide_list[0])]
-slide_select_cb(None, None, new=[slide_list[0]])
+slide_select.on_change("value", slide_select_cb)
+slide_select_cb(None, None, new=[slide_folder / "hyperplastic2.tiff"])
 #set ticks to microns
 p.xaxis[0].formatter = vstate.micron_formatter
 p.yaxis[0].formatter = vstate.micron_formatter
