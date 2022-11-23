@@ -440,6 +440,7 @@ class TileServer(Flask):
 
     def load_annotations(self, file_path, model_mpp):
         # file_path='\\'.join(file_path.split('-*-'))
+        #import pdb; pdb.set_trace()
         user = self._get_user()
         file_path = self.decode_safe_name(file_path)
         print(file_path)
@@ -475,16 +476,18 @@ class TileServer(Flask):
             SQ = SQLiteStore.from_geojson(overlay_path)
         elif overlay_path.suffix == ".dat":
             SQ = SQLiteStore.from_dat(overlay_path, 1)  # 1 / np.array(self.slide_mpp))
-        elif overlay_path.suffix in [".jpg", ".png", ".tiff"]:
+        elif overlay_path.suffix in [".jpg", ".png", ".tiff", ".svs", ".ndpi", ".mrxs"]:
             layer = f"layer{len(self.tia_pyramids[user])}"
             if overlay_path.suffix == ".tiff":
                 self.tia_layers[user][layer] = OpenSlideWSIReader(
                     overlay_path, mpp=self.tia_layers[user]["slide"].info.mpp[0]
                 )
-            else:
+            elif overlay_path.suffix in ['.jpg', '.png']:
                 self.tia_layers[user][layer] = VirtualWSIReader(
                     Path(overlay_path), info=self.tia_layers[user]["slide"].info
                 )
+            else:
+                self.tia_layers[user][layer] = WSIReader.open(overlay_path)
             self.tia_pyramids[user][layer] = ZoomifyGenerator(
                 self.tia_layers[user][layer]
             )

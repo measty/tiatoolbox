@@ -10,6 +10,7 @@ import pytest
 from shapely.geometry import LineString, Polygon
 from shapely.geometry.point import Point
 from matplotlib import cm
+import json
 
 from tests.test_annotation_stores import cell_polygon
 from tiatoolbox.annotation.storage import Annotation, AnnotationStore, SQLiteStore
@@ -25,7 +26,7 @@ def make_safe_name(name):
 
 
 def setup_app(client):
-    resp = client.get(f"http://{host2}:5000/tileserver/setup")
+    resp = client.get(f"/tileserver/setup")
     #get the "user" cookie
     cookie = next(
         (cookie for cookie in client.cookie_jar if cookie.name == "user"),
@@ -266,7 +267,7 @@ def test_load_annotations(empty_app, remote_sample, tmp_path):
     sample_store = Path(remote_sample("annotation_store_svs_1"))
     store = SQLiteStore(sample_store)
     num_annotations = len(store)
-    mpp = store.metadata['mpp']
+    mpp = json.loads(store.metadata['wsi_meta'])['mpp']
     geo_path = tmp_path / "test.geojson"
     store.to_geojson(geo_path)
     store.commit()
@@ -278,7 +279,10 @@ def test_load_annotations(empty_app, remote_sample, tmp_path):
     #         None
     #     )
         # load from .geojson
-        response = client.get(f"/tileserver/load_annotations/{make_safe_name(geo_path)}")
+        setup_app(client)
+        response = client.get(f"/tileserver/change_slide/slide/{make_safe_name(remote_sample('svs-1-small'))}")
+        assert response.status_code == 200
+        response = client.get(f"/tileserver/load_annotations/{make_safe_name(geo_path)}/{mpp[0]}")
         assert response.status_code == 200
         assert response.content_type == "text/html; charset=utf-8"
         #check that the annotations have been correctly loaded
@@ -286,7 +290,7 @@ def test_load_annotations(empty_app, remote_sample, tmp_path):
 
         # clear the tileserver and load from .db instead
         response = client.get("tileserver/reset")
-        response = client.get(f"/tileserver/load_annotations/{make_safe_name(sample_store)}")
+        response = client.get(f"/tileserver/load_annotations/{make_safe_name(sample_store)}/{mpp[0]}")
         assert response.status_code == 200
         assert response.content_type == "text/html; charset=utf-8"
         #check that the annotations have been correctly loaded
@@ -297,8 +301,8 @@ def test_change_overlay(app, remote_sample):
     """Test changing overlay."""
     overlay_path = remote_sample("svs-1-small")
     with app.test_client() as client:
-        response = client.get(f"/tileserver/change_overlay/overlay/{make_safe_name(overlay_path)}")
+        response = client.get(f"/tileserver/change_overlay/{make_safe_name(overlay_path)}")
         assert response.status_code == 200
         assert response.content_type == "text/html; charset=utf-8"
         #check that the overlay has been correctly changed
-        assert app.tia_pyramids["default"]['overlay'].wsi.info.file_path == overlay_path
+        assert app.tia_pyramids["default"][f'layer{len(app.tia_pyramids["default"])-1}'].wsi.info.file_path == overlay_path
