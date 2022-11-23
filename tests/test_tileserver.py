@@ -1,10 +1,13 @@
 """Tests for tileserver."""
 import pathlib
-from pathlib import Path
+import urllib
+from pathlib import Path, PureWindowsPath
 from typing import List, Union
 
 import numpy as np
 import pytest
+from flask import session
+from matplotlib import cm
 from shapely.geometry import LineString, Polygon
 from shapely.geometry.point import Point
 
@@ -14,6 +17,18 @@ from tiatoolbox.cli.common import cli_name
 from tiatoolbox.utils.misc import imwrite
 from tiatoolbox.visualization.tileserver import TileServer
 from tiatoolbox.wsicore.wsireader import WSIReader
+
+
+def make_safe_name(name):
+    """Make a name safe for use in a URL."""
+    return urllib.parse.quote(str(PureWindowsPath(name)), safe="")
+
+
+def setup_app(client):
+    resp = s.get(f"http://{host2}:5000/tileserver/setup")
+    print(f"cookies are: {resp.cookies}")
+    cookies = resp.cookies
+    user = resp.cookies.get("user")
 
 
 @pytest.fixture(scope="session")
@@ -88,56 +103,73 @@ def app(remote_sample, tmp_path, fill_store) -> TileServer:
     # of things it should be able to handle
     app = TileServer(
         "Testing TileServer",
-        [
-            str(Path(sample_svs)),
-            str(thumb_path),
-            np.zeros(wsi.slide_dimensions(1.25, "power"), dtype=np.uint8).T,
-            tmp_path / "test.geojson",
-            str(sample_store),
-        ],
+        {
+            "slide": str(Path(sample_svs)),
+            "tile": str(thumb_path),
+            "im_array": np.zeros(wsi.slide_dimensions(1.25, "power"), dtype=np.uint8).T,
+            "store_geojson": tmp_path / "test.geojson",
+            "overlay": str(sample_store),
+        },
     )
     app.config.from_mapping({"TESTING": True})
-    return app
+    # with app.test_client() as client:
+    #     response = client.get("/tileserver/setup")
+    #     #get the "user" cookie
+    #     cookie = next(
+    #         (cookie for cookie in client.cookie_jar if cookie.name == "user"),
+    #         None
+    #     )
+
+    return app  # , cookie.value
 
 
 def layer_get_tile(app, layer) -> None:
     """Get a single tile and check the status code and content type."""
     with app.test_client() as client:
-        response = client.get(f"/layer/{layer}/zoomify/TileGroup0/0-0-0.jpg")
+        # with client.session_transaction() as session:
+        # set a user id without going through the login route
+        # session.cookies["user"] = "u"
+        response = client.get(
+            f"/tileserver/layer/{layer}/default/zoomify/TileGroup0/0-0-0@1x.jpg"
+        )
         assert response.status_code == 200
         assert response.content_type == "image/webp"
 
 
 def test_get_tile(app):
     """do test on each layer"""
-    layer_get_tile(app, "layer-0")
-    layer_get_tile(app, "layer-1")
-    layer_get_tile(app, "layer-2")
-    layer_get_tile(app, "layer-3")
-    layer_get_tile(app, "layer-4")
+    layer_get_tile(app, "slide")
+    layer_get_tile(app, "tile")
+    layer_get_tile(app, "im_array")
+    layer_get_tile(app, "store_geojson")
+    layer_get_tile(app, "overlay")
 
 
 def layer_get_tile_404(app, layer) -> None:
     """Request a tile with an index."""
     with app.test_client() as client:
-        response = client.get(f"/layer/{layer}/zoomify/TileGroup0/10-0-0.jpg")
+        response = client.get(
+            f"/tileserver/layer/{layer}/default/zoomify/TileGroup0/10-0-0@1x.jpg"
+        )
         assert response.status_code == 404
         assert response.get_data(as_text=True) == "Tile not found"
 
 
 def test_get_tile_404(app):
     """do test on each layer"""
-    layer_get_tile_404(app, "layer-0")
-    layer_get_tile_404(app, "layer-1")
-    layer_get_tile_404(app, "layer-2")
-    layer_get_tile_404(app, "layer-3")
-    layer_get_tile_404(app, "layer-4")
+    layer_get_tile_404(app, "slide")
+    layer_get_tile_404(app, "tile")
+    layer_get_tile_404(app, "im_array")
+    layer_get_tile_404(app, "store_geojson")
+    layer_get_tile_404(app, "overlay")
 
 
 def test_get_tile_layer_key_error(app) -> None:
     """Request a tile with an invalid layer key."""
     with app.test_client() as client:
-        response = client.get("/layer/foo/zoomify/TileGroup0/0-0-0.jpg")
+        response = client.get(
+            "/tileserver/layer/foo/default/zoomify/TileGroup0/0-0-0@1x.jpg"
+        )
         assert response.status_code == 404
         assert response.get_data(as_text=True) == "Layer not found"
 
@@ -160,7 +192,9 @@ def test_create_with_dict(sample_svs):
     )
     app.config.from_mapping({"TESTING": True})
     with app.test_client() as client:
-        response = client.get("/layer/Test/zoomify/TileGroup0/0-0-0.jpg")
+        response = client.get(
+            "/tileserver/layer/Test/default/zoomify/TileGroup0/0-0-0@1x.jpg"
+        )
         assert response.status_code == 200
         assert response.content_type == "image/webp"
 
@@ -179,3 +213,46 @@ def test_cli_name_multiple_flag():
         """it's empty because its a dummy function"""
 
     assert "Multiple" in dummy_fn.__click_params__[0].help
+
+
+def test_setup(app):
+    """Test setup endpoint."""
+    with app.test_client() as client:
+        response = client.get("/tileserver/setup")
+        assert response.status_code == 200
+        assert response.content_type == "text/html; charset=utf-8"
+
+
+def test_color_prop(app):
+    """Test endpoint to change property to color by."""
+    with app.test_client() as client:
+        response = client.get("/tileserver/change_color_prop/test_prop")
+        assert response.status_code == 200
+        assert response.content_type == "text/html; charset=utf-8"
+        # check that the color prop has been correctly set
+        assert app.tia_pyramids["default"]["overlay"].renderer.score_prop == "test_prop"
+
+
+def test_change_slide(app, remote_sample):
+    """Test changing slide."""
+    slide_path = remote_sample("svs-1-small")
+    with app.test_client() as client:
+        response = client.get(
+            f"/tileserver/change_slide/slide/{make_safe_name(slide_path)}"
+        )
+        assert response.status_code == 200
+        assert response.content_type == "text/html; charset=utf-8"
+        # check that the slide has been correctly changed
+        assert app.tia_pyramids["default"]["slide"].wsi.info.file_path == slide_path
+
+
+def test_change_cmap(app):
+    """Test changing colormap."""
+    with app.test_client() as client:
+        response = client.get("/tileserver/change_cmap/Reds")
+        assert response.status_code == 200
+        assert response.content_type == "text/html; charset=utf-8"
+        # check that the colormap has been correctly changed
+        assert app.tia_pyramids["default"]["overlay"].renderer.mapper(
+            0.5
+        ) == cm.get_cmap("Reds")(0.5)

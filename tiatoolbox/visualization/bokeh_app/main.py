@@ -31,10 +31,10 @@ from bokeh.models import (
     GraphRenderer,
     HoverTool,
     Line,
-    Segment,
     LinearColorMapper,
     MultiChoice,
     PointDrawTool,
+    Segment,
     Slider,
     Spinner,
     StaticLayoutProvider,
@@ -151,7 +151,7 @@ def make_safe_name(name):
 def update_mapper():
     if vstate.types is not None:
         type_cmap_select.options = [str(t) for t in vstate.types]
-        if len(node_source.data['x_']) > 0:
+        if len(node_source.data["x_"]) > 0:
             type_cmap_select.options.append("graph_overlay")
         colors = random_colors(len(vstate.types))
         vstate.mapper = {key: (*color, 1) for key, color in zip(vstate.types, colors)}
@@ -169,9 +169,9 @@ def update_renderer(prop, value):
                 cm.get_cmap(value)
             )
             color_bar.visible = True
-        return s.get(f"http://{host2}:5000/tileserver/changecmap/{value}")
+        return s.get(f"http://{host2}:5000/tileserver/change_cmap/{value}")
     return s.get(
-        f"http://{host2}:5000/tileserver/updaterenderer/{prop}/{json.dumps(value)}"
+        f"http://{host2}:5000/tileserver/update_renderer/{prop}/{json.dumps(value)}"
     )
 
 
@@ -202,7 +202,11 @@ def build_predicate():
 
 
 def build_predicate_callable():
-    get_types = [name2type_key(l.label) for l in box_column.children if l.active and l.label in vstate.types]
+    get_types = [
+        name2type_key(l.label)
+        for l in box_column.children
+        if l.active and l.label in vstate.types
+    ]
     if len(get_types) == len(box_column.children) or len(get_types) == 0:
         if filter_input.value == "None":
             vstate.renderer.where = None
@@ -231,7 +235,7 @@ def build_predicate_callable():
     vstate.renderer.where = pred
     # update_renderer("where", json.dumps(pred))
     s.post(
-        f"http://{host2}:5000/tileserver/updatewhere",
+        f"http://{host2}:5000/tileserver/update_where",
         data={"types": json.dumps(get_types), "filter": json.dumps(filter_input.value)},
     )
     return pred
@@ -397,7 +401,7 @@ def change_tiles(layer_name="overlay"):
     grp = tg.get_grp()
 
     if layer_name == "graph" and layer_name not in vstate.layer_dict.keys():
-        
+
         # for layer_key in vstate.layer_dict.keys():
         #     if layer_key in ["rect", "pts", "nodes", "edges"]:
         #         continue
@@ -592,7 +596,7 @@ p.renderers[0].tile_source.max_zoom = 10
 node_source = ColumnDataSource({"x_": [], "y_": [], "node_color_": []})
 edge_source = ColumnDataSource({"x0_": [], "y0_": [], "x1_": [], "y1_": []})
 vstate.graph_node = Circle(x="x_", y="y_", fill_color="node_color_", size=5)
-vstate.graph_edge = Segment(x0='x0_', y0='y0_', x1='x1_', y1='y1_')
+vstate.graph_edge = Segment(x0="x0_", y0="y0_", x1="x1_", y1="y1_")
 p.add_glyph(node_source, vstate.graph_node)
 p.add_glyph(edge_source, vstate.graph_edge)
 p.renderers[-1].visible = False
@@ -609,7 +613,7 @@ slide_alpha = Slider(
     step=0.05,
     value=1.0,
     width=200,
-    #max_width=200,
+    # max_width=200,
     sizing_mode="stretch_width",
 )
 
@@ -620,7 +624,7 @@ overlay_alpha = Slider(
     step=0.05,
     value=0.75,
     width=200,
-    #max_width=200,
+    # max_width=200,
     sizing_mode="stretch_width",
 )
 
@@ -631,7 +635,7 @@ pt_size_spinner = Spinner(
     step=1,
     value=1,
     width=60,
-    #max_width=60,
+    # max_width=60,
     height=50,
     sizing_mode="stretch_width",
 )
@@ -645,19 +649,17 @@ slide_toggle = Toggle(
     label="Slide",
     button_type="success",
     width=90,
-    #max_width=90,
+    # max_width=90,
     sizing_mode="stretch_width",
 )
 overlay_toggle = Toggle(
     label="Overlay",
     button_type="success",
     width=90,
-    #max_width=90,
+    # max_width=90,
     sizing_mode="stretch_width",
 )
-filter_input = TextInput(
-    value="None", title="Filter:", sizing_mode="stretch_width"
-)
+filter_input = TextInput(value="None", title="Filter:", sizing_mode="stretch_width")
 # cprop_input = TextInput(
 #    value="type", title="CProp:", max_width=300, sizing_mode="stretch_width"
 # )
@@ -667,14 +669,14 @@ cprop_input = MultiChoice(
     options=["*"],
     search_option_limit=5000,
     sizing_mode="stretch_width",
-    #max_width=300,
+    # max_width=300,
 )
 slide_select = MultiChoice(
     title="Select Slide:",
     max_items=1,
     options=["*"],
     search_option_limit=5000,
-    #max_width=300,
+    # max_width=300,
     sizing_mode="stretch_width",
 )
 cmmenu = [
@@ -688,7 +690,7 @@ cmap_drop = Dropdown(
     button_type="warning",
     menu=cmmenu,
     width=60,
-    #max_width=60,
+    # max_width=60,
     height=45,
     sizing_mode="stretch_width",
 )
@@ -700,7 +702,7 @@ blur_spinner = Spinner(
     value=0,
     width=60,
     height=50,
-    #max_width=60,
+    # max_width=60,
     sizing_mode="stretch_width",
 )
 scale_spinner = Spinner(
@@ -710,7 +712,7 @@ scale_spinner = Spinner(
     step=8,
     value=16,
     width=60,
-    #max_width=60,
+    # max_width=60,
     height=50,
     sizing_mode="stretch_width",
 )
@@ -735,7 +737,7 @@ type_cmap_select = MultiChoice(
     options=["*"],
     search_option_limit=5000,
     sizing_mode="stretch_width",
-    #max_width=300,
+    # max_width=300,
 )
 swap_button = Button(
     label="Swap feat/importance",
@@ -756,20 +758,20 @@ lcolors = [
 layer_folder_input = TextInput(
     value=str(overlay_folder),
     title="Overlay Folder:",
-    #max_width=300,
+    # max_width=300,
     sizing_mode="stretch_width",
 )
 layer_drop = Dropdown(
     label="Add Overlay",
     button_type="warning",
     menu=[None],
-    #max_width=300,
+    # max_width=300,
     sizing_mode="stretch_width",
 )
 opt_buttons = CheckboxButtonGroup(
     labels=["Filled", "Microns", "Grid"],
     active=[0],
-    #max_width=300,
+    # max_width=300,
     sizing_mode="stretch_width",
 )
 save_button = Button(
@@ -859,14 +861,14 @@ def layer_folder_input_cb(attr, old, new):
 
 def filter_input_cb(attr, old, new):
     """Change predicate to be used to filter annotations"""
-    # s.get(f"http://{host2}:5000/tileserver/changepredicate/{new}")
+    # s.get(f"http://{host2}:5000/tileserver/change_predicate/{new}")
     build_predicate_callable()
     vstate.update_state = 1
 
 
 def cprop_input_cb(attr, old, new):
     """Change property to colour by"""
-    s.get(f"http://{host2}:5000/tileserver/changeprop/{new[0]}")
+    s.get(f"http://{host2}:5000/tileserver/change_color_prop/{new[0]}")
     vstate.update_state = 1
 
 
@@ -976,7 +978,7 @@ def slide_select_cb(attr, old, new):
     fname = make_safe_name(str(slide_path))
     print(fname)
     print(vstate.mpp)
-    s.get(f"http://{host2}:5000/tileserver/changeslide/slide/{fname}")
+    s.get(f"http://{host2}:5000/tileserver/change_slide/slide/{fname}")
     change_tiles("slide")
     # if len(p.renderers)==1:
     # r=p.rect('x', 'y', 'width', 'height', source=box_source, fill_alpha=0)
@@ -1008,10 +1010,18 @@ def layer_drop_cb(attr):
                 "node_color_": [rgb2hex((0, 1, 0))] * num_nodes,
             }
         edge_source.data = {
-            "x0_": [graph_dict["coordinates"][i, 0] for i in graph_dict["edge_index"][0, :]],
-            "y0_": [-graph_dict["coordinates"][i, 1] for i in graph_dict["edge_index"][0, :]],
-            "x1_": [graph_dict["coordinates"][i, 0] for i in graph_dict["edge_index"][1, :]],
-            "y1_": [-graph_dict["coordinates"][i, 1] for i in graph_dict["edge_index"][1, :]],
+            "x0_": [
+                graph_dict["coordinates"][i, 0] for i in graph_dict["edge_index"][0, :]
+            ],
+            "y0_": [
+                -graph_dict["coordinates"][i, 1] for i in graph_dict["edge_index"][0, :]
+            ],
+            "x1_": [
+                graph_dict["coordinates"][i, 0] for i in graph_dict["edge_index"][1, :]
+            ],
+            "y1_": [
+                -graph_dict["coordinates"][i, 1] for i in graph_dict["edge_index"][1, :]
+            ],
         }
         # edge_source.data = {
         #     "xs": [[graph_dict["coordinates"][inds[0], 0], graph_dict["coordinates"][inds[1], 0]] for inds in graph_dict["edge_index"].T],
@@ -1070,12 +1080,12 @@ def layer_drop_cb(attr):
 
     # fname='-*-'.join(attr.item.split('\\'))
     fname = make_safe_name(attr.item)
-    resp = s.get(f"http://{host2}:5000/tileserver/changeoverlay/{fname}")
+    resp = s.get(f"http://{host2}:5000/tileserver/change_overlay/{fname}")
     resp = json.loads(resp.text)
 
     if Path(attr.item).suffix in [".db", ".dat", ".geojson"]:
         vstate.types = resp
-        props = s.get(f"http://{host2}:5000/tileserver/getprops")
+        props = s.get(f"http://{host2}:5000/tileserver/get_props")
         vstate.props = json.loads(props.text)
         # type_cmap_select.options = vstate.props
         cprop_input.options = vstate.props
@@ -1100,19 +1110,19 @@ def fixed_layer_select_cb(obj, attr):
     print(vstate.layer_dict)
     key = vstate.layer_dict[obj.label]
     if obj.label == "edges":
-        if not p.renderers[key].visible:#line_alpha == 0:
-            p.renderers[key].visible = True#line_alpha = overlay_alpha.value
-            #p.renderers[key].node_renderer.glyph.line_alpha = overlay_alpha.value
-            #p.renderers[key].edge_renderer.glyph.line_alpha = overlay_alpha.value
+        if not p.renderers[key].visible:  # line_alpha == 0:
+            p.renderers[key].visible = True  # line_alpha = overlay_alpha.value
+            # p.renderers[key].node_renderer.glyph.line_alpha = overlay_alpha.value
+            # p.renderers[key].edge_renderer.glyph.line_alpha = overlay_alpha.value
         else:
-            p.renderers[key].visible = False#line_alpha = 0.0
-            #p.renderers[key].node_renderer.glyph.line_alpha = 0.0
-            #p.renderers[key].edge_renderer.glyph.line_alpha = 0.0
+            p.renderers[key].visible = False  # line_alpha = 0.0
+            # p.renderers[key].node_renderer.glyph.line_alpha = 0.0
+            # p.renderers[key].edge_renderer.glyph.line_alpha = 0.0
     elif obj.label == "nodes":
         if p.renderers[key].glyph.fill_alpha == 0:
             p.renderers[key].glyph.fill_alpha = overlay_alpha.value
             p.renderers[key].glyph.line_alpha = overlay_alpha.value
-            #p.renderers[key].edge_renderer.glyph.line_alpha = overlay_alpha.value
+            # p.renderers[key].edge_renderer.glyph.line_alpha = overlay_alpha.value
         else:
             p.renderers[key].glyph.fill_alpha = 0.0
             p.renderers[key].glyph.line_alpha = 0.0
@@ -1184,7 +1194,7 @@ def type_cmap_cb(attr, old, new):
     if len(new) == 0:
         type_cmap_select.options = vstate.types + ["graph_overlay"]
         s.get(
-            f"http://{host2}:5000/tileserver/changesecondarycmap/{'None'}/{'None'}/viridis"
+            f"http://{host2}:5000/tileserver/change_secondary_cmap/{'None'}/{'None'}/viridis"
         )
         vstate.update_state = 1
         return
@@ -1192,7 +1202,11 @@ def type_cmap_cb(attr, old, new):
         # find out what still has to be selected
         if new[0] in vstate.types + ["graph_overlay"]:
             if new[0] == "graph_overlay":
-                type_cmap_select.options = [key for key in node_source.data.keys() if key not in ["x_", "y_", "node_color_"]] + [new[0]]
+                type_cmap_select.options = [
+                    key
+                    for key in node_source.data.keys()
+                    if key not in ["x_", "y_", "node_color_"]
+                ] + [new[0]]
             else:
                 type_cmap_select.options = vstate.props + [new[0]]
         elif new[0] in vstate.props:
@@ -1200,17 +1214,19 @@ def type_cmap_cb(attr, old, new):
     else:
         # both selected, update the renderer
         if new[1] in vstate.types:
-            #make sure the type is the first one
+            # make sure the type is the first one
             type_cmap_select.value = [new[1], new[0]]
             return
         if new[0] == "graph_overlay":
-            #adjust the node color in source if prop exists
+            # adjust the node color in source if prop exists
             if new[1] in node_source.data:
                 node_cm = cm.get_cmap("viridis")
-                node_source.data["node_color_"] = [rgb2hex(node_cm(v)) for v in node_source.data[new[1]]]
+                node_source.data["node_color_"] = [
+                    rgb2hex(node_cm(v)) for v in node_source.data[new[1]]
+                ]
             return
         s.get(
-            f"http://{host2}:5000/tileserver/changesecondarycmap/{new[0]}/{new[1]}/viridis"
+            f"http://{host2}:5000/tileserver/change_secondary_cmap/{new[0]}/{new[1]}/viridis"
         )
 
         color_bar.color_mapper.palette = make_color_seq_from_cmap(
@@ -1270,7 +1286,7 @@ def segment_on_box(attr):
     fname = make_safe_name(".\\sample_tile_results\\0.dat")
     print(fname)
     resp = s.get(
-        f"http://{host2}:5000/tileserver/loadannotations/{fname}/{vstate.model_mpp}"
+        f"http://{host2}:5000/tileserver/load_annotations/{fname}/{vstate.model_mpp}"
     )
     vstate.types = json.loads(resp.text)
     update_mapper()
@@ -1320,7 +1336,7 @@ def nuclick_on_pts(attr):
     fname = make_safe_name("\\app_data\\sample_tile_results\\0.dat")
     print(fname)
     resp = s.get(
-        f"http://{host2}:5000/tileserver/loadannotations/{fname}/{vstate.model_mpp}"
+        f"http://{host2}:5000/tileserver/load_annotations/{fname}/{vstate.model_mpp}"
     )
     print(resp.text)
     vstate.types = json.loads(resp.text)
@@ -1369,7 +1385,10 @@ ui_layout = column(
         filter_input,
         cprop_input,
         # cmap_drop,
-        row([cmap_drop, blur_spinner, scale_spinner, pt_size_spinner], sizing_mode="stretch_width"),
+        row(
+            [cmap_drop, blur_spinner, scale_spinner, pt_size_spinner],
+            sizing_mode="stretch_width",
+        ),
         type_cmap_select,
         opt_buttons,
         row([to_model_button, model_drop, save_button], sizing_mode="stretch_width"),

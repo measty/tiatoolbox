@@ -11,7 +11,7 @@ from typing import Dict, List, Union
 
 import matplotlib.cm as cm
 import numpy as np
-from flask import Flask, Response, request, send_file, make_response
+from flask import Flask, Response, make_response, request, send_file
 from flask.templating import render_template
 from PIL import Image
 
@@ -68,8 +68,8 @@ class TileServer(Flask):
         self.tia_layers = {}
         self.tia_pyramids = {}
         self.slide_mpp = None
-        # #self.renderer = renderer
-        # self.overlap = 0
+        self.renderer = renderer
+        self.overlap = 0
         # if renderer is None:
         #     self.renderer = AnnotationRenderer(
         #         "type",
@@ -89,16 +89,22 @@ class TileServer(Flask):
             layers = {f"layer-{i}": p for i, p in enumerate(layers)}
         # Set up the layer dict.
         meta = None
+        self.default_user = len(layers) > 0
+        if self.default_user:
+            self.tia_layers["default"] = {}
+            self.tia_pyramids["default"] = {}
         for i, (key, layer) in enumerate(layers.items()):
 
             layer = self._get_layer_as_wsireader(layer, meta)
 
-            self.tia_layers[key] = layer
+            self.tia_layers["default"][key] = layer
 
             if isinstance(layer, WSIReader):
-                self.tia_pyramids[key] = ZoomifyGenerator(layer)
+                self.tia_pyramids["default"][key] = ZoomifyGenerator(layer)
             else:
-                self.tia_pyramids[key] = layer  # it's an AnnotationTileGenerator
+                self.tia_pyramids["default"][
+                    key
+                ] = layer  # it's an AnnotationTileGenerator
 
             if i == 0:
                 if layer.info.mpp is None:
@@ -114,22 +120,33 @@ class TileServer(Flask):
         )
         self.route("/")(self.index)
         self.route("/tileserver/setup")(self.setup)
-        self.route("/tileserver/changepredicate/<pred>")(self.change_pred)
-        self.route("/tileserver/changeprop/<prop>")(self.change_prop)
-        self.route("/tileserver/changeslide/<layer>/<layer_path>")(self.change_slide)
-        self.route("/tileserver/changecmap/<cmap>")(self.change_mapper)
-        self.route("/tileserver/loadannotations/<file_path>/<float:model_mpp>")(
+        self.route("/tileserver/change_predicate/<pred>")(self.change_pred)
+        self.route("/tileserver/change_color_prop/<prop>")(self.change_prop)
+        self.route("/tileserver/change_slide/<layer>/<layer_path>")(self.change_slide)
+        self.route("/tileserver/change_cmap/<cmap>")(self.change_mapper)
+        self.route("/tileserver/load_annotations/<file_path>/<float:model_mpp>")(
             self.load_annotations
         )
-        self.route("/tileserver/changeoverlay/<overlay_path>")(self.change_overlay)
+        self.route("/tileserver/change_overlay/<overlay_path>")(self.change_overlay)
         self.route("/tileserver/commit/<save_path>")(self.commit_db)
-        self.route("/tileserver/updaterenderer/<prop>/<val>")(self.update_renderer)
-        self.route("/tileserver/updatewhere", methods=["POST"])(self.update_where)
-        self.route("/tileserver/changesecondarycmap/<type>/<prop>/<cmap>")(
+        self.route("/tileserver/update_renderer/<prop>/<val>")(self.update_renderer)
+        self.route("/tileserver/update_where", methods=["POST"])(self.update_where)
+        self.route("/tileserver/change_secondary_cmap/<type>/<prop>/<cmap>")(
             self.change_secondary_cmap
         )
-        self.route("/tileserver/getprops")(self.get_properties)
+        self.route("/tileserver/get_props")(self.get_properties)
         self.route("/tileserver/reset")(self.reset)
+
+    def _get_user(self):
+        """Get the user from the request.
+
+        Returns:
+            str: The user name.
+
+        """
+        if self.default_user:
+            return "default"
+        return request.cookies.get("user")
 
     def _get_layer_as_wsireader(self, layer, meta):
         """Gets appropriate image provider for layer.
@@ -211,10 +228,10 @@ class TileServer(Flask):
 
         """
         try:
-            if user=="default":
-                pyramid = self.tia_pyramids[layer]
-            else:
-                pyramid = self.tia_pyramids[user][layer]
+            # if user=="default":
+            # pyramid = self.tia_pyramids[layer]
+            # else:
+            pyramid = self.tia_pyramids[user][layer]
         except KeyError:
             return Response("Layer not found", status=404)
         try:
@@ -249,6 +266,7 @@ class TileServer(Flask):
                 The index page.
 
         """
+        user = self._get_user()
         layers = [
             {
                 "name": name,
@@ -256,7 +274,7 @@ class TileServer(Flask):
                 "size": [int(x) for x in layer.info.slide_dimensions],
                 "mpp": float(np.mean(layer.info.mpp)),
             }
-            for name, layer in self.tia_layers.items()
+            for name, layer in self.tia_layers[user].items()
         ]
 
         return render_template(
@@ -265,7 +283,7 @@ class TileServer(Flask):
 
     # @cross_origin()
     def change_pred(self, pred):
-        user = request.cookies.get("user")
+        user = self._get_user()
         for layer in self.tia_pyramids[user].values():
             if isinstance(layer, AnnotationTileGenerator):
                 print(pred)
@@ -276,7 +294,7 @@ class TileServer(Flask):
         return "done"
 
     def change_prop(self, prop):
-        user = request.cookies.get("user")
+        user = self._get_user()
         for layer in self.tia_pyramids[user].values():
             if isinstance(layer, AnnotationTileGenerator):
                 print(prop)
@@ -289,7 +307,10 @@ class TileServer(Flask):
     def setup(self):
         # respond with a random cookie
         resp = make_response("done")
-        user = secrets.token_urlsafe(16)
+        if self.default_user:
+            user = "default"
+        else:
+            user = secrets.token_urlsafe(16)
         resp.set_cookie("user", user)
         self.renderers[user] = AnnotationRenderer(
             "type",
@@ -304,14 +325,14 @@ class TileServer(Flask):
         return resp
 
     def reset(self):
-        user = request.cookies.get("user")
+        user = self._get_user()
         self.tia_layers[user] = {}
         self.tia_pyramids[user] = {}
         self.slide_mpps[user] = None
         return "done"
 
     def change_slide(self, layer, layer_path):
-        user = request.cookies.get("user")
+        user = self._get_user()
         # layer_path='\\'.join(layer_path.split('-*-'))
         layer_path = self.decode_safe_name(layer_path)
         print(layer_path)
@@ -334,7 +355,7 @@ class TileServer(Flask):
         return layer
 
     def change_mapper(self, cmap):
-        user = request.cookies.get("user")
+        user = self._get_user()
         if cmap[0] == "{":
             cmap = eval(cmap)
 
@@ -355,7 +376,7 @@ class TileServer(Flask):
         return "done"
 
     def change_secondary_cmap(self, type, prop, cmap):
-        user = request.cookies.get("user")
+        user = self._get_user()
         if cmap[0] == "{":
             cmap = eval(cmap)
 
@@ -378,7 +399,7 @@ class TileServer(Flask):
         return "done"
 
     def update_renderer(self, prop, val):
-        user = request.cookies.get("user")
+        user = self._get_user()
         val = json.loads(val)
         if val == "None" or val == "null":
             val = None
@@ -390,22 +411,26 @@ class TileServer(Flask):
         return "done"
 
     def update_where(self):
-        user = request.cookies.get("user")
+        user = self._get_user()
         get_types = json.loads(request.form["types"])
         filter_val = json.loads(request.form["filter"])
-        
+
         if filter_val == "None":
             if len(get_types) == 0:
                 pred = None
             else:
+
                 def pred(props):
                     return props["type"] in get_types
 
         else:
             if len(get_types) == 0:
+
                 def pred(props):
                     return eval(filter_val)
+
             else:
+
                 def pred(props):
                     return eval(filter_val) and props["type"] in get_types
 
@@ -414,7 +439,7 @@ class TileServer(Flask):
 
     def load_annotations(self, file_path, model_mpp):
         # file_path='\\'.join(file_path.split('-*-'))
-        user = request.cookies.get("user")
+        user = self._get_user()
         file_path = self.decode_safe_name(file_path)
         print(file_path)
 
@@ -442,7 +467,7 @@ class TileServer(Flask):
 
     def change_overlay(self, overlay_path):
         # overlay_path='\\'.join(overlay_path.split('-*-'))
-        user = request.cookies.get("user")
+        user = self._get_user()
         overlay_path = self.decode_safe_name(overlay_path)
         print(overlay_path)
         if overlay_path.suffix == ".geojson":
@@ -485,7 +510,7 @@ class TileServer(Flask):
 
     def get_properties(self, type=None):
         # get all properties present in the store
-        user = request.cookies.get("user")
+        user = self._get_user()
         where = None
         if type is not None:
             where = (f'props["type"]="{type}"',)
@@ -500,7 +525,7 @@ class TileServer(Flask):
         return json.dumps(list(set(props)))
 
     def commit_db(self, save_path):
-        user = request.cookies.get("user")
+        user = self._get_user()
         save_path = self.decode_safe_name(save_path)
         print(save_path)
         for key, layer in self.tia_pyramids[user].items():
@@ -511,5 +536,5 @@ class TileServer(Flask):
                 else:
                     layer.store.commit()
                     layer.store.dump(str(save_path))
-                    print(f'db saved to {save_path}')
+                    print(f"db saved to {save_path}")
         return "done"
