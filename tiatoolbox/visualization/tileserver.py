@@ -232,10 +232,11 @@ class TileServer(Flask):
             # pyramid = self.tia_pyramids[layer]
             # else:
             pyramid = self.tia_pyramids[user][layer]
+            interpolation = 'nearest' if isinstance(self.tia_layers[user][layer], VirtualWSIReader) else 'optimise'
         except KeyError:
             return Response("Layer not found", status=404)
         try:
-            tile_image = pyramid.get_tile(level=z, x=x, y=y, res=res)
+            tile_image = pyramid.get_tile(level=z, x=x, y=y, res=res, interpolation=interpolation)
         except IndexError:
             return Response("Tile not found", status=404)
         image_io = io.BytesIO()
