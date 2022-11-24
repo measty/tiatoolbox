@@ -1,6 +1,7 @@
 """Simple Flask WSGI apps to display tiles as slippery maps."""
 from __future__ import annotations
 
+import copy
 import io
 import json
 import os
@@ -18,9 +19,9 @@ from PIL import Image
 from tiatoolbox import data
 from tiatoolbox.annotation.storage import SQLiteStore
 from tiatoolbox.tools.pyramid import AnnotationTileGenerator, ZoomifyGenerator
+from tiatoolbox.utils.misc import add_from_dat, store_from_dat
 from tiatoolbox.utils.visualization import AnnotationRenderer, colourise_image
 from tiatoolbox.wsicore.wsireader import OpenSlideWSIReader, VirtualWSIReader, WSIReader
-from tiatoolbox.utils.misc import store_from_dat, add_from_dat
 
 
 class TileServer(Flask):
@@ -68,19 +69,23 @@ class TileServer(Flask):
         self.tia_title = title
         self.tia_layers = {}
         self.tia_pyramids = {}
-        self.slide_mpp = None
+        # self.slide_mpp = None
         self.renderer = renderer
         self.overlap = 0
-        # if renderer is None:
-        #     self.renderer = AnnotationRenderer(
-        #         "type",
-        #         {"class1": (1, 0, 0, 1), "class2": (0, 0, 1, 1), "class3": (0, 1, 0, 1)},
-        #         thickness=-1,
-        #         edge_thickness=1,
-        #         zoomed_out_strat="scale",
-        #         max_scale=8,
-        #         blur_radius=0,
-        #     )
+        if renderer is None:
+            self.renderer = AnnotationRenderer(
+                "type",
+                {
+                    "class1": (1, 0, 0, 1),
+                    "class2": (0, 0, 1, 1),
+                    "class3": (0, 1, 0, 1),
+                },
+                thickness=-1,
+                edge_thickness=1,
+                zoomed_out_strat="scale",
+                max_scale=8,
+                blur_radius=0,
+            )
         self.slide_mpps = {}
         self.renderers = {}
         self.overlaps = {}
@@ -94,6 +99,7 @@ class TileServer(Flask):
         if self.default_user:
             self.tia_layers["default"] = {}
             self.tia_pyramids["default"] = {}
+            self.renderers["default"] = copy.deepcopy(self.renderer)
         for i, (key, layer) in enumerate(layers.items()):
 
             layer = self._get_layer_as_wsireader(layer, meta)
@@ -111,7 +117,7 @@ class TileServer(Flask):
                 if layer.info.mpp is None:
                     layer.info.mpp = [1, 1]
                 meta = layer.info  # base slide info
-                self.slide_mpp = meta.mpp
+                self.slide_mpps["default"] = meta.mpp
 
         self.route(
             "/tileserver/layer/<layer>/<user>/zoomify/TileGroup<int:tile_group>/"
@@ -173,7 +179,7 @@ class TileServer(Flask):
                 layer = AnnotationTileGenerator(
                     meta,
                     SQLiteStore(layer_path),
-                    self.renderer,
+                    self.renderers["default"],
                     overlap=self.overlap,
                 )
             elif layer_path.suffix == ".geojson":
@@ -181,7 +187,7 @@ class TileServer(Flask):
                 layer = AnnotationTileGenerator(
                     meta,
                     SQLiteStore.from_geojson(layer_path),
-                    self.renderer,
+                    self.renderers["default"],
                     overlap=self.overlap,
                 )
             else:
@@ -320,15 +326,7 @@ class TileServer(Flask):
         else:
             user = secrets.token_urlsafe(16)
         resp.set_cookie("user", user)
-        self.renderers[user] = AnnotationRenderer(
-            "type",
-            {"class1": (1, 0, 0, 1), "class2": (0, 0, 1, 1), "class3": (0, 1, 0, 1)},
-            thickness=-1,
-            edge_thickness=1,
-            zoomed_out_strat="scale",
-            max_scale=8,
-            blur_radius=0,
-        )
+        self.renderers[user] = copy.deepcopy(self.renderer)
         self.overlaps[user] = 0
         return resp
 
@@ -455,7 +453,9 @@ class TileServer(Flask):
         for layer in self.tia_pyramids[user].values():
             if isinstance(layer, AnnotationTileGenerator):
                 add_from_dat(
-                    layer.store, file_path, np.array(model_mpp) / np.array(self.slide_mpps[user])
+                    layer.store,
+                    file_path,
+                    np.array(model_mpp) / np.array(self.slide_mpps[user]),
                 )
                 types = self.update_types(layer.store)
                 return json.dumps(types)
@@ -482,7 +482,7 @@ class TileServer(Flask):
         if overlay_path.suffix == ".geojson":
             SQ = SQLiteStore.from_geojson(overlay_path)
         elif overlay_path.suffix == ".dat":
-            SQ = SQLiteStore.from_dat(overlay_path, 1)  # 1 / np.array(self.slide_mpp))
+            SQ = store_from_dat(overlay_path)  # 1 / np.array(self.slide_mpp))
         elif overlay_path.suffix in [".jpg", ".png", ".tiff", ".svs", ".ndpi", ".mrxs"]:
             layer = f"layer{len(self.tia_pyramids[user])}"
             if overlay_path.suffix == ".tiff":
@@ -548,4 +548,4 @@ class TileServer(Flask):
                     layer.store.commit()
                     layer.store.dump(str(save_path))
                     print(f"db saved to {save_path}")
-        return "done"
+                return "done"
