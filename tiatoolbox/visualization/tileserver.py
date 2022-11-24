@@ -20,6 +20,7 @@ from tiatoolbox.annotation.storage import SQLiteStore
 from tiatoolbox.tools.pyramid import AnnotationTileGenerator, ZoomifyGenerator
 from tiatoolbox.utils.visualization import AnnotationRenderer, colourise_image
 from tiatoolbox.wsicore.wsireader import OpenSlideWSIReader, VirtualWSIReader, WSIReader
+from tiatoolbox.utils.misc import store_from_dat, add_from_dat
 
 
 class TileServer(Flask):
@@ -154,7 +155,7 @@ class TileServer(Flask):
         Args:
             layer (str | ndarray | WSIReader):
                 A reference to an image or annotations to be displayed.
-            meta (WSImeta):
+            meta (WSIMeta):
                 The metadata of the base slide.
 
         Returns:
@@ -168,7 +169,7 @@ class TileServer(Flask):
                 # Assume it's a low-res heatmap.
                 layer = np.array(Image.open(layer_path))
             elif layer_path.suffix == ".db":
-                # Assume its an annotation store.
+                # Assume it's an annotation store.
                 layer = AnnotationTileGenerator(
                     meta,
                     SQLiteStore(layer_path),
@@ -232,11 +233,17 @@ class TileServer(Flask):
             # pyramid = self.tia_pyramids[layer]
             # else:
             pyramid = self.tia_pyramids[user][layer]
-            interpolation = 'nearest' if isinstance(self.tia_layers[user][layer], VirtualWSIReader) else 'optimise'
+            interpolation = (
+                "nearest"
+                if isinstance(self.tia_layers[user][layer], VirtualWSIReader)
+                else "optimise"
+            )
         except KeyError:
             return Response("Layer not found", status=404)
         try:
-            tile_image = pyramid.get_tile(level=z, x=x, y=y, res=res, interpolation=interpolation)
+            tile_image = pyramid.get_tile(
+                level=z, x=x, y=y, res=res, interpolation=interpolation
+            )
         except IndexError:
             return Response("Tile not found", status=404)
         image_io = io.BytesIO()
@@ -440,20 +447,20 @@ class TileServer(Flask):
 
     def load_annotations(self, file_path, model_mpp):
         # file_path='\\'.join(file_path.split('-*-'))
-        #import pdb; pdb.set_trace()
+        # import pdb; pdb.set_trace()
         user = self._get_user()
         file_path = self.decode_safe_name(file_path)
         print(file_path)
 
         for layer in self.tia_pyramids[user].values():
             if isinstance(layer, AnnotationTileGenerator):
-                layer.store.add_from(
-                    file_path, np.array(model_mpp) / np.array(self.slide_mpps[user])
+                add_from_dat(
+                    layer.store, file_path, np.array(model_mpp) / np.array(self.slide_mpps[user])
                 )
                 types = self.update_types(layer.store)
                 return json.dumps(types)
 
-        SQ = SQLiteStore.from_dat(
+        SQ = store_from_dat(
             file_path, np.array(model_mpp) / np.array(self.slide_mpps[user])
         )
         self.tia_pyramids[user]["overlay"] = AnnotationTileGenerator(
@@ -482,7 +489,7 @@ class TileServer(Flask):
                 self.tia_layers[user][layer] = OpenSlideWSIReader(
                     overlay_path, mpp=self.tia_layers[user]["slide"].info.mpp[0]
                 )
-            elif overlay_path.suffix in ['.jpg', '.png']:
+            elif overlay_path.suffix in [".jpg", ".png"]:
                 self.tia_layers[user][layer] = VirtualWSIReader(
                     Path(overlay_path), info=self.tia_layers[user]["slide"].info
                 )

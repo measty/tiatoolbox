@@ -20,10 +20,9 @@ from typing import Iterable, Tuple, Union
 
 import defusedxml
 import numpy as np
-from PIL import Image, ImageOps
-from shapely.geometry import Polygon
+from PIL import Image
 
-from tiatoolbox.annotation.storage import Annotation, AnnotationStore
+from tiatoolbox.annotation.storage import AnnotationStore
 from tiatoolbox.utils.transforms import imresize, locsize2bounds
 from tiatoolbox.utils.visualization import AnnotationRenderer, random_colors
 from tiatoolbox.wsicore.wsireader import WSIMeta, WSIReader
@@ -164,7 +163,7 @@ class TilePyramidGenerator:
             y (int):
                 The tile index in the y direction.
             pad_mode (str):
-                Method for padding when reading areas outside of the
+                Method for padding when reading areas outside the
                 input image. Default is constant (0 padding). This is
                 passed to `read_func` which defaults to
                 :func:`safe_padded_read`. See :func:`safe_padded_read`
@@ -217,7 +216,7 @@ class TilePyramidGenerator:
             warnings.simplefilter("ignore")
             tile = self.wsi.read_rect(
                 coord,
-                size=[v*res for v in output_size],
+                size=[v * res for v in output_size],
                 resolution=res / scale,
                 units="baseline",
                 pad_mode=pad_mode,
@@ -417,9 +416,9 @@ class ZoomifyGenerator(TilePyramidGenerator):
         grid_size = np.array(self.tile_grid_size(level))
         if any(grid_size <= [x, y]):
             raise IndexError
-        cumsum = sum(np.prod(self.tile_grid_size(n)) for n in range(level))
+        cumulative_sum = sum(np.prod(self.tile_grid_size(n)) for n in range(level))
         index_in_level = np.ravel_multi_index((y, x), self.tile_grid_size(level)[::-1])
-        tile_index = cumsum + index_in_level
+        tile_index = cumulative_sum + index_in_level
         return tile_index // 256  # the tile group
 
     def tile_path(self, level: int, x: int, y: int) -> Path:
@@ -485,6 +484,9 @@ class AnnotationTileGenerator(ZoomifyGenerator):
         if renderer is None:
             renderer = AnnotationRenderer()
         self.renderer = renderer
+        # if using blur, render overlapping tiles to minimise edge effects.
+        # factor of 1.5 below chosen empirically as a good balance between
+        # empirical visual quality and added rendering time.
         self.overlap = int(1.5 * renderer.blur_radius)
 
         output_size = [self.output_tile_size] * 2
@@ -507,9 +509,7 @@ class AnnotationTileGenerator(ZoomifyGenerator):
 
         """
         slide_dims = np.array(self.info.slide_dimensions)
-        tile_dim = self.tile_size + self.overlap
         scale = self.level_downsample(self.level_count - 1)
-        out_dims = np.round(slide_dims / slide_dims.max() * tile_dim).astype(int)
         bounds = (0, 0, *slide_dims)
         thumb = self.renderer.render_annotations(self.store, bounds, scale)
         return Image.fromarray(thumb)
@@ -610,7 +610,8 @@ class AnnotationTileGenerator(ZoomifyGenerator):
             raise IndexError
 
         bounds = locsize2bounds(coord, [self.output_tile_size * scale] * 2)
-        #bound_geom = Polygon.from_bounds(*bounds)
-        tile = self.renderer.render_annotations(self.store, bounds, scale, res, self.overlap)
+        tile = self.renderer.render_annotations(
+            self.store, bounds, scale, res, self.overlap
+        )
 
         return Image.fromarray(tile)

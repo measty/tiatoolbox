@@ -1,5 +1,9 @@
 """Models package for the models implemented in tiatoolbox."""
-from tiatoolbox.models import abc, architecture, dataset
+from tiatoolbox.models import architecture, dataset, engine, models_abc
+from tiatoolbox.models.engine.interactive_segmentor import (
+    InteractiveSegmentor,
+    IOInteractiveSegmentorConfig,
+)
 from tiatoolbox.models.engine.nucleus_instance_segmentor import NucleusInstanceSegmentor
 from tiatoolbox.models.engine.patch_predictor import (
     IOPatchPredictorConfig,
@@ -12,8 +16,4 @@ from tiatoolbox.models.engine.semantic_segmentor import (
     IOSegmentorConfig,
     SemanticSegmentor,
     WSIStreamDataset,
-)
-from tiatoolbox.models.engine.interactive_segmentor import (
-    IOInteractiveSegmentorConfig,
-    InteractiveSegmentor,
 )

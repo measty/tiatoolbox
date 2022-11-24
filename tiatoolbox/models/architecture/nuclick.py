@@ -1,148 +1,251 @@
-import joblib
+"""Defines original NuClick architecture
+
+Koohbanani, N. A., Jahanifar, M., Tajadin, N. Z., & Rajpoot, N. (2020).
+NuClick: a deep learning framework for interactive segmentation of microscopic images.
+Medical Image Analysis, 65, 101771.
+
+"""
+import warnings
+from typing import Tuple, Union
+
+import numpy as np
+import cv2
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-import cv2
+from skimage.morphology import (
+    disk,
+    reconstruction,
+    remove_small_holes,
+    remove_small_objects,
+)
 
-from tiatoolbox.models.abc import ModelABC
+from tiatoolbox.models.models_abc import ModelABC
 from tiatoolbox.utils import misc
-
-from skimage.morphology import remove_small_objects, remove_small_holes, reconstruction, disk
-import warnings
-import numpy as np
-import matplotlib.pyplot as plt
 
 bn_axis = 1
 
 
-class Conv_Bn_Relu(nn.Module):
-    """Convolution -> Batch Normalization -> ReLu/Sigmoid
+class ConvBnRelu(nn.Module):
+    """Performs Convolution, Batch Normalization and activation.
 
     Args:
-        num_input_channels (int): Number of channels in input.
-        num_output_channels (int): Number of channels in output.
-        kernelSize (int): Size of the kernel in the convolution layer.
-        strds (int): Size of the stride in the convolution layer.
-        useBias (bool): Whether to use bias in the convolution layer.
-        dilatationRate (int): Dilatation rate in the convolution layer.
-        actv (str): Name of the activation function to use.
-        doBatchNorm (bool): Whether to do batch normalization after the convolution layer.
+        num_input_channels (int):
+            Number of channels in input.
+        num_output_channels (int):
+            Number of channels in output.
+        kernel_size (int):
+            Size of the kernel in the convolution layer.
+        strides (int):
+            Size of the stride in the convolution layer.
+        use_bias (bool):
+            Whether to use bias in the convolution layer.
+        dilation_rate (int):
+            Dilation rate in the convolution layer.
+        activation (str):
+            Name of the activation function to use.
+        do_batchnorm (bool):
+            Whether to do batch normalization after the convolution layer.
 
     Returns:
         model (torch.nn.Module): a pytorch model.
 
     """
-    def __init__(self, num_input_channels, num_output_channels=32, 
-        kernelSize=(3,3), strds=(1,1),
-        useBias=False, dilatationRate=(1,1), 
-        actv='relu', doBatchNorm=True
+
+    def __init__(
+        self,
+        num_input_channels: int,
+        num_output_channels: int,
+        kernel_size: Union[Tuple[int, int], np.ndarray] = (3, 3),
+        strides: Union[Tuple[int, int], np.ndarray] = (1, 1),
+        use_bias: bool = False,
+        dilation_rate: Union[Tuple[int, int], np.ndarray] = (1, 1),
+        activation: str = "relu",
+        do_batchnorm: bool = True,
     ):
 
         super().__init__()
-        if isinstance(kernelSize, int):
-            kernelSize = (kernelSize, kernelSize)
-        if isinstance(strds, int):
-            strds = (strds, strds)
+        if isinstance(kernel_size, int):
+            kernel_size = (kernel_size, kernel_size)
+        if isinstance(strides, int):
+            strides = (strides, strides)
 
-        self.conv_bn_relu = self.get_block(num_input_channels, num_output_channels, kernelSize,
-            strds, useBias, dilatationRate, actv, doBatchNorm
+        self.conv_bn_relu = self.get_block(
+            num_input_channels,
+            num_output_channels,
+            kernel_size,
+            strides,
+            use_bias,
+            dilation_rate,
+            activation,
+            do_batchnorm,
         )
 
-    def forward(self, input):
+    def forward(self, input_tensor: torch.Tensor) -> torch.Tensor:
         """Logic for using layers defined in init.
 
         This method defines how layers are used in forward operation.
 
         Args:
-            input (torch.Tensor): Input, the tensor is of the shape NCHW.
+            input_tensor (torch.Tensor):
+                    Input, the tensor is of the shape NCHW.
 
         Returns:
-            output (torch.Tensor): The inference output. 
+            output (torch.Tensor):
+                        The inference output.
+
 
         """
-        return self.conv_bn_relu(input)
+        return self.conv_bn_relu(input_tensor)
 
-
-    def get_block(self, in_channels, out_channels, 
-        kernelSize, strds,
-        useBias, dilatationRate, 
-        actv, doBatchNorm
+    @staticmethod
+    def get_block(
+        in_channels,
+        out_channels,
+        kernel_size,
+        strides,
+        use_bias,
+        dilation_rate,
+        activation,
+        do_batchnorm,
     ):
+        """Function to acquire a convolutional block.
 
-        layers = []
+        Args:
+            in_channels (int):
+                Number of channels in input.
+            out_channels (int):
+                Number of channels in output.
+            kernel_size (list):
+                Size of the kernel in the acquired convolution block.
+            strides (int):
+                Size of stride in the convolution layer.
+            use_bias (bool):
+                Whether to use bias in the convolution layer.
+            dilation_rates (list):
+                Dilation rate for each convolution layer.
+            activation (str):
+                Name of the activation function to use.
+            do_batchnorm (bool):
+                Whether to do batch normalization after the convolution layer.
 
-        conv1 = nn.Conv2d(in_channels=in_channels, out_channels=out_channels, kernel_size=kernelSize, 
-                stride=strds, dilation=dilatationRate, bias=useBias, padding='same', padding_mode='zeros'
-            )
+        Returns:
+            torch.nn.Sequential: a pytorch layer
+
+        """
+        conv1 = nn.Conv2d(
+            in_channels=in_channels,
+            out_channels=out_channels,
+            kernel_size=kernel_size,
+            stride=strides,
+            dilation=dilation_rate,
+            bias=use_bias,
+            padding="same",
+            padding_mode="zeros",
+        )
 
         torch.nn.init.xavier_uniform_(conv1.weight)
 
-        layers.append(conv1)
+        layers = [conv1]
 
-        if doBatchNorm:
-            layers.append(nn.BatchNorm2d(num_features=out_channels,eps=1.001e-5))
+        if do_batchnorm:
+            layers.append(nn.BatchNorm2d(num_features=out_channels, eps=1.001e-5))
 
-        if actv == 'relu':
+        if activation == "relu":
             layers.append(nn.ReLU())
-        elif actv == 'sigmoid':
-            layers.append(nn.Sigmoid())
 
-        block = nn.Sequential(*layers)
-        return block
+        return nn.Sequential(*layers)
 
 
-
-class Multiscale_Conv_Block(nn.Module):
-    """Multiscale convolution block
-
-    Defines four convolution layers. 
+class MultiscaleConvBlock(nn.Module):
+    """Defines Multiscale convolution block.
 
     Args:
-        num_input_channels (int): Number of channels in input.
-        num_output_channels (int): Number of channels in output.
-        kernelSizes (list): Size of the kernel in each convolution layer.
-        strds (int): Size of stride in the convolution layer.
-        useBias (bool): Whether to use bias in the convolution layer.
-        dilatationRates (list): Dilation rate for each convolution layer.
-        actv (str): Name of the activation function to use.
+        num_input_channels (int):
+            Number of channels in input.
+        num_output_channels (int):
+            Number of channels in output.
+        kernel_sizes (list):
+            Size of the kernel in each convolution layer.
+        strides (int):
+            Size of stride in the convolution layer.
+        use_bias (bool):
+            Whether to use bias in the convolution layer.
+        dilation_rates (list):
+            Dilation rate for each convolution layer.
+        activation (str):
+            Name of the activation function to use.
 
     Returns:
-        model (torch.nn.Module): a pytorch model.
-        
-    """
-    def __init__(self, num_input_channels, kernelSizes, 
-        dilatationRates, num_output_channels=32, strds=(1,1),
-        actv='relu', useBias=False
-    ):
+        torch.nn.Module:
+            A PyTorch model.
 
+    """
+
+    def __init__(
+        self,
+        num_input_channels: int,
+        kernel_sizes: Union[Tuple[int, int], np.ndarray],
+        dilation_rates: Union[Tuple[int, int], np.ndarray],
+        num_output_channels: int = 32,
+        strides: Union[Tuple[int, int], np.ndarray] = (1, 1),
+        activation: str = "relu",
+        use_bias: bool = False,
+    ):
         super().__init__()
 
-        self.conv_block_1 = Conv_Bn_Relu(num_input_channels=num_input_channels, num_output_channels=num_output_channels, kernelSize=kernelSizes[0],
-                strds=strds, actv=actv, useBias=useBias, dilatationRate=(dilatationRates[0], dilatationRates[0]))
-            
-        self.conv_block_2 = Conv_Bn_Relu(num_input_channels=num_input_channels, num_output_channels=num_output_channels, kernelSize=kernelSizes[1],
-                strds=strds, actv=actv, useBias=useBias, dilatationRate=(dilatationRates[1], dilatationRates[1]))
+        self.conv_block_1 = ConvBnRelu(
+            num_input_channels=num_input_channels,
+            num_output_channels=num_output_channels,
+            kernel_size=kernel_sizes[0],
+            strides=strides,
+            activation=activation,
+            use_bias=use_bias,
+            dilation_rate=(dilation_rates[0], dilation_rates[0]),
+        )
 
-        self.conv_block_3 = Conv_Bn_Relu(num_input_channels=num_input_channels, num_output_channels=num_output_channels, kernelSize=kernelSizes[2],
-                strds=strds, actv=actv, useBias=useBias, dilatationRate=(dilatationRates[2], dilatationRates[2]))
+        self.conv_block_2 = ConvBnRelu(
+            num_input_channels=num_input_channels,
+            num_output_channels=num_output_channels,
+            kernel_size=kernel_sizes[1],
+            strides=strides,
+            activation=activation,
+            use_bias=use_bias,
+            dilation_rate=(dilation_rates[1], dilation_rates[1]),
+        )
 
-        self.conv_block_4 = Conv_Bn_Relu(num_input_channels=num_input_channels, num_output_channels=num_output_channels, kernelSize=kernelSizes[3],
-                strds=strds, actv=actv, useBias=useBias, dilatationRate=(dilatationRates[3], dilatationRates[3]))
+        self.conv_block_3 = ConvBnRelu(
+            num_input_channels=num_input_channels,
+            num_output_channels=num_output_channels,
+            kernel_size=kernel_sizes[2],
+            strides=strides,
+            activation=activation,
+            use_bias=use_bias,
+            dilation_rate=(dilation_rates[2], dilation_rates[2]),
+        )
 
+        self.conv_block_4 = ConvBnRelu(
+            num_input_channels=num_input_channels,
+            num_output_channels=num_output_channels,
+            kernel_size=kernel_sizes[3],
+            strides=strides,
+            activation=activation,
+            use_bias=use_bias,
+            dilation_rate=(dilation_rates[3], dilation_rates[3]),
+        )
 
     def forward(self, input_map):
-        """Logic for using layers defined in init.
+        """Logic for using layers defined in MultiscaleConvBlock init.
 
         This method defines how layers are used in forward operation.
 
         Args:
-            input (torch.Tensor): Input, the tensor is of the shape NCHW.
-
+            input_map (torch.Tensor):
+                Input, the tensor is of the shape NCHW.
         Returns:
-            output (torch.Tensor): The inference output. 
+            output (torch.Tensor):
+                The inference output.
 
         """
-
         conv0 = input_map
 
         conv1 = self.conv_block_1(conv0)
@@ -150,201 +253,267 @@ class Multiscale_Conv_Block(nn.Module):
         conv3 = self.conv_block_3(conv0)
         conv4 = self.conv_block_4(conv0)
 
-        output_map = torch.cat([conv1, conv2, conv3, conv4], dim=bn_axis)
-
-        return output_map
+        return torch.cat([conv1, conv2, conv3, conv4], dim=bn_axis)
 
 
-
-class Residual_Conv(nn.Module):
-    """Residual Convolution block
+class ResidualConv(nn.Module):
+    """Residual Convolution block.
 
     Args:
-        num_input_channels (int): Number of channels in input.
-        num_output_channels (int): Number of channels in output.
-        kernelSize (int): Size of the kernel in all convolution layers.
-        strds (int): Size of the stride in all convolution layers.
-        useBias (bool): Whether to use bias in the convolution layers.
-        dilatationRate (int): Dilation rate in all convolution layers.
-        actv (str): Name of the activation function to use.
+        num_input_channels (int):
+            Number of channels in input.
+        num_output_channels (int):
+            Number of channels in output.
+        kernel_size (int):
+            Size of the kernel in all convolution layers.
+        strides (int):
+            Size of the stride in all convolution layers.
+        use_bias (bool):
+            Whether to use bias in the convolution layers.
+        dilation_rate (int):
+            Dilation rate in all convolution layers.
 
     Returns:
-        model (torch.nn.Module): a pytorch model.
-    
+        model (torch.nn.Module):
+            A pytorch model.
+
     """
-    def __init__(self, num_input_channels, num_output_channels=32, 
-        kernelSize=(3,3), strds=(1,1), actv='relu', 
-        useBias=False, dilatationRate=(1,1)
+
+    def __init__(
+        self,
+        num_input_channels: int,
+        num_output_channels: int = 32,
+        kernel_size: Union[Tuple[int, int], np.ndarray] = (3, 3),
+        strides: Union[Tuple[int, int], np.ndarray] = (1, 1),
+        use_bias: bool = False,
+        dilation_rate: Union[Tuple[int, int], np.ndarray] = (1, 1),
     ):
         super().__init__()
 
-
-
-        self.conv_block_1 = Conv_Bn_Relu(num_input_channels, num_output_channels, kernelSize=kernelSize, strds=strds, 
-            actv='None', useBias=useBias, dilatationRate=dilatationRate, doBatchNorm=True
+        self.conv_block_1 = ConvBnRelu(
+            num_input_channels,
+            num_output_channels,
+            kernel_size=kernel_size,
+            strides=strides,
+            activation="None",
+            use_bias=use_bias,
+            dilation_rate=dilation_rate,
+            do_batchnorm=True,
         )
-        self.conv_block_2 = Conv_Bn_Relu(num_output_channels, num_output_channels, kernelSize=kernelSize, strds=strds, 
-            actv='None', useBias=useBias, dilatationRate=dilatationRate, doBatchNorm=True
+        self.conv_block_2 = ConvBnRelu(
+            num_output_channels,
+            num_output_channels,
+            kernel_size=kernel_size,
+            strides=strides,
+            activation="None",
+            use_bias=use_bias,
+            dilation_rate=dilation_rate,
+            do_batchnorm=True,
         )
 
-        if actv == 'relu':
-            self.activation = nn.ReLU()
-        elif actv == 'sigmoid':
-            self.activation = nn.Sigmoid()
+        self.activation = nn.ReLU()
 
-
-    def forward(self, input):
-        """Logic for using layers defined in init.
+    def forward(self, input_tensor):
+        """Logic for using layers defined in ResidualConv init.
 
         This method defines how layers are used in forward operation.
 
         Args:
-            input (torch.Tensor): Input, the tensor is of the shape NCHW.
+            input_tensor (torch.Tensor):
+                Input, the tensor is of the shape NCHW.
 
         Returns:
-            output (torch.Tensor): The inference output. 
+            output (torch.Tensor):
+                The inference output.
 
         """
-
-        conv1 = self.conv_block_1(input)
+        conv1 = self.conv_block_1(input_tensor)
         conv2 = self.conv_block_2(conv1)
-
         out = torch.add(conv1, conv2)
-        out = self.activation(out)
-        return out
 
+        return self.activation(out)
 
 
 class NuClick(ModelABC):
     """NuClick Architecture.
 
-    NuClick is used for interactive segmentation. 
+    NuClick is used for interactive nuclei segmentation.
     NuClick takes an RGB image patch along with an inclusion and an exclusion map.
 
     Args:
-        num_input_channels (int): Number of channels in input.
-        num_output_channels (int): Number of channels in output.
+        num_input_channels (int):
+            Number of channels in input.
+        num_output_channels (int):
+            Number of channels in output.
 
     Returns:
         model (torch.nn.Module): a pytorch model.
 
     Examples:
-        >>> # instantiate a NuClick model for interactive nucleus segmentation. 
+        >>> # instantiate a NuClick model for interactive nucleus segmentation.
         >>> NuClick(num_input_channels = 5, num_output_channels = 1)
 
     """
-    def __init__(self, num_input_channels, num_output_channels):
+
+    def __init__(self, num_input_channels: int, num_output_channels: int):
         super().__init__()
-        self.net_name = 'NuClick'
+        self.net_name = "NuClick"
 
         self.n_channels = num_input_channels
         self.n_classes = num_output_channels
 
-        #-------------Conv_Bn_Relu blocks------------
+        # -------------Convolution + Batch Normalization + ReLu blocks------------
         self.conv_block_1 = nn.Sequential(
-            Conv_Bn_Relu(num_input_channels=self.n_channels, num_output_channels=64, kernelSize=7),
-            Conv_Bn_Relu(num_input_channels=64, num_output_channels=32, kernelSize=5),
-            Conv_Bn_Relu(num_input_channels=32, num_output_channels=32, kernelSize=3)
+            ConvBnRelu(
+                num_input_channels=self.n_channels,
+                num_output_channels=64,
+                kernel_size=7,
+            ),
+            ConvBnRelu(num_input_channels=64, num_output_channels=32, kernel_size=5),
+            ConvBnRelu(num_input_channels=32, num_output_channels=32, kernel_size=3),
         )
 
         self.conv_block_2 = nn.Sequential(
-            Conv_Bn_Relu(num_input_channels=64, num_output_channels=64),
-            Conv_Bn_Relu(num_input_channels=64, num_output_channels=32),
-            Conv_Bn_Relu(num_input_channels=32, num_output_channels=32)
+            ConvBnRelu(num_input_channels=64, num_output_channels=64),
+            ConvBnRelu(num_input_channels=64, num_output_channels=32),
+            ConvBnRelu(num_input_channels=32, num_output_channels=32),
         )
 
-        self.conv_block_3 = Conv_Bn_Relu(num_input_channels=32, num_output_channels=self.n_classes,
-            kernelSize=(1,1), actv=None, useBias=True, doBatchNorm=False)
+        self.conv_block_3 = ConvBnRelu(
+            num_input_channels=32,
+            num_output_channels=self.n_classes,
+            kernel_size=(1, 1),
+            strides=1,
+            activation=None,
+            use_bias=True,
+            do_batchnorm=False,
+        )
 
-        #-------------Residual_Conv blocks------------
+        # -------------Residual Convolution blocks------------
         self.residual_block_1 = nn.Sequential(
-            Residual_Conv(num_input_channels=32, num_output_channels=64),
-            Residual_Conv(num_input_channels=64, num_output_channels=64)
+            ResidualConv(num_input_channels=32, num_output_channels=64),
+            ResidualConv(num_input_channels=64, num_output_channels=64),
         )
 
-        self.residual_block_2 = Residual_Conv(num_input_channels=64, num_output_channels=128)
+        self.residual_block_2 = ResidualConv(
+            num_input_channels=64, num_output_channels=128
+        )
 
-        self.residual_block_3 = Residual_Conv(num_input_channels=128, num_output_channels=128)
+        self.residual_block_3 = ResidualConv(
+            num_input_channels=128, num_output_channels=128
+        )
 
         self.residual_block_4 = nn.Sequential(
-            Residual_Conv(num_input_channels=128, num_output_channels=256),
-            Residual_Conv(num_input_channels=256, num_output_channels=256),
-            Residual_Conv(num_input_channels=256, num_output_channels=256)
+            ResidualConv(num_input_channels=128, num_output_channels=256),
+            ResidualConv(num_input_channels=256, num_output_channels=256),
+            ResidualConv(num_input_channels=256, num_output_channels=256),
         )
 
         self.residual_block_5 = nn.Sequential(
-            Residual_Conv(num_input_channels=256, num_output_channels=512),
-            Residual_Conv(num_input_channels=512, num_output_channels=512),
-            Residual_Conv(num_input_channels=512, num_output_channels=512)
+            ResidualConv(num_input_channels=256, num_output_channels=512),
+            ResidualConv(num_input_channels=512, num_output_channels=512),
+            ResidualConv(num_input_channels=512, num_output_channels=512),
         )
 
         self.residual_block_6 = nn.Sequential(
-            Residual_Conv(num_input_channels=512, num_output_channels=1024),
-            Residual_Conv(num_input_channels=1024, num_output_channels=1024)
+            ResidualConv(num_input_channels=512, num_output_channels=1024),
+            ResidualConv(num_input_channels=1024, num_output_channels=1024),
         )
 
         self.residual_block_7 = nn.Sequential(
-            Residual_Conv(num_input_channels=1024, num_output_channels=512),
-            Residual_Conv(num_input_channels=512, num_output_channels=256)
+            ResidualConv(num_input_channels=1024, num_output_channels=512),
+            ResidualConv(num_input_channels=512, num_output_channels=256),
         )
 
-        self.residual_block_8 = Residual_Conv(num_input_channels=512, num_output_channels=256)
+        self.residual_block_8 = ResidualConv(
+            num_input_channels=512, num_output_channels=256
+        )
 
-        self.residual_block_9 = Residual_Conv(num_input_channels=256, num_output_channels=256)
+        self.residual_block_9 = ResidualConv(
+            num_input_channels=256, num_output_channels=256
+        )
 
         self.residual_block_10 = nn.Sequential(
-            Residual_Conv(num_input_channels=256, num_output_channels=128),
-            Residual_Conv(num_input_channels=128, num_output_channels=128)
+            ResidualConv(num_input_channels=256, num_output_channels=128),
+            ResidualConv(num_input_channels=128, num_output_channels=128),
         )
 
-        self.residual_block_11 = Residual_Conv(num_input_channels=128, num_output_channels=64)
-
-        self.residual_block_12 = Residual_Conv(num_input_channels=64, num_output_channels=64)
-
-
-        #-------------Multiscale_Conv_Block blocks------------
-        self.multiscale_block_1 = Multiscale_Conv_Block(num_input_channels=128, num_output_channels=32,
-            kernelSizes=[3,3,5,5], dilatationRates=[1,3,3,6]
+        self.residual_block_11 = ResidualConv(
+            num_input_channels=128, num_output_channels=64
         )
 
-        self.multiscale_block_2 = Multiscale_Conv_Block(num_input_channels=256, num_output_channels=64,
-            kernelSizes=[3,3,5,5], dilatationRates=[1,3,2,3]
+        self.residual_block_12 = ResidualConv(
+            num_input_channels=64, num_output_channels=64
         )
 
-        self.multiscale_block_3 = Multiscale_Conv_Block(num_input_channels=64, num_output_channels=16,
-            kernelSizes=[3,3,5,7], dilatationRates=[1,3,2,6]
-        )
-            
-        #-------------MaxPool2d blocks------------
-        self.pool_block_1 = nn.MaxPool2d(kernel_size=(2,2))
-        self.pool_block_2 = nn.MaxPool2d(kernel_size=(2,2))
-        self.pool_block_3 = nn.MaxPool2d(kernel_size=(2,2))
-        self.pool_block_4 = nn.MaxPool2d(kernel_size=(2,2))
-        self.pool_block_5 = nn.MaxPool2d(kernel_size=(2,2))
-
-        #-------------ConvTranspose2d blocks------------
-        self.conv_transpose_1 = nn.ConvTranspose2d(in_channels=1024, out_channels=512,
-            kernel_size=2, stride=(2,2),
+        # -------------Multi-scale Convolution blocks------------
+        self.multiscale_block_1 = MultiscaleConvBlock(
+            num_input_channels=128,
+            num_output_channels=32,
+            kernel_sizes=[3, 3, 5, 5],
+            dilation_rates=[1, 3, 3, 6],
         )
 
-        self.conv_transpose_2 = nn.ConvTranspose2d(in_channels=256, out_channels=256,
-            kernel_size=2, stride=(2,2),
+        self.multiscale_block_2 = MultiscaleConvBlock(
+            num_input_channels=256,
+            num_output_channels=64,
+            kernel_sizes=[3, 3, 5, 5],
+            dilation_rates=[1, 3, 2, 3],
         )
 
-        self.conv_transpose_3 = nn.ConvTranspose2d(in_channels=256, out_channels=128,
-            kernel_size=2, stride=(2,2),
+        self.multiscale_block_3 = MultiscaleConvBlock(
+            num_input_channels=64,
+            num_output_channels=16,
+            kernel_sizes=[3, 3, 5, 7],
+            dilation_rates=[1, 3, 2, 6],
         )
 
-        self.conv_transpose_4 = nn.ConvTranspose2d(in_channels=128, out_channels=64,
-            kernel_size=2, stride=(2,2),
+        # -------------Max Pooling blocks------------
+        self.pool_block_1 = nn.MaxPool2d(kernel_size=(2, 2))
+        self.pool_block_2 = nn.MaxPool2d(kernel_size=(2, 2))
+        self.pool_block_3 = nn.MaxPool2d(kernel_size=(2, 2))
+        self.pool_block_4 = nn.MaxPool2d(kernel_size=(2, 2))
+        self.pool_block_5 = nn.MaxPool2d(kernel_size=(2, 2))
+
+        # -------------Transposed Convolution blocks------------
+        self.conv_transpose_1 = nn.ConvTranspose2d(
+            in_channels=1024,
+            out_channels=512,
+            kernel_size=2,
+            stride=(2, 2),
         )
 
-        self.conv_transpose_5 = nn.ConvTranspose2d(in_channels=64, out_channels=32,
-            kernel_size=2, stride=(2,2),
+        self.conv_transpose_2 = nn.ConvTranspose2d(
+            in_channels=256,
+            out_channels=256,
+            kernel_size=2,
+            stride=(2, 2),
         )
 
+        self.conv_transpose_3 = nn.ConvTranspose2d(
+            in_channels=256,
+            out_channels=128,
+            kernel_size=2,
+            stride=(2, 2),
+        )
+
+        self.conv_transpose_4 = nn.ConvTranspose2d(
+            in_channels=128,
+            out_channels=64,
+            kernel_size=2,
+            stride=(2, 2),
+        )
+
+        self.conv_transpose_5 = nn.ConvTranspose2d(
+            in_channels=64,
+            out_channels=32,
+            kernel_size=2,
+            stride=(2, 2),
+        )
+
+    # pylint: disable=W0221
     def forward(self, imgs: torch.Tensor):
-        """Logic for using layers defined in init.
+        """Logic for using layers defined in NuClick init.
 
         This method defines how layers are used in forward operation.
 
@@ -352,75 +521,67 @@ class NuClick(ModelABC):
             imgs (torch.Tensor): Input images, the tensor is of the shape NCHW.
 
         Returns:
-            output (torch.Tensor): The inference output. 
+            output (torch.Tensor): The inference output.
 
         """
-        conv1 = self.conv_block_1(imgs)    
-        pool1 = self.pool_block_1(conv1)     
+        conv1 = self.conv_block_1(imgs)
+        pool1 = self.pool_block_1(conv1)
 
-        conv2 = self.residual_block_1(pool1) 
-        pool2 = self.pool_block_2(conv2)    
+        conv2 = self.residual_block_1(pool1)
+        pool2 = self.pool_block_2(conv2)
 
         conv3 = self.residual_block_2(pool2)
-        conv3 = self.multiscale_block_1(conv3)  
-        conv3 = self.residual_block_3(conv3)    
-        pool3 = self.pool_block_3(conv3)    
+        conv3 = self.multiscale_block_1(conv3)
+        conv3 = self.residual_block_3(conv3)
+        pool3 = self.pool_block_3(conv3)
 
-        conv4 = self.residual_block_4(pool3)    
-        pool4 = self.pool_block_4(conv4)    
+        conv4 = self.residual_block_4(pool3)
+        pool4 = self.pool_block_4(conv4)
 
-        conv5 = self.residual_block_5(pool4) 
-        pool5 = self.pool_block_5(conv5)    
+        conv5 = self.residual_block_5(pool4)
+        pool5 = self.pool_block_5(conv5)
 
-        conv51 = self.residual_block_6(pool5) 
+        conv51 = self.residual_block_6(pool5)
 
-        up61 = torch.cat([self.conv_transpose_1(conv51),conv5], dim=1)  
-        conv61 = self.residual_block_7(up61)    
-        
-        up6 = torch.cat([self.conv_transpose_2(conv61), conv4], dim=1)  
-        conv6 = self.residual_block_8(up6) 
-        conv6 = self.multiscale_block_2(conv6)  
-        conv6 = self.residual_block_9(conv6)    
+        up61 = torch.cat([self.conv_transpose_1(conv51), conv5], dim=1)
+        conv61 = self.residual_block_7(up61)
 
-        up7 = torch.cat([self.conv_transpose_3(conv6), conv3], dim=1)   
-        conv7 = self.residual_block_10(up7)     
+        up6 = torch.cat([self.conv_transpose_2(conv61), conv4], dim=1)
+        conv6 = self.residual_block_8(up6)
+        conv6 = self.multiscale_block_2(conv6)
+        conv6 = self.residual_block_9(conv6)
 
-        up8 = torch.cat([self.conv_transpose_4(conv7), conv2], dim=1)   
-        conv8 = self.residual_block_11(up8)     
-        conv8 = self.multiscale_block_3(conv8)  
-        conv8 = self.residual_block_12(conv8)   
+        up7 = torch.cat([self.conv_transpose_3(conv6), conv3], dim=1)
+        conv7 = self.residual_block_10(up7)
 
-        up9 = torch.cat([self.conv_transpose_5(conv8), conv1], dim=1)   
-        conv9 = self.conv_block_2(up9)  
+        up8 = torch.cat([self.conv_transpose_4(conv7), conv2], dim=1)
+        conv8 = self.residual_block_11(up8)
+        conv8 = self.multiscale_block_3(conv8)
+        conv8 = self.residual_block_12(conv8)
 
-        conv10 = self.conv_block_3(conv9)   
-        
-        return conv10
+        up9 = torch.cat([self.conv_transpose_5(conv8), conv1], dim=1)
+        conv9 = self.conv_block_2(up9)
 
+        return self.conv_block_3(conv9)
 
     @staticmethod
     def generate_inst_dict(pred_mask, bounding_boxes):
         """To collect instance information and store it within a dictionary.
-
         Args:
             pred_mask: A list of (binary) prediction masks, shape(no.patch, h, w)
             bounding_boxes: ndarray, A list of bounding boxes. 
                 bounding box: `[start_x, start_y, end_x, end_y]`.
-
         Returns:
             inst_info_dict (dict): A dictionary containing a mapping of each instance
                     within `pred_mask` instance information. It has following form
-
                     inst_info = {
                             box: number[],
                             centroids: number[],
                             contour: number[][],
                     }
                     inst_info_dict = {[inst_uid: number] : inst_info}
-
                     and `inst_uid` is an integer corresponds to the instance
                     having the same pixel value within `pred_inst`.
-
         """
         inst_info_dict = {}
         for i in range(len(pred_mask)):
@@ -460,46 +621,53 @@ class NuClick(ModelABC):
 
         return inst_info_dict
 
-            
-
-
-    
     @staticmethod
-    def postproc(preds, thresh=0.33, minSize=10, minHole=30, doReconstruction=False, nucPoints=None):
+    def postproc(
+        preds,
+        thresh=0.33,
+        min_size=10,
+        min_hole_size=30,
+        do_reconstruction=False,
+        nuc_points=None,
+    ):
         """Post processing.
 
         Args:
             preds (ndarray): list of prediction output of each patch and
                 assumed to be in the order of (no.patch, h, w) (match with the output
                 of `infer_batch`).
-            thresh (float): Threshold value. If a pixel has a predicted value larger than the threshold, it will be classified as nuclei.
-            minSize (int): The smallest allowable object size.
-            minHole (int):  The maximum area, in pixels, of a contiguous hole that will be filled.
-            doReconstruction (bool): Whether to perform a morphological reconstruction of an image.
-            nucPoints (ndarray): In the order of (no.patch, h, w). 
-                In each patch, The pixel that has been 'clicked' is set to 1 and the rest pixels are set to 0.
+            thresh (float): Threshold value. If a pixel has a predicted value larger
+                than the threshold, it will be classified as nuclei.
+            min_size (int): The smallest allowable object size.
+            min_hole_size (int):  The maximum area, in pixels, of a contiguous hole
+                that will be filled.
+            do_reconstruction (bool): Whether to perform a morphological reconstruction
+                of an image.
+            nuc_points (ndarray): In the order of (no.patch, h, w).
+                In each patch, The pixel that has been 'clicked' is set to 1 and the
+                rest pixels are set to 0.
 
         Returns:
             masks (ndarray): pixel-wise nuclei instance segmentation
                 prediction, shape:(no.patch, h, w).
+
         """
         masks = preds > thresh
-        
-        masks = remove_small_objects(masks, min_size=minSize)
-        masks = remove_small_holes(masks, area_threshold=minHole)
-        if doReconstruction:
+        masks = remove_small_objects(masks, min_size=min_size)
+        masks = remove_small_holes(masks, area_threshold=min_hole_size)
+        if do_reconstruction:
             for i in range(len(masks)):
-                thisMask = masks[i, :, :]
-                thisMarker = nucPoints[i, :, :] > 0
-                
-                try:
-                    thisMask = reconstruction(thisMarker, thisMask, selem=disk(1))
-                    masks[i] = np.array([thisMask])
-                except Exception as e:
-                    print(e)
-                    warnings.warn('Nuclei reconstruction error #' + str(i))
-        return masks   
+                this_mask = masks[i, :, :]
+                this_marker = nuc_points[i, :, :] > 0
 
+                if np.any(this_mask[this_marker > 0]):
+                    this_mask = reconstruction(this_marker, this_mask, selem=disk(1))
+                    masks[i] = np.array([this_mask])
+                else:
+                    warnings.warn(
+                        f"Nuclei reconstruction was not done for nucleus #{i}"
+                    )
+        return masks
 
     @staticmethod
     def infer_batch(model, batch_data, on_gpu):
@@ -521,8 +689,8 @@ class NuClick(ModelABC):
         model.eval()
         device = misc.select_device(on_gpu)
 
-        #Assume batch_data is NCHW
-        batch_data= batch_data.to(device).type(torch.float32)
+        # Assume batch_data is NCHW
+        batch_data = batch_data.to(device).type(torch.float32)
 
         with torch.inference_mode():
             output = model(batch_data)

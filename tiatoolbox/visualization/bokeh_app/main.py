@@ -8,6 +8,7 @@ from cmath import pi
 from pathlib import Path, PureWindowsPath
 from shutil import rmtree
 from threading import Thread
+import tempfile
 
 import matplotlib.cm as cm
 import numpy as np
@@ -60,6 +61,7 @@ from tiatoolbox.utils.visualization import AnnotationRenderer, random_colors
 from tiatoolbox.visualization.tileserver import TileServer
 from tiatoolbox.visualization.ui_utils import get_level_by_extent
 from tiatoolbox.wsicore.wsireader import WSIReader
+from tiatoolbox.models.architecture import fetch_pretrained_weights
 
 is_deployed = False
 rand_id = token.generate_session_id()
@@ -1304,8 +1306,9 @@ def nuclick_on_pts(attr):
     y = -np.round(np.array(pt_source.data["y"]))
 
     model = NuClick(5, 1)
-    pretrained_weights = r"C:\Users\meast\app_data\NuClick_Nuclick_40xAll.pth"
-    saved_state_dict = torch.load(pretrained_weights, map_location="cpu")
+    #pretrained_weights = r"C:\Users\meast\app_data\NuClick_Nuclick_40xAll.pth"
+    fetch_pretrained_weights("nuclick_original-pannuke", r"./nuclick_weights.pth", overwrite=False)
+    saved_state_dict = torch.load(r"./nuclick_weights.pth", map_location="cpu")
     model.load_state_dict(saved_state_dict, strict=True)
     vstate.model_mpp = 0.25
     ioconf = IOInteractiveSegmentorConfig(
