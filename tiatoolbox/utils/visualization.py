@@ -825,7 +825,7 @@ class AnnotationRenderer:
             if self.info["mpp"] is not None
             else 1
         )
-        min_area = 0.0005 * (output_size[0] * output_size[1]) * (scale * mpp_sf) ** 2
+        min_area = 0.0003 * (output_size[0] * output_size[1]) * (scale * mpp_sf) ** 2
 
         tile = np.zeros((output_size[0] * res, output_size[1] * res, 4), dtype=np.uint8)
 

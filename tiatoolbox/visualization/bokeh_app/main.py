@@ -160,6 +160,12 @@ def make_color_dict(types):
     return {key: (*color, 1) for key, color in zip(types, colors)}
 
 
+def set_alpha_glyph(glyph, alpha):
+    """Sets both fill and line alpha for a glyph"""
+    glyph.fill_alpha = alpha
+    glyph.line_alpha = alpha
+
+
 def get_mapper_for_prop(prop):
     # find out the unique values of the chosen property
     resp = s.get(f"http://{host2}:5000/tileserver/get_prop_values/{prop}")
@@ -231,12 +237,12 @@ def build_predicate_callable():
         if l.active and l.label in vstate.types
     ]
     if len(get_types) == len(box_column.children) or len(get_types) == 0:
-        if filter_input.value == "None":
+        if filter_input.value == "None" or filter_input.value == "":
             vstate.renderer.where = None
             update_renderer("where", "None")
             return None
 
-    if filter_input.value == "None":
+    if filter_input.value == "None" or filter_input.value == "":
         if len(get_types) == 0:
             pred = None
         else:
@@ -1219,10 +1225,10 @@ def fixed_layer_select_cb(obj, attr):
 
 
 def layer_slider_cb(obj, attr, old, new):
-    if isinstance(
-        p.renderers[vstate.layer_dict[obj.name.split("_")[0]]], GraphRenderer
-    ):
-        set_graph_alpha(p.renderers[vstate.layer_dict[obj.name.split("_")[0]]], new)
+    if obj.name.split("_")[0] == 'nodes':
+        set_alpha_glyph(p.renderers[vstate.layer_dict[obj.name.split("_")[0]]].glyph, new)
+    elif obj.name.split("_")[0] == 'edges':
+        p.renderers[vstate.layer_dict[obj.name.split("_")[0]]].glyph.line_alpha = new
     else:
         p.renderers[vstate.layer_dict[obj.name.split("_")[0]]].alpha = new
 
