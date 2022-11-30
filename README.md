@@ -6,20 +6,20 @@ This visualization tool is in the process of being added to tiatoolbox, but for 
 
 If you already have tiatoolbox set up for development, with paths set up to your local tiatoolbox repository, it should be sufficient to crete a new branch for your local tiatoolbox git from this repository, and switch to that when you want to do some visualization stuff.
 
-git remote add tiavis https://github.com/measty/tiatoolbox\
-git fetch tiavis\
+git remote add tiavis https://github.com/measty/tiatoolbox  
+git fetch tiavis  
 git checkout -b feature-add-gui tiavis/feature-add-gui
 
 You will also need to add a couple of extra packages to your environment:
 
-conda install bokeh -c bokeh\
+conda install bokeh -c bokeh  
 conda install flask-cors
 
 ## For most other cases
 
-Install tiatoolbox into a new conda environment as normal from this fork. The easiest way to do this would be using pip:\\
+Install tiatoolbox into a new conda environment as normal from this fork. The easiest way to do this would be using pip:  
 
-conda create -n tiatoolbox-vis python=3.9\
+conda create -n tiatoolbox-vis python=3.9  
 pip install git+https://github.com/measty/tiatoolbox.git@feature-add-gui
 
 Though you could use any of the methods described in the tiatoolbox docs at the bottom of the readme.
@@ -30,8 +30,8 @@ start the interface using:
 
 `tiatoolbox visualize --img-input path\to\slides --img-input path\to\overlays`
 
-alternatively just one path can be provided; in this case it is assumed that slides and overlays are in subdirectories of that provided directory called 'slides' and 'overlays' respectively.\
-Another option to start the interface is:\
+alternatively just one path can be provided; in this case it is assumed that slides and overlays are in subdirectories of that provided directory called 'slides' and 'overlays' respectively.  
+Another option to start the interface is:  
 `bokeh serve --show ./tiatoolbox/visualization/bokeh_app --args path\to\slides path\to\overlays`
 
 In the folder(s) that your command pointed to, should be the things that you want to visualize, following the conventions in the next section.
