@@ -408,7 +408,7 @@ class SlideGraphConstructor:  # noqa: PIE798
             "x": feature_centroids,
             "edge_index": edge_index,
             "coordinates": point_centroids,
-        }, cluster_inds
+        }  # , cluster_inds
 
     @classmethod
     def visualise(

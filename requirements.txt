@@ -1,9 +1,11 @@
 # torch installation
 --extra-index-url https://download.pytorch.org/whl/cu113; sys_platform != "darwin"
 albumentations>=1.0.3
+bokeh >=3.0
 Click>=8.1.2
 defusedxml>=0.7.1
-flask>=2.1.1
+flask>=2.1.1s
+flask-cors
 glymur>=0.9.9
 imagecodecs>=2021.11.20
 jupyterlab>=3.4.0

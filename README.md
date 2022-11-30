@@ -2,30 +2,27 @@ This visualization tool is in the process of being added to tiatoolbox, but for 
 
 # Setup
 
-## If you already have a tiatoolbox install
+## If you already have a 'develop' tiatoolbox install
 
-If you already have tiatoolbox set up, it should be sufficient to crete a new branch for your local tiatoolbox git from this repository, and switch to that when you want to do some visualization stuff.
+If you already have tiatoolbox set up for development, with paths set up to your local tiatoolbox repository, it should be sufficient to crete a new branch for your local tiatoolbox git from this repository, and switch to that when you want to do some visualization stuff.
 
 git remote add tiavis https://github.com/measty/tiatoolbox\
 git fetch tiavis\
-git checkout -b feature-add-gui tiafork/feature-add-gui
+git checkout -b feature-add-gui tiavis/feature-add-gui
 
 You will also need to add a couple of extra packages to your environment:
 
 conda install bokeh -c bokeh\
 conda install flask-cors
 
-## From scratch
+## For most other cases
 
-Install tiatoolbox into a conda environment as normal from this fork.\
-Install a couple of additional dependencies with:
+Install tiatoolbox into a new conda environment as normal from this fork. The easiest way to do this would be using pip:\\
 
-conda install bokeh -c bokeh\
-conda install flask-cors
+conda create -n tiatoolbox-vis python=3.9\
+pip install git+https://github.com/measty/tiatoolbox.git@feature-add-gui
 
-enter command:\
-python setup.py install\
-while in the cloned tiatoolbox top directory.
+Though you could use any of the methods described in the tiatoolbox docs at the bottom of the readme.
 
 # Usage
 
@@ -83,7 +80,9 @@ Most use-cases should be covered in there, or something close enough that a few 
 
 ### Heatmaps:
 
-will display a low-res heatmap in .jpg or .png format. Should be the same aspect ratio as the WSI it will be overlaid on.
+will display a low-res heatmap in .jpg or .png format. Should be the same aspect ratio as the WSI it will be overlaid on. When creating the image, keep in mind that white regions (255,255,255) will be made transparent.
+
+Single channel images can also be used but are not recommended; they should take values between 0 and 255 and will simply be put through a viridis colormap. 0 values will become white background.
 
 ### Whole Slide Overlays:
 
@@ -100,14 +99,25 @@ graph_dict = {  'edge_index': 2 x n_edges array of indices of pairs of connected
 		}
 ```
 
+Additional features can be added to nodes by adding extra keys to the dictionary, eg:
+
+```graph_dict = {  'edge_index': 2 x n_edges array of indices of pairs of connected nodes
+    'coordinates': n x 2 array of x,y coordinates for each graph node
+    'feats': n x n_features array of features for each node
+    'feat_names': list n_features names for each feature
+    }
+```
+
+It will be possible to colour the nodes by these features in the interface, and the top 10 will appear in a tooltip when hovering over a node.
+
 ## Other stuff:
 
 ### Colormaps/colouring by score:
 
-Once you have selected a slide with the slide dropdown, you can add any number of overlays by repeatedly choosing files containing overlays from the overlay drop menu. They will be put on there as separate layers. In the case of segmentations, if your segmentations have the 'type' property as one of their properties, this can additionally be used to show/hide annotations of that specific type. Colors can be individually selected for each type also if the randomly-generated colour scheme is not suitable.
+Once you have selected a slide with the slide dropdown, you can overlays by repeatedly choosing files containing overlays from the overlay drop menu. They will be put on there as separate layers. In the case of segmentations, if your segmentations have the 'type' property as one of their properties, this can additionally be used to show/hide annotations of that specific type. Colors can be individually selected for each type also if the randomly-generated colour scheme is not suitable.
 
-You can select the property that will be used to colour annotations in the colour_prop box. The corresponding property should be either categorical (strings or ints), in which case a dict-based colour mapping should be used, or a float between 0-1 in which case a matplotlib colourmap should be applied.
-There is also the option for the special case 'color' to be used - if your annotations have a property called color, this will be assumed to be an rgb value for each annotation which will be used directly without any mapping.
+You can select the property that will be used to colour annotations in the colour_by box. The corresponding property should be either categorical (strings or ints), in which case a dict-based colour mapping should be used, or a float between 0-1 in which case a matplotlib colourmap should be applied.
+There is also the option for the special case 'color' to be used - if your annotations have a property called color, this will be assumed to be an rgb value in the form of a tuple (r, g, b) of floats between 0-1 for each annotation which will be used directly without any mapping.
 
 The 'colour type by property' box allows annotations of the specified type to be coloured by a different property to the 'global' one. For example, this could be used to have all detections coloured according to their type, but for Glands, colour by some feature describing them instead.
 
@@ -125,6 +135,9 @@ By default, the interface is set up to show only larger annotations while zoomed
 
 There are a few options for how annotations are displayed. You can change the colourmap used in the colormap field if you are colouring objects according to a continuous property (should be between 0-1) - by entering the text of a matplotlib cmap.
 The buttons 'filled', 'mpp', 'grid', respectively toggle between filled and outline only rendering of annotations, using mpp or baseline pixels as the scale for the plot, and showing a grid overlay.
+
+A filter can be applied to annotations using the filter box. For example, entering props\['score'\]>0.5 would show only annotations for which the 'score' property  is greater than 0.5.
+See the annotation store documentation on valid 'where' statements for more details.
 
 <p align="center">
   <img src="https://raw.githubusercontent.com/TissueImageAnalytics/tiatoolbox/develop/docs/tiatoolbox-logo.png">

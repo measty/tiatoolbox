@@ -18,7 +18,12 @@ from shapely.affinity import translate
 from shapely.geometry import shape as feature2geometry
 from skimage import exposure
 
-from tiatoolbox.annotation.storage import Annotation, AnnotationStore, SQLiteStore
+from tiatoolbox.annotation.storage import (
+    Annotation,
+    AnnotationStore,
+    Geometry,
+    SQLiteStore,
+)
 from tiatoolbox.utils.exceptions import FileNotSupported
 
 
@@ -893,6 +898,8 @@ def store_from_dat(
     """
     store = cls()
     add_from_dat(store, fp, scale_factor, typedict=typedict, origin=origin)
+    if isinstance(store, SQLiteStore):
+        store.create_index("area", '"area"')
     return store
 
 
@@ -995,6 +1002,7 @@ def add_from_dat(
     scale_factor: Tuple[float, float] = (1, 1),
     typedict: Optional[Dict] = None,
     origin: Tuple[float, float] = (0, 0),
+    crop_inside: Geometry = None,
 ) -> None:
     """Add annotations from a .dat file to an existing store.
 
@@ -1018,6 +1026,8 @@ def add_from_dat(
                 'head2': {1: 'Gland', 2: 'Lumen', 3: ...}, ...}.
         origin [float, float]:
             The x and y coordinates to use as the origin for the annotations.
+        crop_inside (Geometry):
+            A shapely geometry to crop the annotations to. If None, no cropping
 
     """
     data = joblib.load(fp)
@@ -1044,6 +1054,7 @@ def add_from_dat(
             )
     else:
         anns = anns_from_hoverdict(data, props, typedict, origin, scale_factor)
-
+    if crop_inside is not None:
+        anns = [ann for ann in anns if ann.geometry.intersects(crop_inside)]
     print(f"added {len(anns)} annotations")
     store.append_many(anns)

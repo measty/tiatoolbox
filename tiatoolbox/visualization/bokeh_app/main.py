@@ -3,12 +3,12 @@ import operator
 import os
 import pickle
 import sys
+import tempfile
 import urllib
 from cmath import pi
 from pathlib import Path, PureWindowsPath
 from shutil import rmtree
 from threading import Thread
-import tempfile
 
 import matplotlib.cm as cm
 import numpy as np
@@ -23,6 +23,7 @@ from bokeh.models import (
     BoxEditTool,
     Button,
     CheckboxButtonGroup,
+    CheckboxGroup,
     Circle,
     ColorBar,
     ColorPicker,
@@ -35,10 +36,14 @@ from bokeh.models import (
     LinearColorMapper,
     MultiChoice,
     PointDrawTool,
+    RadioButtonGroup,
     Segment,
+    Select,
     Slider,
     Spinner,
     StaticLayoutProvider,
+    TabPanel,
+    Tabs,
     TapTool,
     TextInput,
     Toggle,
@@ -50,6 +55,7 @@ from flask_cors import CORS
 from requests.adapters import HTTPAdapter, Retry
 
 from tiatoolbox.annotation.dsl import SQL_GLOBALS, SQLTriplet
+from tiatoolbox.models.architecture import fetch_pretrained_weights
 from tiatoolbox.models.architecture.nuclick import NuClick
 from tiatoolbox.models.engine.interactive_segmentor import (
     InteractiveSegmentor,
@@ -61,7 +67,6 @@ from tiatoolbox.utils.visualization import AnnotationRenderer, random_colors
 from tiatoolbox.visualization.tileserver import TileServer
 from tiatoolbox.visualization.ui_utils import get_level_by_extent
 from tiatoolbox.wsicore.wsireader import WSIReader
-from tiatoolbox.models.architecture import fetch_pretrained_weights
 
 is_deployed = False
 rand_id = token.generate_session_id()
@@ -150,23 +155,39 @@ def make_safe_name(name):
     return urllib.parse.quote(str(PureWindowsPath(name)), safe="")
 
 
+def make_color_dict(types):
+    colors = random_colors(len(types))
+    return {key: (*color, 1) for key, color in zip(types, colors)}
+
+
+def get_mapper_for_prop(prop):
+    # find out the unique values of the chosen property
+    resp = s.get(f"http://{host2}:5000/tileserver/get_prop_values/{prop}")
+    prop_vals = json.loads(resp.text)
+    # guess what cmap should be
+    if len(prop_vals) > 10:
+        cmap = "viridis" if cmap_select.value == "Dict" else cmap_select.value
+    else:
+        cmap = make_color_dict(prop_vals)
+    return cmap
+
+
 def update_mapper():
     if vstate.types is not None:
         type_cmap_select.options = [str(t) for t in vstate.types]
         if len(node_source.data["x_"]) > 0:
             type_cmap_select.options.append("graph_overlay")
-        colors = random_colors(len(vstate.types))
-        vstate.mapper = {key: (*color, 1) for key, color in zip(vstate.types, colors)}
+        vstate.mapper = make_color_dict(vstate.types)
         renderer.mapper = lambda x: vstate.mapper[x]
         update_renderer("mapper", vstate.mapper)
 
 
 def update_renderer(prop, value):
     if prop == "mapper":
-        if value == "dict" or isinstance(value, dict):
+        if value == "dict":
             value = vstate.mapper  # put the mapper dict back
             color_bar.color_mapper.palette = make_color_seq_from_cmap(None)
-        else:
+        if not isinstance(value, dict):
             color_bar.color_mapper.palette = make_color_seq_from_cmap(
                 cm.get_cmap(value)
             )
@@ -410,14 +431,15 @@ def change_tiles(layer_name="overlay"):
         #     grp = tg.get_grp()
         #     ts = make_ts(
         #         f"http://{host}:{port}/tileserver/layer/{layer_key}/{user}/zoomify/TileGroup{grp}"
-        #         + r"/{z}-{x}-{y}@2x.jpg",
+        #         + r"/{z}-{x}-{y}@{vstate.res}x.jpg",
         #     )
         #     p.renderers[vstate.layer_dict[layer_key]].tile_source = ts
         return
 
     ts = make_ts(
         f"http://{host}:{port}/tileserver/layer/{layer_name}/{user}/zoomify/TileGroup{grp}"
-        + r"/{z}-{x}-{y}@2x.jpg",
+        + r"/{z}-{x}-{y}"
+        + f"@{vstate.res}x.jpg",
     )
     if layer_name in vstate.layer_dict:
         p.renderers[vstate.layer_dict[layer_name]].tile_source = ts
@@ -435,7 +457,8 @@ def change_tiles(layer_name="overlay"):
             grp = tg.get_grp()
             ts = make_ts(
                 f"http://{host}:{port}/tileserver/layer/{layer_key}/{user}/zoomify/TileGroup{grp}"
-                + r"/{z}-{x}-{y}@2x.jpg",
+                + r"/{z}-{x}-{y}"
+                + f"@{vstate.res}x.jpg",
             )
             p.renderers[vstate.layer_dict[layer_key]].tile_source = ts
         vstate.layer_dict[layer_name] = len(p.renderers) - 1
@@ -462,6 +485,7 @@ class ViewerState:
         self.props = []
         self.props_old = []
         self.graph = []
+        self.res = 2
 
 
 vstate = ViewerState()
@@ -574,7 +598,8 @@ user = resp.cookies.get("user")
 
 ts1 = make_ts(
     f"http://{host}:{port}/tileserver/layer/slide/{user}/zoomify/TileGroup1"
-    + r"/{z}-{x}-{y}@2x.jpg",
+    + r"/{z}-{x}-{y}"
+    + f"@{vstate.res}x.jpg",
 )
 print(p.renderers)
 print(p.y_range)
@@ -608,6 +633,16 @@ hover = HoverTool(renderers=[p.renderers[-2]])
 p.add_tools(hover)
 
 # Define UI elements
+options_button = Button(label="Options", button_type="primary")
+
+OPTIONS = [
+    "normalize props",
+]
+options_check = CheckboxGroup(labels=OPTIONS, active=[])
+active_options = []
+
+res_switch = RadioButtonGroup(labels=["1x", "2x"], active=1)
+
 slide_alpha = Slider(
     title="Slide Alpha",
     start=0,
@@ -630,12 +665,24 @@ overlay_alpha = Slider(
     sizing_mode="stretch_width",
 )
 
+edge_size_spinner = Spinner(
+    title="Edge thickness:",
+    low=0,
+    high=10,
+    step=1,
+    value=1,
+    width=60,
+    # max_width=60,
+    height=50,
+    sizing_mode="stretch_width",
+)
+
 pt_size_spinner = Spinner(
     title="Pt. Size:",
     low=0,
     high=10,
     step=1,
-    value=1,
+    value=4,
     width=60,
     # max_width=60,
     height=50,
@@ -687,11 +734,11 @@ cmmenu = [
     ("viridis", "viridis"),
     ("dict", "dict"),
 ]
-cmap_drop = Dropdown(
-    label="Cmap",
-    button_type="warning",
-    menu=cmmenu,
+cmap_select = Select(
+    title="Cmap",
+    options=cmmenu,
     width=60,
+    value="coolwarm",
     # max_width=60,
     height=45,
     sizing_mode="stretch_width",
@@ -782,6 +829,30 @@ save_button = Button(
 
 
 # Define UI callbacks
+def res_switch_cb(attr, old, new):
+    if new == 0:
+        vstate.res = 1
+    elif new == 1:
+        vstate.res = 2
+    else:
+        raise ValueError("Invalid resolution")
+    vstate.update_state = 1
+
+
+def options_check_cb(attr, old, new):
+    # incomplete - will need to save prop 2,98 percentiles
+    # and use them to normalize
+    # global active_options
+    # changed_option = set(attr.active).union(set(active_options)).difference(set(attr.active).intersection(set(active_options)))
+    changed_option = (
+        set(new).union(set(old)).difference(set(new).intersection(set(old)))
+    )
+    # active_options = attr.active
+    if "normalize props" in changed_option:
+        # update renderer with norm fn
+        f"http://{host2}:5000/tileserver/update_renderer/score_fn/what?"
+
+
 def slide_toggle_cb(attr):
     if p.renderers[0].alpha == 0:
         p.renderers[0].alpha = slide_alpha.value
@@ -870,6 +941,13 @@ def filter_input_cb(attr, old, new):
 
 def cprop_input_cb(attr, old, new):
     """Change property to colour by"""
+    if len(new) == 0:
+        return
+    if new[0] == "type":
+        cmap = vstate.mapper
+    else:
+        cmap = get_mapper_for_prop(new[0])
+    update_renderer("mapper", cmap)
     s.get(f"http://{host2}:5000/tileserver/change_color_prop/{new[0]}")
     vstate.update_state = 1
 
@@ -897,8 +975,11 @@ def overlay_alpha_cb(attr, old, new):
 
 
 def pt_size_cb(attr, old, new):
-    update_renderer("edge_thickness", new)
     vstate.graph_node.size = 2 * new
+
+
+def edge_size_cb(attr, old, new):
+    update_renderer("edge_thickness", new)
     vstate.update_state = 1
 
 
@@ -930,8 +1011,8 @@ def opt_buttons_cb(attr, old, new):
     print(p.grid)
 
 
-def cmap_drop_cb(attr):
-    update_renderer("mapper", attr.item)
+def cmap_select_cb(attr, old, new):
+    update_renderer("mapper", new)
     # change_tiles('overlay')
     vstate.update_state = 1
 
@@ -956,6 +1037,7 @@ def slide_select_cb(attr, old, new):
     box_source.data = {"x": [], "y": [], "width": [], "height": []}
     node_source.data = {"x_": [], "y_": [], "node_color_": []}
     edge_source.data = {"x0_": [], "y0_": [], "x1_": [], "y1_": []}
+    hover.tooltips = None
     if len(p.renderers) > 5:
         for r in p.renderers[5:].copy():
             p.renderers.remove(r)
@@ -1043,7 +1125,8 @@ def layer_drop_cb(attr):
         add_layer("edges")
         add_layer("nodes")
         change_tiles("graph")
-        type_cmap_select.options = type_cmap_select.options + ["graph_overlay"]
+        if "graph_overlay" not in type_cmap_select.options:
+            type_cmap_select.options = type_cmap_select.options + ["graph_overlay"]
 
         # add additional data to graph datasource
         for key in graph_dict:
@@ -1087,7 +1170,7 @@ def layer_drop_cb(attr):
 
     if Path(attr.item).suffix in [".db", ".dat", ".geojson"]:
         vstate.types = resp
-        props = s.get(f"http://{host2}:5000/tileserver/get_props")
+        props = s.get(f"http://{host2}:5000/tileserver/get_prop_names")
         vstate.props = json.loads(props.text)
         # type_cmap_select.options = vstate.props
         cprop_input.options = vstate.props
@@ -1227,8 +1310,9 @@ def type_cmap_cb(attr, old, new):
                     rgb2hex(node_cm(v)) for v in node_source.data[new[1]]
                 ]
             return
+        cmap = get_mapper_for_prop(new[1])  # separate cmap select ?
         s.get(
-            f"http://{host2}:5000/tileserver/change_secondary_cmap/{new[0]}/{new[1]}/viridis"
+            f"http://{host2}:5000/tileserver/change_secondary_cmap/{new[0]}/{new[1]}/{cmap}"
         )
 
         color_bar.color_mapper.palette = make_color_seq_from_cmap(
@@ -1291,7 +1375,17 @@ def segment_on_box(attr):
         f"http://{host2}:5000/tileserver/load_annotations/{fname}/{vstate.model_mpp}"
     )
     vstate.types = json.loads(resp.text)
-    update_mapper()
+
+    # update the props options if needed
+    props = s.get(f"http://{host2}:5000/tileserver/get_prop_names")
+    vstate.props = json.loads(props.text)
+    # type_cmap_select.options = vstate.props
+    cprop_input.options = vstate.props
+    if not vstate.props == vstate.props_old:
+        update_mapper()
+        vstate.props_old = vstate.props
+
+    # update_mapper()
     # type_drop.menu=[(str(t),str(t)) for t in vstate.types]
     rmtree(r"./sample_tile_results")
     initialise_overlay()
@@ -1306,8 +1400,10 @@ def nuclick_on_pts(attr):
     y = -np.round(np.array(pt_source.data["y"]))
 
     model = NuClick(5, 1)
-    #pretrained_weights = r"C:\Users\meast\app_data\NuClick_Nuclick_40xAll.pth"
-    fetch_pretrained_weights("nuclick_original-pannuke", r"./nuclick_weights.pth", overwrite=False)
+    # pretrained_weights = r"C:\Users\meast\app_data\NuClick_Nuclick_40xAll.pth"
+    fetch_pretrained_weights(
+        "nuclick_original-pannuke", r"./nuclick_weights.pth", overwrite=False
+    )
     saved_state_dict = torch.load(r"./nuclick_weights.pth", map_location="cpu")
     model.load_state_dict(saved_state_dict, strict=True)
     vstate.model_mpp = 0.25
@@ -1352,10 +1448,12 @@ def nuclick_on_pts(attr):
 # associate callback functions to the widgets
 slide_alpha.on_change("value", slide_alpha_cb)
 overlay_alpha.on_change("value", overlay_alpha_cb)
+res_switch.on_change("active", res_switch_cb)
 pt_size_spinner.on_change("value", pt_size_cb)
+edge_size_spinner.on_change("value", edge_size_cb)
 slide_select.on_change("value", slide_select_cb)
 save_button.on_click(save_cb)
-cmap_drop.on_click(cmap_drop_cb)
+cmap_select.on_change("value", cmap_select_cb)
 blur_spinner.on_change("value", blur_spinner_cb)
 scale_spinner.on_change("value", scale_spinner_cb)
 to_model_button.on_click(to_model_cb)
@@ -1369,6 +1467,7 @@ cprop_input.on_change("value", cprop_input_cb)
 node_source.selected.on_change("indices", node_select_cb)
 type_cmap_select.on_change("value", type_cmap_cb)
 swap_button.on_click(swap_cb)
+options_check.on_change("active", options_check_cb)
 
 populate_slide_list(slide_folder)
 populate_layer_list(Path(vstate.slide_path).stem, overlay_folder)
@@ -1387,18 +1486,25 @@ ui_layout = column(
         row([overlay_toggle, overlay_alpha], sizing_mode="stretch_width"),
         filter_input,
         cprop_input,
-        # cmap_drop,
         row(
-            [cmap_drop, blur_spinner, scale_spinner, pt_size_spinner],
+            [cmap_select, scale_spinner, blur_spinner],
             sizing_mode="stretch_width",
         ),
         type_cmap_select,
-        opt_buttons,
         row([to_model_button, model_drop, save_button], sizing_mode="stretch_width"),
         row(children=[box_column, color_column], sizing_mode="stretch_width"),
     ],
-    name="ui_layout",
     sizing_mode="stretch_width",
+)
+
+extra_options = column([opt_buttons, pt_size_spinner, edge_size_spinner, res_switch])
+
+control_tabs = Tabs(
+    tabs=[
+        TabPanel(child=ui_layout, title="Main"),
+        TabPanel(child=extra_options, title="More Opts"),
+    ],
+    name="ui_layout",
 )
 
 
@@ -1418,4 +1524,7 @@ def update():
 
 curdoc().add_periodic_callback(update, 220)
 curdoc().add_root(p)
-curdoc().add_root(ui_layout)
+# curdoc().add_root(ui_layout)
+curdoc().add_root(control_tabs)
+# curdoc().add_root(opts_column)
+curdoc().title = "Tiatoolbox Visualization Tool"
