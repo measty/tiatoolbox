@@ -209,23 +209,23 @@ def build_predicate():
     and the filter input.
     """
     preds = [
-        eval(f'props["type"]=={name2type(l.label)}', SQL_GLOBALS, {})
+        f'props["type"]=={name2type(l.label)}'
         for l in box_column.children
-        if l.active
+        if l.active and l.label in vstate.types
     ]
     if len(preds) == len(box_column.children):
         preds = []
-    combo = None
+    combo = "None"
     if len(preds) > 0:
-        combo = preds[0]
-        for pred in preds[1:]:
-            combo = SQLTriplet(combo, operator.or_, pred)
-    if filter_input.value != "None":
-        combo = SQLTriplet(
-            eval(filter_input.value, SQL_GLOBALS, {}), operator.and_, combo
-        )
+        combo = "(" + ") | (".join(preds) + ")"
+    if filter_input.value not in ["None", ""]:
+        if combo == "None":
+            combo += " & " + filter_input.value
+        else:
+            combo = filter_input.value
 
     vstate.renderer.where = combo
+    print(combo)
     update_renderer("where", combo)
     return combo
 
@@ -372,7 +372,7 @@ def initialise_overlay():
         if c.name not in vstate.types and "slider" not in c.name:
             color_column.children.remove(c)
 
-    build_predicate_callable()
+    build_predicate()
 
 
 def add_layer(lname):
@@ -941,7 +941,7 @@ def layer_folder_input_cb(attr, old, new):
 def filter_input_cb(attr, old, new):
     """Change predicate to be used to filter annotations"""
     # s.get(f"http://{host2}:5000/tileserver/change_predicate/{new}")
-    build_predicate_callable()
+    build_predicate()
     vstate.update_state = 1
 
 
@@ -1192,7 +1192,7 @@ def layer_drop_cb(attr):
 
 
 def layer_select_cb(attr):
-    build_predicate_callable()
+    build_predicate()
     # change_tiles('overlay')
     vstate.update_state = 1
 
@@ -1225,9 +1225,11 @@ def fixed_layer_select_cb(obj, attr):
 
 
 def layer_slider_cb(obj, attr, old, new):
-    if obj.name.split("_")[0] == 'nodes':
-        set_alpha_glyph(p.renderers[vstate.layer_dict[obj.name.split("_")[0]]].glyph, new)
-    elif obj.name.split("_")[0] == 'edges':
+    if obj.name.split("_")[0] == "nodes":
+        set_alpha_glyph(
+            p.renderers[vstate.layer_dict[obj.name.split("_")[0]]].glyph, new
+        )
+    elif obj.name.split("_")[0] == "edges":
         p.renderers[vstate.layer_dict[obj.name.split("_")[0]]].glyph.line_alpha = new
     else:
         p.renderers[vstate.layer_dict[obj.name.split("_")[0]]].alpha = new

@@ -1,6 +1,7 @@
 """Simple Flask WSGI apps to display tiles as slippery maps."""
 from __future__ import annotations
 
+import ast
 import copy
 import io
 import json
@@ -315,7 +316,7 @@ class TileServer(Flask):
             user = "default"
         else:
             user = secrets.token_urlsafe(16)
-        resp.set_cookie("user", user)
+        resp.set_cookie("user", user, httponly=True)
         self.renderers[user] = copy.deepcopy(self.renderer)
         self.overlaps[user] = 0
         return resp
