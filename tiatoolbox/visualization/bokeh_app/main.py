@@ -166,12 +166,13 @@ def set_alpha_glyph(glyph, alpha):
     glyph.line_alpha = alpha
 
 
-def get_mapper_for_prop(prop):
+def get_mapper_for_prop(prop, enforce_dict=False):
     # find out the unique values of the chosen property
+    print(prop)
     resp = s.get(f"http://{host2}:5000/tileserver/get_prop_values/{prop}")
     prop_vals = json.loads(resp.text)
     # guess what cmap should be
-    if len(prop_vals) > 10:
+    if len(prop_vals) > 10 and not enforce_dict:
         cmap = "viridis" if cmap_select.value == "Dict" else cmap_select.value
     else:
         cmap = make_color_dict(prop_vals)
@@ -191,7 +192,10 @@ def update_mapper():
 def update_renderer(prop, value):
     if prop == "mapper":
         if value == "dict":
-            value = vstate.mapper  # put the mapper dict back
+            if cprop_input.value == "type":
+                value = vstate.mapper  # put the type mapper dict back
+            else:
+                value = get_mapper_for_prop(cprop_input.value[0], enforce_dict=True)
             color_bar.color_mapper.palette = make_color_seq_from_cmap(None)
         if not isinstance(value, dict):
             color_bar.color_mapper.palette = make_color_seq_from_cmap(
