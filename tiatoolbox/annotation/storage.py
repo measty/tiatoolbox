@@ -2018,7 +2018,7 @@ class SQLiteStore(AnnotationStore):
         if isinstance(where, Callable):
             return {
                 key: Annotation(
-                    geometry=self._unpack_geometry(blob, cx, cy),
+                    geometry=zlib.decompress(blob),
                     properties=json.loads(properties),
                 )
                 for key, properties, cx, cy, blob in cur.fetchall()
@@ -2026,7 +2026,7 @@ class SQLiteStore(AnnotationStore):
             }
         return {
             key: Annotation(
-                geometry=self._unpack_geometry(blob, cx, cy),
+                geometry=zlib.decompress(blob),
                 properties=json.loads(properties),
             )
             for key, properties, cx, cy, blob in cur.fetchall()

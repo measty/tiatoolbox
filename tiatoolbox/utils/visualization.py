@@ -13,11 +13,24 @@ from numpy.typing import ArrayLike
 from PIL import Image, ImageFilter, ImageOps
 from shapely import speedups
 from shapely.geometry import Polygon
+from shapely.geos import WKBReader, lgeos
+from ctypes import c_size_t, c_char_p
+import zlib
 
 from tiatoolbox.annotation.storage import Annotation, AnnotationStore
 
 if speedups.available:  # pragma: no branch
     speedups.enable()
+
+GEOMTYPES = {
+    1: "Point",
+    2: "LineString",
+    3: "Polygon",
+    4: "MultiPoint",
+    5: "MultiLineString",
+    6: "MultiPolygon",
+    7: "GeometryCollection",
+}
 
 
 def random_colors(num_colors, bright=True):
@@ -603,7 +616,8 @@ class AnnotationRenderer:
                 Array of coordinates in tile space in the form [x, y].
 
         """
-        return np.squeeze(((np.array(coords) - top_left) / scale).astype(np.int32))
+        #return np.squeeze(((np.array(coords) - top_left) / scale).astype(np.int32))
+        return ((np.reshape(coords, (-1, 2)) - top_left) / scale).astype(np.int32)
 
     def get_color(self, annotation: Annotation, edge=False):
         """Get the color for an annotation.
@@ -698,7 +712,7 @@ class AnnotationRenderer:
         """
         col = self.get_color(annotation)
 
-        cnt = self.to_tile_coords(annotation.geometry.exterior.coords, top_left, scale)
+        cnt = self.to_tile_coords(np.frombuffer(annotation.geometry, np.double, -1, 13), top_left, scale)
         if self.thickness > -1:
             cv2.drawContours(
                 tile, [cnt], 0, col, self.edge_thickness, lineType=cv2.LINE_8
@@ -892,7 +906,8 @@ class AnnotationRenderer:
                 The scale at which we are rendering the tile.
 
         """
-        geom_type = annotation.geometry.geom_type
+        
+        geom_type = GEOMTYPES[np.frombuffer(annotation.geometry, np.uint8, 4, 1)[0]]
         if geom_type == "Point":
             self.render_pt(tile, annotation, top_left, scale)
         elif geom_type == "Polygon":
