@@ -224,9 +224,9 @@ def build_predicate():
         combo = "(" + ") | (".join(preds) + ")"
     if filter_input.value not in ["None", ""]:
         if combo == "None":
-            combo += " & " + filter_input.value
-        else:
             combo = filter_input.value
+        else:
+            combo = "(" + combo + ") & (" + filter_input.value + ")"
 
     vstate.renderer.where = combo
     print(combo)
