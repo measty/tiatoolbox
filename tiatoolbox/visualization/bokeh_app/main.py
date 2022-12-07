@@ -591,6 +591,7 @@ p = figure(
 )
 # p.axis.visible = False
 initialise_slide()
+p.toolbar.tools[1].zoom_on_axis = False
 
 s = requests.Session()
 
@@ -871,12 +872,8 @@ def slide_toggle_cb(attr):
 
 
 def node_select_cb(attr, old, new):
-    # only used for old slidegraph clustering
-    print(f"selected is: {new}")
-    vstate.mapper = {new[0]: (1, 0, 0, 1)}
-    vstate.renderer.mapper = lambda x: vstate.mapper[x]
-    update_renderer("mapper", vstate.mapper)
-    vstate.update_state = 1
+    # do something on node select if desired
+    pass
 
 
 def overlay_toggle_cb(attr):

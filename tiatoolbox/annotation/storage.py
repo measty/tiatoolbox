@@ -1647,7 +1647,9 @@ class SQLiteStore(AnnotationStore):
             return zlib.compress(data, level=self.compression_level)
         raise ValueError("Unsupported compression method.")
 
-    def _unpack_geometry(self, data: Union[str, bytes], cx: int, cy: int) -> Geometry:
+    def _unpack_geometry(
+        self, data: Union[str, bytes], cx: int, cy: int, as_raw: bool = False
+    ) -> Geometry:
         """Return the geometry using WKB data and rtree bounds index.
 
         For space optimisation, points are stored as centroids and all
@@ -1668,6 +1670,15 @@ class SQLiteStore(AnnotationStore):
                 The Shapely geometry.
 
         """
+        if as_raw:
+            if data is None:
+                return (
+                    np.uint8(0).tobytes()
+                    + np.uint32(1).tobytes()
+                    + np.double(cx).tobytes()
+                    + np.double(cy).tobytes()
+                )
+            return data if self.compression is None else zlib.decompress(data)
         return Point(cx, cy) if data is None else self.deserialize_geometry(data)
 
     def deserialize_geometry(  # skipcq: PYL-W0221
@@ -2006,6 +2017,7 @@ class SQLiteStore(AnnotationStore):
         where: Optional[Predicate] = None,
         geometry_predicate: str = "intersects",
         min_area=None,
+        as_raw: bool = False,
     ) -> Dict[str, Annotation]:
         query_geometry = geometry
         cur = self._query(
@@ -2018,7 +2030,7 @@ class SQLiteStore(AnnotationStore):
         if isinstance(where, Callable):
             return {
                 key: Annotation(
-                    geometry=zlib.decompress(blob),
+                    geometry=self._unpack_geometry(blob, cx, cy, as_raw=as_raw),
                     properties=json.loads(properties),
                 )
                 for key, properties, cx, cy, blob in cur.fetchall()
@@ -2026,7 +2038,7 @@ class SQLiteStore(AnnotationStore):
             }
         return {
             key: Annotation(
-                geometry=zlib.decompress(blob),
+                geometry=self._unpack_geometry(blob, cx, cy, as_raw=as_raw),
                 properties=json.loads(properties),
             )
             for key, properties, cx, cy, blob in cur.fetchall()
@@ -2364,7 +2376,7 @@ class SQLiteStore(AnnotationStore):
         cur.execute("SELECT EXISTS(SELECT 1 FROM annotations WHERE [key] = ?)", (key,))
         return cur.fetchone()[0] == 1
 
-    def __getitem__(self, key: str) -> Annotation:
+    def __getitem__(self, key: str, as_raw=False) -> Annotation:
         cur = self.con.cursor()
         cur.execute(
             """
@@ -2383,6 +2395,7 @@ class SQLiteStore(AnnotationStore):
             serialised_geometry,
             cx,
             cy,
+            as_raw=as_raw,
         )
         return Annotation(geometry, properties)
 
