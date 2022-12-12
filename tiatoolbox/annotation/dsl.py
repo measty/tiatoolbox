@@ -242,6 +242,35 @@ class SQLJSONDictionary(SQLExpression):
         return SQLTriplet(self[key], "if_null", default or SQLNone())
 
 
+class SQLFuncHandler(SQLExpression):
+    """Representation of an SQL expression to call a function."""
+
+    def __init__(self, func: str = None, *args: SQLExpression) -> None:
+        self.func = func or ""
+        self.args = args
+
+    def __str__(self) -> str:
+        return f"{self.func}"  # args? {', '.join(str(arg) for arg in self.args)})"
+
+    def __getitem__(self, key: str) -> "SQLFuncHandler":
+        if isinstance(key, (int,)):
+            key_str = f"[{key}]"
+        else:
+            key_str = str(key)
+        joiner = "." if self.func and not isinstance(key, int) else ""
+        return SQLFuncHandler(func=self.func + joiner + f"{key_str}")
+
+    def __call__(self, key: str) -> "SQLFuncHandler":
+        if isinstance(key, (int,)):
+            key_str = f"[{key}]"
+        else:
+            key_str = str(key)
+        return SQLFuncHandler(func=self.func + "(" + f"{key_str}" + ")")
+
+    def get(self, key, default=None):
+        return SQLTriplet(self[key], "if_null", default or SQLNone())
+
+
 class SQLRegex(SQLExpression):
     """Representation of an SQL expression to match a string against a regex."""
 
@@ -380,7 +409,9 @@ _COMMON_GLOBALS = {
 }
 SQL_GLOBALS = {
     "__builtins__": {**_COMMON_GLOBALS["__builtins__"], "sum": sql_list_sum},
+    "func": SQLFuncHandler(),
     "props": SQLJSONDictionary(),
+    "geom": "get_geometry(geometry, cx, cy)",
     "is_none": sql_is_none,
     "is_not_none": sql_is_not_none,
     "regexp": SQLRegex.search,

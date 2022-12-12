@@ -1512,6 +1512,8 @@ class SQLiteStore(AnnotationStore):
         self.path = self._connection_to_path(self.connection)
         self.auto_commit = auto_commit
 
+        self.sql_globals = SQL_GLOBALS
+
         # Check if the path is a non-empty file
         exists = (
             # Use 'and' to short-circuit
@@ -1545,50 +1547,33 @@ class SQLiteStore(AnnotationStore):
             properties = json.loads(properties)
             return fn(properties)
 
-        def get_area(wkb_bytes: bytes, cx: int, cy: int) -> float:
+        def get_area(geom) -> float:
             """Function to get the area of a geometry."""
-            return self._unpack_geometry(
-                wkb_bytes,
-                cx,
-                cy,
-            ).area
+            return pickle.loads(geom).area
+
+        def get_geometry(wkb_bytes: bytes, cx: int, cy: int) -> Geometry:
+            """Function to get the geometry."""
+            return pickle.dumps(
+                self._unpack_geometry(
+                    wkb_bytes,
+                    cx,
+                    cy,
+                )
+            )
 
         # Register custom functions
-        def register_custom_function(
-            name: str, nargs: int, fn: Callable, deterministic: bool = False
-        ) -> None:
-            """Register a custom SQLite function.
-
-            Only Python >= 3.8 supports deterministic functions,
-            fallback to without this argument if not available.
-
-            Args:
-                name:
-                    The name of the function.
-                nargs:
-                    The number of arguments the function takes.
-                fn:
-                    The function to register.
-                deterministic:
-                    Whether the function is deterministic.
-
-            """
-            try:
-                self.con.create_function(name, nargs, fn, deterministic=deterministic)
-            except TypeError:
-                self.con.create_function(name, nargs, fn)
-
-        register_custom_function(
+        self.register_custom_function(
             "geometry_predicate", 5, wkb_predicate, deterministic=True
         )
-        register_custom_function(
+        self.register_custom_function(
             "pickle_expression", 2, pickle_expression, deterministic=True
         )
-        register_custom_function("REGEXP", 2, py_regexp)
-        register_custom_function("REGEXP", 3, py_regexp)
-        register_custom_function("LISTSUM", 1, json_list_sum)
-        register_custom_function("CONTAINS", 1, json_contains)
-        register_custom_function("get_area", 3, get_area)
+        self.register_custom_function("REGEXP", 2, py_regexp)
+        self.register_custom_function("REGEXP", 3, py_regexp)
+        self.register_custom_function("LISTSUM", 1, json_list_sum)
+        self.register_custom_function("CONTAINS", 1, json_contains)
+        self.register_custom_function("get_area", 1, get_area)
+        self.register_custom_function("get_geometry", 3, get_geometry)
 
         if exists:
             self.table_columns = self._get_table_columns()
@@ -1622,6 +1607,30 @@ class SQLiteStore(AnnotationStore):
         if self.auto_commit:
             self.con.commit()
         self.table_columns = self._get_table_columns()
+
+    def register_custom_function(
+        self, name: str, nargs: int, fn: Callable, deterministic: bool = False
+    ) -> None:
+        """Register a custom SQLite function.
+
+        Only Python >= 3.8 supports deterministic functions,
+        fallback to without this argument if not available.
+
+        Args:
+            name:
+                The name of the function.
+            nargs:
+                The number of arguments the function takes.
+            fn:
+                The function to register.
+            deterministic:
+                Whether the function is deterministic.
+
+        """
+        try:
+            self.con.create_function(name, nargs, fn, deterministic=deterministic)
+        except TypeError:
+            self.con.create_function(name, nargs, fn)
 
     def serialise_geometry(  # skipcq: PYL-W0221
         self, geometry: Geometry
