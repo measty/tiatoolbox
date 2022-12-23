@@ -677,11 +677,9 @@ class SemanticSegmentor:
             mask_reader = mask_path
         elif mask_path is not None:
             if os.path.isfile(mask_path):
-                # raise ValueError("`mask_path` must be a valid file path.")
                 mask = imread(mask_path)  # assume to be gray
             else:
                 mask = mask_path
-            # mask = cv2.cvtColor(mask, cv2.COLOR_RGB2GRAY)
             mask = np.array(mask > 0, dtype=np.uint8)
 
             mask_reader = VirtualWSIReader(mask)
@@ -953,7 +951,8 @@ class SemanticSegmentor:
             patch_shape_in_wsi = tuple(br_in_wsi - tl_in_wsi)
             # conversion to make cv2 happy
             prediction = prediction.astype(np.float32)
-            prediction = cv2.resize(prediction, patch_shape_in_wsi[::-1])
+            if prediction.shape[:2] != patch_shape_in_wsi:
+                prediction = cv2.resize(prediction, patch_shape_in_wsi[::-1])
             # ! cv2 resize will remove singleton !
             if add_singleton_dim:
                 prediction = prediction[..., None]
