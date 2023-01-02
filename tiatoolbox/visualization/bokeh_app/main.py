@@ -202,8 +202,8 @@ def update_renderer(prop, value):
                 cm.get_cmap(value)
             )
             color_bar.visible = True
-        return s.get(f"http://{host2}:5000/tileserver/change_cmap/{value}")
-    return s.get(
+        return s.put(f"http://{host2}:5000/tileserver/change_cmap/{value}")
+    return s.put(
         f"http://{host2}:5000/tileserver/update_renderer/{prop}/{json.dumps(value)}"
     )
 
@@ -1069,7 +1069,7 @@ def slide_select_cb(attr, old, new):
     fname = make_safe_name(str(slide_path))
     print(fname)
     print(vstate.mpp)
-    s.get(f"http://{host2}:5000/tileserver/change_slide/slide/{fname}")
+    s.put(f"http://{host2}:5000/tileserver/change_slide/slide/{fname}")
     change_tiles("slide")
     # if len(p.renderers)==1:
     # r=p.rect('x', 'y', 'width', 'height', source=box_source, fill_alpha=0)
@@ -1172,7 +1172,7 @@ def layer_drop_cb(attr):
 
     # fname='-*-'.join(attr.item.split('\\'))
     fname = make_safe_name(attr.item)
-    resp = s.get(f"http://{host2}:5000/tileserver/change_overlay/{fname}")
+    resp = s.put(f"http://{host2}:5000/tileserver/change_overlay/{fname}")
     resp = json.loads(resp.text)
 
     if Path(attr.item).suffix in [".db", ".dat", ".geojson"]:
@@ -1287,7 +1287,7 @@ def to_model_cb(attr):
 def type_cmap_cb(attr, old, new):
     if len(new) == 0:
         type_cmap_select.options = vstate.types + ["graph_overlay"]
-        s.get(
+        s.put(
             f"http://{host2}:5000/tileserver/change_secondary_cmap/{'None'}/{'None'}/viridis"
         )
         vstate.update_state = 1
@@ -1320,7 +1320,7 @@ def type_cmap_cb(attr, old, new):
                 ]
             return
         cmap = get_mapper_for_prop(new[1])  # separate cmap select ?
-        s.get(
+        s.put(
             f"http://{host2}:5000/tileserver/change_secondary_cmap/{new[0]}/{new[1]}/{cmap}"
         )
 
@@ -1380,7 +1380,7 @@ def segment_on_box(attr):
     # fname='-*-'.join('.\\sample_tile_results\\0.dat'.split('\\'))
     fname = make_safe_name(".\\sample_tile_results\\0.dat")
     print(fname)
-    resp = s.get(
+    resp = s.put(
         f"http://{host2}:5000/tileserver/load_annotations/{fname}/{vstate.model_mpp}"
     )
     vstate.types = json.loads(resp.text)
@@ -1443,7 +1443,7 @@ def nuclick_on_pts(attr):
     # fname='-*-'.join('.\\sample_tile_results\\0.dat'.split('\\'))
     fname = make_safe_name("\\app_data\\sample_tile_results\\0.dat")
     print(fname)
-    resp = s.get(
+    resp = s.put(
         f"http://{host2}:5000/tileserver/load_annotations/{fname}/{vstate.model_mpp}"
     )
     print(resp.text)
