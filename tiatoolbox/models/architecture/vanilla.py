@@ -58,6 +58,7 @@ def _get_architecture(arch_name, pretrained=True, **kwargs):
     if "alexnet" in arch_name:
         return model.features
     if "inception_v3" in arch_name or "googlenet" in arch_name:
+        model.AuxLogits = None
         return nn.Sequential(*list(model.children())[:-3])
 
     return model.features

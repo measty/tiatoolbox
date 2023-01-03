@@ -122,20 +122,33 @@ class TileServer(Flask):
         )
         self.route("/")(self.index)
         self.route("/tileserver/setup")(self.setup)
-        self.route("/tileserver/change_predicate/<pred>")(self.change_pred)
-        self.route("/tileserver/change_color_prop/<prop>")(self.change_prop)
-        self.route("/tileserver/change_slide/<layer>/<layer_path>")(self.change_slide)
-        self.route("/tileserver/change_cmap/<cmap>")(self.change_mapper)
-        self.route("/tileserver/load_annotations/<file_path>/<float:model_mpp>")(
-            self.load_annotations
+        self.route("/tileserver/change_predicate/<pred>", methods=["PUT"])(
+            self.change_pred
         )
-        self.route("/tileserver/change_overlay/<overlay_path>")(self.change_overlay)
+        self.route("/tileserver/change_color_prop/<prop>", methods=["PUT"])(
+            self.change_prop
+        )
+        self.route("/tileserver/change_slide/<layer>/<layer_path>", methods=["PUT"])(
+            self.change_slide
+        )
+        self.route("/tileserver/change_cmap/<cmap>", methods=["PUT"])(
+            self.change_mapper
+        )
+        self.route(
+            "/tileserver/load_annotations/<file_path>/<float:model_mpp>",
+            methods=["PUT"],
+        )(self.load_annotations)
+        self.route("/tileserver/change_overlay/<overlay_path>", methods=["PUT"])(
+            self.change_overlay
+        )
         self.route("/tileserver/commit/<save_path>")(self.commit_db)
-        self.route("/tileserver/update_renderer/<prop>/<val>")(self.update_renderer)
-        self.route("/tileserver/update_where", methods=["POST"])(self.update_where)
-        self.route("/tileserver/change_secondary_cmap/<type_id>/<prop>/<cmap>")(
-            self.change_secondary_cmap
+        self.route("/tileserver/update_renderer/<prop>/<val>", methods=["PUT"])(
+            self.update_renderer
         )
+        self.route("/tileserver/update_where", methods=["POST"])(self.update_where)
+        self.route(
+            "/tileserver/change_secondary_cmap/<type_id>/<prop>/<cmap>", methods=["PUT"]
+        )(self.change_secondary_cmap)
         self.route("/tileserver/get_prop_names")(self.get_properties)
         self.route("/tileserver/get_prop_values/<prop>")(self.get_property_values)
         self.route("/tileserver/reset")(self.reset)
