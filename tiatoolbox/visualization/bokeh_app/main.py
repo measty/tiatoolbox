@@ -82,6 +82,10 @@ else:
     host2 = "127.0.0.1"
     port = "5000"
 
+class DummyAttr:
+    def __init__(self, val):
+        self.item = val
+
 # Define helper functions
 
 
@@ -391,7 +395,11 @@ def add_layer(lname):
             sizing_mode="stretch_width",
         )
     )
-    if lname in ["edges", "nodes"]:
+    if lname == "nodes":
+        box_column.children[-1].active = (
+            p.renderers[vstate.layer_dict[lname]].glyph.line_alpha > 0
+        )
+    if lname == "edges":
         box_column.children[-1].active = p.renderers[vstate.layer_dict[lname]].visible
     box_column.children[-1].on_click(
         bind_cb_obj_tog(box_column.children[-1], fixed_layer_select_cb)
@@ -433,6 +441,8 @@ tg = TileGroup()
 def change_tiles(layer_name="overlay"):
 
     grp = tg.get_grp()
+    #if grp == 7:
+        #import pdb; pdb.set_trace()
 
     if layer_name == "graph" and layer_name not in vstate.layer_dict.keys():
 
@@ -466,12 +476,14 @@ def change_tiles(layer_name="overlay"):
             if layer_key in ["rect", "pts", "nodes", "edges"]:
                 continue
             grp = tg.get_grp()
+            #if grp == 7:
+            #    import pdb; pdb.set_trace()
             ts = make_ts(
                 f"http://{host}:{port}/tileserver/layer/{layer_key}/{user}/zoomify/TileGroup{grp}"
                 + r"/{z}-{x}-{y}"
                 + f"@{vstate.res}x.jpg",
             )
-            p.renderers[vstate.layer_dict[layer_key]].tile_source = ts
+            #p.renderers[vstate.layer_dict[layer_key]].tile_source = ts
         vstate.layer_dict[layer_name] = len(p.renderers) - 1
 
     print(vstate.layer_dict)
@@ -640,14 +652,14 @@ print(f"cookies are: {resp.cookies}")
 cookies = resp.cookies
 user = resp.cookies.get("user")
 
-ts1 = make_ts(
+ts = make_ts(
     f"http://{host}:{port}/tileserver/layer/slide/{user}/zoomify/TileGroup1"
     + r"/{z}-{x}-{y}"
     + f"@{vstate.res}x.jpg",
 )
 print(p.renderers)
 print(p.y_range)
-p.add_tile(ts1, smoothing=True, level="image", render_parents=False)
+p.add_tile(ts, smoothing=True, level="image", render_parents=False)
 print(p.y_range)
 print(f"max zoom is: {p.renderers[0].tile_source.max_zoom}")
 
@@ -669,6 +681,7 @@ edge_source = ColumnDataSource({"x0_": [], "y0_": [], "x1_": [], "y1_": []})
 vstate.graph_node = Circle(x="x_", y="y_", fill_color="node_color_", size=5)
 vstate.graph_edge = Segment(x0="x0_", y0="y0_", x1="x1_", y1="y1_")
 p.add_glyph(node_source, vstate.graph_node)
+set_alpha_glyph(p.renderers[-1].glyph, 0.0)
 p.add_glyph(edge_source, vstate.graph_edge)
 p.renderers[-1].visible = False
 vstate.layer_dict["nodes"] = len(p.renderers) - 2
@@ -714,7 +727,7 @@ edge_size_spinner = Spinner(
     low=0,
     high=10,
     step=1,
-    value=1,
+    value=0,
     width=60,
     # max_width=60,
     height=50,
@@ -1110,6 +1123,12 @@ def slide_select_cb(attr, old, new):
     # p.x_range.bounds=MinMaxBounds(0,vstate.dims[0])
     # p.y_range.bounds=(0,-vstate.dims[1])
 
+    # load the overlay and graph automatically for demo purposes
+    dummy_attr = DummyAttr(overlay_folder / slide_path.with_suffix(".db").name)
+    layer_drop_cb(dummy_attr)
+    dummy_attr = DummyAttr(overlay_folder / slide_path.with_suffix(".pkl").name)
+    layer_drop_cb(dummy_attr)
+    cprop_input_cb(None, None, ['score'])
 
 def layer_drop_cb(attr):
     """setup the newly chosen overlay"""
@@ -1545,17 +1564,17 @@ ui_layout = column(
         layer_drop,
         row([slide_toggle, slide_alpha], sizing_mode="stretch_width"),
         row([overlay_toggle, overlay_alpha], sizing_mode="stretch_width"),
-        filter_input,
+        #filter_input,
         cprop_input,
         row(
             [cmap_select, scale_spinner, blur_spinner],
             sizing_mode="stretch_width",
         ),
-        type_cmap_select,
-        row([to_model_button, model_drop, save_button], sizing_mode="stretch_width"),
+        #type_cmap_select,
+        #row([to_model_button, model_drop, save_button], sizing_mode="stretch_width"),
         row(children=[box_column, color_column], sizing_mode="stretch_width"),
         p_hist,
-        p_bar,
+        #p_bar,
     ],
     sizing_mode="stretch_width",
 )

@@ -76,7 +76,7 @@ class TileServer(Flask):
             self.renderer = AnnotationRenderer(
                 score_prop="type",
                 thickness=-1,
-                edge_thickness=1,
+                edge_thickness=0,
                 zoomed_out_strat="scale",
                 max_scale=8,
                 blur_radius=0,
@@ -550,6 +550,7 @@ class TileServer(Flask):
     def get_property_values(self, prop, where=None):
         """Get all the values of a property in the store."""
         user = self._get_user()
+        prop = prop.replace('\n', '\\n')
         if where == "None":
             where = None
         if where is not None:
