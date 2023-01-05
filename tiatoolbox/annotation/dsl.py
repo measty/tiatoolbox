@@ -260,12 +260,10 @@ class SQLFuncHandler(SQLExpression):
         joiner = "." if self.func and not isinstance(key, int) else ""
         return SQLFuncHandler(func=self.func + joiner + f"{key_str}")
 
-    def __call__(self, key: str) -> "SQLFuncHandler":
-        if isinstance(key, (int,)):
-            key_str = f"[{key}]"
-        else:
-            key_str = str(key)
-        return SQLFuncHandler(func=self.func + "(" + f"{key_str}" + ")")
+    def __call__(self, *args) -> "SQLFuncHandler":
+        args = (str(arg) for arg in args)
+        arg_str = ", ".join(args)
+        return SQLFuncHandler(func=self.func + "(" + f"{arg_str}" + ")")
 
     def get(self, key, default=None):
         return SQLTriplet(self[key], "if_null", default or SQLNone())
