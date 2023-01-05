@@ -6,6 +6,7 @@ from shapely.geometry import Point, Polygon, LineString
 from pathlib import Path
 from typing import List, Dict, Tuple, Union
 import pickle
+from tiatoolbox.utils.misc import store_from_dat, add_from_dat
 
 """set of example code snippets for creating an AnnotationStore from model outputs
 in a variety of scenarios, and for manipulating Annotation stores for example to add
@@ -74,7 +75,7 @@ SQ1.dump('path/to/annotations.db')
 dat_path = Path('path/to/annotations.dat')
 # use scale factor to rescale annotations to baseline res
 # if annotations have been saved at some other resolution 
-SQ2 = SQLiteStore.from_dat(dat_path, scale_factor = 2)  
+SQ2 = store_from_dat(dat_path, scale_factor = 2)  
 SQ2.dump('path/to/annotations.db')
 
 
@@ -105,9 +106,11 @@ and associated node properties
 graph_dict = {  'edge_index': '2 x n_edges array of indices of pairs of connected nodes', 
 		'coordinates': 'n x 2 array of x,y coordinates for each graph node',  
 		'score': 'n x 1 array of scores for each graph node. Nodes will be coloured by this',   
-        'prop1': 'n x 1 array of properties for each graph node',  
+        'feats': 'n x n_feats array of properties for each graph node', 
+        'feat_names': 'list of names for each feature in feats array',
         ...  # other instances  
         }
+# will be able to colour by feats in the feats array
         
 #save it as a pickle file:
 with open('path/to/graph.pkl', 'wb') as f:
@@ -158,5 +161,8 @@ query_geom = Polygon.from_bounds(top_left[0], top_left[1], top_left[0] + tile_si
 SQ2 = SQLiteStore()
 tile_anns = SQ1.query(query_geom)
 SQ2.append_many(tile_anns.values(), tile_anns.keys())
-SQ2.translate_db(-top_left[0], -top_left[1]) #translate so coordinates relative to top left of tile
+def translate_geom(geom):
+    return geom.translate(-top_left[0], -top_left[1])
+
+SQ2.transform(translate_geom) #translate so coordinates relative to top left of tile
 SQ2.dump('path/to/tile_annotations.db')

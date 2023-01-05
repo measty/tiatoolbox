@@ -2,21 +2,35 @@
 import colorsys
 import random
 import warnings
-from typing import Callable, Dict, List, Optional, Tuple, Union
+import zlib
+from ctypes import c_char_p, c_size_t
+from typing import Dict, List, Tuple, Union
 
 import cv2
 import matplotlib as mpl
 import matplotlib.pyplot as plt
-from matplotlib import cm
 import numpy as np
-import warnings
-from shapely.affinity import affine_transform
+from matplotlib import cm
 from numpy.typing import ArrayLike
-from PIL import ImageFilter
+from PIL import Image, ImageFilter, ImageOps
+from shapely import speedups
+from shapely.geometry import Polygon
+from shapely.geos import WKBReader, lgeos
 
-from tiatoolbox.annotation.storage import Annotation, Geometry
+from tiatoolbox.annotation.storage import Annotation, AnnotationStore
 
-from tiatoolbox.annotation.storage import Annotation
+if speedups.available:  # pragma: no branch
+    speedups.enable()
+
+GEOMTYPES = {
+    1: "Point",
+    2: "LineString",
+    3: "Polygon",
+    4: "MultiPoint",
+    5: "MultiLineString",
+    6: "MultiPolygon",
+    7: "GeometryCollection",
+}
 
 
 def random_colors(num_colors, bright=True):
@@ -172,7 +186,7 @@ def overlay_prediction_mask(
     ax.imshow(overlay)
     ax.axis("off")
     # Generate colour bar
-    cbar = plt.colorbar(**colorbar_params)
+    cbar = plt.colorbar(**colorbar_params, ax=ax)
     cbar.ax.set_yticklabels(name_list)
     cbar.ax.tick_params(labelsize=12)
 
@@ -302,7 +316,7 @@ def overlay_probability_map(
     ax.imshow(overlay)
     ax.axis("off")
     # generate colour bar
-    cbar = plt.colorbar(**colorbar_params)
+    cbar = plt.colorbar(**colorbar_params, ax=ax)
     cbar.ax.tick_params(labelsize=12)
 
     return ax
@@ -390,7 +404,7 @@ def overlay_prediction_contours(
         inst_colours (tuple, np.ndarray):
             A colour to assign for all instances, or a list of colours
             to assigned for each instance in `inst_dict`. By default,
-            all instances will have RGB colour `(255, 255, 0).
+            all instances will have RGB colour `(255, 255, 0)`.
         line_thickness:
             Line thickness of contours.
 
@@ -399,7 +413,7 @@ def overlay_prediction_contours(
             The overlaid image.
 
     """
-    overlay = np.copy((canvas))
+    overlay = np.copy(canvas)
 
     if inst_colours is None:
         inst_colours = random_colors(len(inst_dict))
@@ -463,7 +477,7 @@ def plot_graph(
         node_size (int):
             Radius of each node.
         edge_size (int):
-            Linewidth of the edge.
+            Line width of the edge.
 
     """
     if isinstance(node_colors, tuple):
@@ -525,12 +539,24 @@ class AnnotationRenderer:
     max_scale (int):
         downsample level above which Polygon geometries on crowded
         tiles will be rendered as a bounding box instead
-    zoomed_out_strat: strategy to use when rendering zoomed out tiles at
-        a level above max_scale.  Can be one of 'decimate', or a number
+    zoomed_out_strat (int, str):
+        strategy to use when rendering zoomed out tiles at
+        a level above max_scale.  Can be one of 'decimate', 'scale', or a number
         which defines the minimum area an abject has to cover to be rendered
         while zoomed out above max_scale.
-    thickness: line thickness of rendered contours. -1 will render filled
-    contours
+    thickness (int):
+        line thickness of rendered contours. -1 will render filled
+        contours.
+    edge_thickness (int):
+        line thickness of rendered edges.
+    secondary_cmap (dict [str, str, cmap])):
+        a dictionary of the form {"type": some_type,
+        "score_prop": a property name, "mapper": a matplotlib cmap object}.
+        For annotations of the specified type, the given secondary colormap
+        will override the primary colormap.
+    blur_radius (int):
+        radius of gaussian blur to apply to rendered annotations.
+
     """
 
     def __init__(
@@ -545,7 +571,7 @@ class AnnotationRenderer:
         edge_thickness=1,
         secondary_cmap=None,
         blur_radius=0,
-        score_prop_edge = None,
+        score_prop_edge=None,
     ):
         if mapper is None:
             mapper = cm.get_cmap("jet")
@@ -559,10 +585,11 @@ class AnnotationRenderer:
         else:
             self.mapper = mapper
         self.score_prop = score_prop
-        self.score_prop_edge = score_prop_edge  
+        self.score_prop_edge = score_prop_edge
         self.where = where
         self.score_fn = score_fn
         self.max_scale = max_scale
+        self.info = {"mpp": None}
         self.thickness = thickness
         self.edge_thickness = edge_thickness
         self.zoomed_out_strat = zoomed_out_strat
@@ -575,23 +602,83 @@ class AnnotationRenderer:
             self.blur = None
 
     @staticmethod
-    def to_tile_coords(coords: List, top_left: Tuple[float, float], scale: int):
+    def decode_geom(geom, type):
+        """Decode a geometry from the raw wkb bytes representation
+        to an array of coordinates.
+        Args:
+            geom (bytes):
+                The raw wkb bytes representation of a geometry.
+            type (str):
+                The type of geometry.
+        Returns:
+            np.array:
+                An array of coordinates.
+
+        """
+        if type == 1:
+            # point
+            return np.frombuffer(geom, np.double, -1, 5)
+        elif type == 2:
+            # line
+            return np.frombuffer(geom, np.double, -1, 9)
+        elif type == 3:
+            # polygon
+            n_points = np.frombuffer(geom, np.int32, 1, 9)[0]
+            return np.frombuffer(geom, np.double, n_points * 2, 13)  # do rings?
+        elif type == 4:
+            # multipoint - fix this
+            n_points = np.frombuffer(geom, np.int32, 1, 5)[0]
+            return np.frombuffer(geom, np.double, -1, 9).reshape(n_points, 2)
+        elif type == 5:
+            # multiline
+            n_lines = np.frombuffer(geom, np.int32, 1, 5)[0]
+            lines = []
+            offset = 9
+            for i in range(n_lines):
+                offset += 5
+                n_points = np.frombuffer(geom, np.int32, n_lines, offset)[0]
+                offset += 4
+                lines.append(np.frombuffer(geom, np.double, n_points * 2, offset))
+                offset += n_points * 16
+            return np.concatenate(lines)
+        elif type == 6:
+            # multipolygon
+            n_polygons = np.frombuffer(geom, np.int32, 1, 5)[0]
+            polygons = []
+            offset = 9
+            for i in range(n_polygons):
+                offset += 5  # byte order and geom type at start of each polygon
+                n_rings = np.frombuffer(geom, np.int32, 1, offset)[0]
+                offset += 4
+
+                rings = []
+                for j in range(n_rings):
+                    n_points = np.frombuffer(geom, np.int32, 1, offset)[0]
+                    offset += 4
+                    rings.append(np.frombuffer(geom, np.double, n_points * 2, offset))
+                    offset += n_points * 16
+                polygons.append(rings)
+            return polygons
+
+    @staticmethod
+    def to_tile_coords(coords: List, top_left: Tuple[float, float], scale: float):
         """Return coords relative to top left of tile, as array suitable for cv2.
         Args:
             coords (List):
                 List of coordinates in the form [x, y].
             top_left (tuple):
                 The top left corner of the tile in wsi.
-            scale (int):
+            scale (float):
                 The zoom scale at which we are rendering.
         Returns:
             np.array:
                 Array of coordinates in tile space in the form [x, y].
 
         """
-        return np.squeeze(((np.array(coords) - top_left) / scale).astype(np.int32))
+        # return np.squeeze(((np.array(coords) - top_left) / scale).astype(np.int32))
+        return ((np.reshape(coords, (-1, 2)) - top_left) / scale).astype(np.int32)
 
-    def get_color(self, annotation: Annotation):
+    def get_color(self, annotation: Annotation, edge=False):
         """Get the color for an annotation.
         Args:
             annotation (Annotation):
@@ -601,24 +688,17 @@ class AnnotationRenderer:
                 A color tuple (rgba).
 
         """
-        if self.score_prop == "color":
-            # use colors directly specified in annotation properties
-            # print(ann)
-            # ann.properties['color'].append(1)
-            try:
-                return (*[int(255 * c) for c in annotation.properties["color"]], 255)
-            except KeyError:
-                warnings.warn(
-                    "score_prop not found in annotation properties. Using default color."
-                )
-        elif (
-            self.secondary_cmap is not None
-            and "type" in annotation.properties.keys()
-            and annotation.properties["type"] == self.secondary_cmap["type"]
-        ):
-            # use secondary cmap to color annotations of specific type
-            # print(f'using: {self.secondary_cmap}')
-            try:
+        if edge:
+            score_prop = self.score_prop_edge
+        else:
+            score_prop = self.score_prop
+        try:
+            if (
+                self.secondary_cmap is not None
+                and "type" in annotation.properties
+                and annotation.properties["type"] == self.secondary_cmap["type"]
+            ):
+                # use secondary colormap to color annotations of specific type
                 return tuple(
                     int(c * 255)
                     for c in self.secondary_cmap["mapper"](
@@ -627,23 +707,21 @@ class AnnotationRenderer:
                         )
                     )
                 )
-            except KeyError:
-                warnings.warn(
-                    "score_prop not found in annotation properties. Using default color."
-                )
-        elif self.score_prop is not None:
-            try:
+            if score_prop == "color":
+                # use colors directly specified in annotation properties
+                return (*[int(255 * c) for c in annotation.properties["color"]], 255)
+            if score_prop is not None:
                 return tuple(
                     int(c * 255)
                     for c in self.mapper(
-                        self.score_fn(annotation.properties[self.score_prop])
+                        self.score_fn(annotation.properties[score_prop])
                     )
                 )
-            except KeyError:
-                warnings.warn(
-                    "score_prop not found in annotation properties. Using default color."
-                )
-        return (0, 255, 0, 255)  # default color if no score_prop given
+        except KeyError:
+            warnings.warn("score_prop not found in properties. Using default color.")
+        if edge:
+            return (0, 0, 0, 255)  # default to black for edge
+        return 0, 255, 0, 255  # default color if no score_prop given
 
     def get_color_edge(self, annotation):
         """get the color for an annotation"""
@@ -677,7 +755,7 @@ class AnnotationRenderer:
         tile: np.ndarray,
         annotation: Annotation,
         top_left: Tuple[float, float],
-        scale: int,
+        scale: float,
     ):
         """Render a polygon annotation onto a tile using cv2.
         Args:
@@ -687,13 +765,15 @@ class AnnotationRenderer:
                 The annotation to render.
             top_left (tuple):
                 The top left corner of the tile in wsi.
-            scale (int):
+            scale (float):
                 The zoom scale at which we are rendering.
 
         """
         col = self.get_color(annotation)
 
-        cnt = self.to_tile_coords(annotation.geometry.exterior.coords, top_left, scale)
+        cnt = self.to_tile_coords(
+            self.decode_geom(annotation.geometry, 3), top_left, scale
+        )
         if self.thickness > -1:
             cv2.drawContours(
                 tile, [cnt], 0, col, self.edge_thickness, lineType=cv2.LINE_8
@@ -701,48 +781,23 @@ class AnnotationRenderer:
         else:
             cv2.drawContours(tile, [cnt], 0, col, self.thickness, lineType=cv2.LINE_8)
         if self.thickness == -1 and self.edge_thickness > 0:
-            edge_col = self.get_color_edge(annotation)
+            edge_col = self.get_color(annotation, True)
             cv2.drawContours(tile, [cnt], 0, edge_col, 1, lineType=cv2.LINE_8)
 
     def render_multipoly(self, tile, annotation, top_left, scale):
         """render a multipolygon annotation onto a tile using cv2"""
         col = self.get_color(annotation)
-
-        for poly in annotation.geometry.geoms:
-            cnt = self.to_tile_coords(poly.exterior.coords, top_left, scale)
+        geoms = self.decode_geom(annotation.geometry, 6)
+        for poly in geoms:
+            cnt = self.to_tile_coords(poly, top_left, scale)
             cv2.drawContours(tile, [cnt], 0, col, self.thickness, lineType=cv2.LINE_8)
-
-    def render_rect(
-        self,
-        tile: np.ndarray,
-        annotation: Annotation,
-        top_left: Tuple[float, float],
-        scale: int,
-    ):
-        """Render a box annotation onto a tile using cv2.
-        Args:
-            tile (ndarray):
-                The rgb(a) tile image to render onto.
-            annotation (Annotation):
-                The annotation to render.
-            top_left (tuple):
-                The top left corner of the tile in wsi.
-            scale (int):
-                The zoom scale at which we are rendering.
-
-        """
-        col = self.get_color(annotation)
-        box = self.to_tile_coords(
-            np.reshape(annotation.geometry.bounds, (2, 2)), top_left, scale
-        )
-        cv2.rectangle(tile, box[0, :], box[1, :], col, thickness=-1)
 
     def render_pt(
         self,
         tile: np.ndarray,
         annotation: Annotation,
         top_left: Tuple[float, float],
-        scale: int,
+        scale: float,
     ):
         """Render a point annotation onto a tile using cv2.
         Args:
@@ -752,14 +807,16 @@ class AnnotationRenderer:
                 The annotation to render.
             top_left (tuple):
                 The top left corner of the tile in wsi.
-            scale (int):
+            scale (float):
                 The zoom scale at which we are rendering.
 
         """
         col = self.get_color(annotation)
         cv2.circle(
             tile,
-            self.to_tile_coords(list(annotation.geometry.coords), top_left, scale),
+            self.to_tile_coords(
+                self.decode_geom(annotation.geometry, 1), top_left, scale
+            )[0],
             np.maximum(self.edge_thickness, 1),
             col,
             thickness=self.thickness,
@@ -770,24 +827,28 @@ class AnnotationRenderer:
         tile: np.ndarray,
         annotation: Annotation,
         top_left: Tuple[float, float],
-        scale: int,
+        scale: float,
     ):
         """Render a line annotation onto a tile using cv2.
         Args:
             tile (ndarray):
                 The rgb(a) tile image to render onto.
-            annontation (Annotation):
+            annotation (Annotation):
                 The annotation to render.
             top_left (tuple):
                 The top left corner of the tile in wsi.
-            scale (int):
+            scale (float):
                 The zoom scale at which we are rendering.
 
         """
         col = self.get_color(annotation)
         cv2.polylines(
             tile,
-            [self.to_tile_coords(list(annotation.geometry.coords), top_left, scale)],
+            [
+                self.to_tile_coords(
+                    list(self.decode_geom(annotation.geometry, 2)), top_left, scale
+                )
+            ],
             False,
             col,
             thickness=3,
@@ -805,5 +866,124 @@ class AnnotationRenderer:
         elif __name == "edge_thickness":
             self.__dict__["edge_thickness_old"] = __value
 
-        # super().__setattr__(__name, __value)"""
         self.__dict__[__name] = __value
+
+    def render_annotations(
+        self,
+        store: AnnotationStore,
+        bounds: Tuple[float, float, float, float],
+        scale: float,
+        res: int = 1,
+        border: int = 0,
+    ):
+        """Render annotations within given bounds.
+
+        This gets annotations as bounding boxes or geometries according to
+        zoom level, and renders them. Large collections of small
+        annotation geometries are decimated if appropriate.
+
+        Args:
+            rgb (np.ndarray):
+                The image to render the annotation on.
+            bound_geom (Polygon):
+                A polygon representing the bounding box of the tile.
+            scale (float):
+                The scale at which we are rendering the tile.
+        Returns:
+            np.ndarray:
+                The tile with the annotations rendered.
+
+        """
+        bound_geom = Polygon.from_bounds(*bounds)
+        top_left = np.array(bounds[:2])
+        output_size = [
+            int((bounds[3] - bounds[1]) / scale),
+            int((bounds[2] - bounds[0]) / scale),
+        ]
+
+        mpp_sf = (
+            np.minimum(self.info["mpp"][0] / 0.25, 1)
+            if self.info["mpp"] is not None
+            else 1
+        )
+        min_area = 0.0003 * (output_size[0] * output_size[1]) * (scale * mpp_sf) ** 2
+
+        tile = np.zeros((output_size[0] * res, output_size[1] * res, 4), dtype=np.uint8)
+
+        if scale <= self.max_scale:
+            # get all annotations
+            anns = store.query(
+                bound_geom,
+                self.where,
+                geometry_predicate="bbox_intersects",
+                as_raw=True,
+            )
+
+            for ann in anns.values():
+                self.render_by_type(tile, ann, top_left, scale / res)
+
+        elif self.zoomed_out_strat == "decimate":
+            # do decimation on small annotations
+            decimate = int(scale / self.max_scale) + 1
+
+            bounding_boxes = store.bquery(
+                bound_geom,
+                self.where,
+            )
+
+            for i, (key, box) in enumerate(bounding_boxes.items()):
+                area = (box[0] - box[2]) * (box[1] - box[3])
+                if area > min_area or i % decimate == 0:
+                    ann = store.__getitem__(key, as_raw=True)
+                    self.render_by_type(tile, ann, top_left, scale / res)
+        else:
+            # Get only annotations > min_area. Plot them all
+            anns = store.query(
+                bound_geom,
+                self.where,
+                min_area=min_area,
+                geometry_predicate="bbox_intersects",
+                as_raw=True,
+            )
+
+            for ann in anns.values():
+                self.render_by_type(tile, ann, top_left, scale / res)
+
+        if self.blur is None:
+            return tile
+        return np.array(
+            ImageOps.crop(Image.fromarray(tile).filter(self.blur), border * res)
+        )
+
+    def render_by_type(
+        self,
+        tile: np.ndarray,
+        annotation: Annotation,
+        top_left: Tuple[float, float],
+        scale: float,
+    ):
+        """Render annotation appropriately to its geometry type.
+
+        Args:
+            tile (np.ndarray):
+                The rgb(a) tile image to render the annotation on.
+            annotation (Annotation):
+                The annotation to render.
+            top_left (Tuple[int, int]):
+                The top left coordinate of the tile.
+            scale (float):
+                The scale at which we are rendering the tile.
+
+        """
+
+        geom_type = GEOMTYPES[np.frombuffer(annotation.geometry, np.uint32, 1, 1)[0]]
+        if geom_type == "Point":
+            self.render_pt(tile, annotation, top_left, scale)
+        elif geom_type == "Polygon":
+            self.render_poly(tile, annotation, top_left, scale)
+        elif geom_type == "MultiPolygon":
+            self.render_multipoly(tile, annotation, top_left, scale)
+        elif geom_type == "LineString":
+            self.render_line(tile, annotation, top_left, scale)
+        else:
+            warnings.warn(f"Unknown geometry: {geom_type}")

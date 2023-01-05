@@ -10,6 +10,37 @@ from _pytest.tmpdir import TempPathFactory
 
 from tiatoolbox.data import _fetch_remote_sample
 
+# -------------------------------------------------------------------------------------
+# Generate Parameterized Tests
+# -------------------------------------------------------------------------------------
+
+
+def pytest_generate_tests(metafunc):
+    """Generate (parameterize) test scenarios.
+
+    Adapted from pytest documentation. For more information on
+    parameterized tests see:
+    https://docs.pytest.org/en/6.2.x/example/parametrize.html#a-quick-port-of-testscenarios
+
+    """
+    # Return if the test is not part of a class or if the class does not
+    # have a scenarios attribute.
+    if metafunc.cls is None or not hasattr(metafunc.cls, "scenarios"):
+        return
+    idlist = []
+    argvalues = []
+    for scenario in metafunc.cls.scenarios:
+        idlist.append(scenario[0])
+        items = scenario[1].items()
+        argnames = [x[0] for x in items]
+        argvalues.append([x[1] for x in items])
+    metafunc.parametrize(argnames, argvalues, ids=idlist, scope="class")
+
+
+# -------------------------------------------------------------------------------------
+# Fixtures
+# -------------------------------------------------------------------------------------
+
 
 @pytest.fixture(scope="session")
 def root_path(request) -> Path:
@@ -375,3 +406,49 @@ def sample_wsi_dict(remote_sample):
         "wsi4_4k_4k_pred",
     ]
     return {name: remote_sample(name) for name in file_names}
+
+
+@pytest.fixture(scope="session")
+def fixed_image(remote_sample) -> pathlib.Path:
+    """Sample pytest fixture for fixed image.
+
+    Download fixed image for pytest.
+    """
+    return remote_sample("fixed_image")
+
+
+@pytest.fixture(scope="session")
+def moving_image(remote_sample) -> pathlib.Path:
+    """Sample pytest fixture for moving image.
+
+    Download moving image for pytest.
+    """
+    return remote_sample("moving_image")
+
+
+@pytest.fixture(scope="session")
+def dfbr_features(remote_sample) -> pathlib.Path:
+    """Sample pytest fixture for DFBR features.
+
+    Download features used by Deep Feature Based
+    Registration (DFBR) method for pytest.
+    """
+    return remote_sample("dfbr_features")
+
+
+@pytest.fixture(scope="session")
+def fixed_mask(remote_sample) -> pathlib.Path:
+    """Sample pytest fixture for fixed mask.
+
+    Download fixed mask for pytest.
+    """
+    return remote_sample("fixed_mask")
+
+
+@pytest.fixture(scope="session")
+def moving_mask(remote_sample) -> pathlib.Path:
+    """Sample pytest fixture for moving mask.
+
+    Download moving mask for pytest.
+    """
+    return remote_sample("moving_mask")
