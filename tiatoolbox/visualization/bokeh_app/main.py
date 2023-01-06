@@ -69,7 +69,7 @@ from tiatoolbox.visualization.tileserver import TileServer
 from tiatoolbox.visualization.ui_utils import get_level_by_extent
 from tiatoolbox.wsicore.wsireader import WSIReader
 
-is_deployed = False
+is_deployed = True
 rand_id = token.generate_session_id()
 print(f"rand id is: {rand_id}")
 
@@ -82,9 +82,11 @@ else:
     host2 = "127.0.0.1"
     port = "5000"
 
+
 class DummyAttr:
     def __init__(self, val):
         self.item = val
+
 
 # Define helper functions
 
@@ -391,7 +393,7 @@ def add_layer(lname):
             active=True,
             width=130,
             height=40,
-            max_width=130,
+            max_width=160,
             sizing_mode="stretch_width",
         )
     )
@@ -413,7 +415,7 @@ def add_layer(lname):
             title=lname,
             height=40,
             width=100,
-            max_width=90,
+            max_width=190,
             sizing_mode="stretch_width",
             name=f"{lname}_slider",
         )
@@ -441,8 +443,8 @@ tg = TileGroup()
 def change_tiles(layer_name="overlay"):
 
     grp = tg.get_grp()
-    #if grp == 7:
-        #import pdb; pdb.set_trace()
+    # if grp == 7:
+    # import pdb; pdb.set_trace()
 
     if layer_name == "graph" and layer_name not in vstate.layer_dict.keys():
 
@@ -476,14 +478,14 @@ def change_tiles(layer_name="overlay"):
             if layer_key in ["rect", "pts", "nodes", "edges"]:
                 continue
             grp = tg.get_grp()
-            #if grp == 7:
+            # if grp == 7:
             #    import pdb; pdb.set_trace()
             ts = make_ts(
                 f"http://{host}:{port}/tileserver/layer/{layer_key}/{user}/zoomify/TileGroup{grp}"
                 + r"/{z}-{x}-{y}"
                 + f"@{vstate.res}x.jpg",
             )
-            #p.renderers[vstate.layer_dict[layer_key]].tile_source = ts
+            # p.renderers[vstate.layer_dict[layer_key]].tile_source = ts
         vstate.layer_dict[layer_name] = len(p.renderers) - 1
 
     print(vstate.layer_dict)
@@ -579,15 +581,16 @@ vstate.micron_formatter = FuncTickFormatter(
 do_feats = False
 
 p_hist = figure(
-    width=280,
-    height=160,
+    width=400,
+    height=190,
     x_range=(-0.025, 1.025),
     y_range=(0, 1),
     # sizing_mode="scale_both",
     toolbar_location=None,
+    title="Mesogram",
 )
 line_ds = ColumnDataSource(data=dict(x=np.linspace(0, 1, 100), y=np.zeros(100)))
-p_hist.line(x="x", y="y", source=line_ds)
+p_hist.line(x="x", y="y", source=line_ds, line_width=3)
 
 p_bar = figure(
     width=280,
@@ -615,7 +618,7 @@ p = figure(
     y_range=(0, -vstate.dims[1]),
     x_axis_type="linear",
     y_axis_type="linear",
-    width=1700,
+    width=1500,
     height=1000,
     # max_width=1700,
     # max_height=1000,
@@ -1128,7 +1131,8 @@ def slide_select_cb(attr, old, new):
     layer_drop_cb(dummy_attr)
     dummy_attr = DummyAttr(overlay_folder / slide_path.with_suffix(".pkl").name)
     layer_drop_cb(dummy_attr)
-    cprop_input_cb(None, None, ['score'])
+    cprop_input_cb(None, None, ["score"])
+
 
 def layer_drop_cb(attr):
     """setup the newly chosen overlay"""
@@ -1552,7 +1556,7 @@ options_check.on_change("active", options_check_cb)
 populate_slide_list(slide_folder)
 populate_layer_list(Path(vstate.slide_path).stem, overlay_folder)
 
-box_column = column(children=layer_boxes)
+box_column = column(children=layer_boxes, sizing_mode="stretch_width")
 color_column = column(children=lcolors, sizing_mode="stretch_width")
 
 # open up first slide in list
@@ -1564,17 +1568,14 @@ ui_layout = column(
         layer_drop,
         row([slide_toggle, slide_alpha], sizing_mode="stretch_width"),
         row([overlay_toggle, overlay_alpha], sizing_mode="stretch_width"),
-        #filter_input,
+        # filter_input,
         cprop_input,
-        row(
-            [cmap_select, scale_spinner, blur_spinner],
-            sizing_mode="stretch_width",
-        ),
-        #type_cmap_select,
-        #row([to_model_button, model_drop, save_button], sizing_mode="stretch_width"),
+        cmap_select,
+        # type_cmap_select,
+        # row([to_model_button, model_drop, save_button], sizing_mode="stretch_width"),
         row(children=[box_column, color_column], sizing_mode="stretch_width"),
         p_hist,
-        #p_bar,
+        # p_bar,
     ],
     sizing_mode="stretch_width",
 )
@@ -1587,6 +1588,7 @@ control_tabs = Tabs(
         TabPanel(child=extra_options, title="More Opts"),
     ],
     name="ui_layout",
+    sizing_mode="stretch_width",
 )
 
 
