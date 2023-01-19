@@ -107,6 +107,17 @@ def make_ts(route):
     return ts
 
 
+def to_num(x):
+    """helper to convert a str representation of a number ot an appropriate
+    numerical value."""
+    if x == "None":
+        return None
+    try:
+        return int(x)
+    except:
+        return float(x)
+
+
 def to_float_rgb(rgb):
     """Helper to convert from int to float rgb(a) tuple"""
     return tuple(v / 255 for v in rgb)
@@ -355,7 +366,7 @@ def initialise_overlay():
             except KeyError:
                 color_column.children.append(
                     ColorPicker(
-                        color=to_int_rgb(vstate.mapper[int(t)][0:3]),
+                        color=to_int_rgb(vstate.mapper[to_num(t)][0:3]),
                         name=str(t),
                         width=60,
                         height=30,
@@ -390,7 +401,11 @@ def add_layer(lname):
             sizing_mode="stretch_width",
         )
     )
-    if lname in ["edges", "nodes"]:
+    if lname == "nodes":
+        box_column.children[-1].active = (
+            p.renderers[vstate.layer_dict[lname]].glyph.line_alpha > 0
+        )
+    if lname == "edges":
         box_column.children[-1].active = p.renderers[vstate.layer_dict[lname]].visible
     box_column.children[-1].on_click(
         bind_cb_obj_tog(box_column.children[-1], fixed_layer_select_cb)
@@ -955,7 +970,7 @@ def cprop_input_cb(attr, old, new):
     else:
         cmap = get_mapper_for_prop(new[0])
     update_renderer("mapper", cmap)
-    s.get(f"http://{host2}:5000/tileserver/change_color_prop/{new[0]}")
+    s.put(f"http://{host2}:5000/tileserver/change_color_prop/{new[0]}")
     vstate.update_state = 1
 
 
