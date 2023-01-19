@@ -1608,6 +1608,25 @@ class SQLiteStore(AnnotationStore):
             self.con.commit()
         self.table_columns = self._get_table_columns()
 
+    def register_custom_aggregator(self, name: str, nargs: int, cls: Any) -> None:
+        """Register a custom SQLite function.
+
+        Only Python >= 3.8 supports deterministic functions,
+        fallback to without this argument if not available.
+
+        Args:
+            name:
+                The name of the function.
+            nargs:
+                The number of arguments the function takes.
+            fn:
+                The function to register.
+            deterministic:
+                Whether the function is deterministic.
+
+        """
+        self.con.create_aggregate(name, nargs, cls)
+
     def register_custom_function(
         self, name: str, nargs: int, fn: Callable, deterministic: bool = False
     ) -> None:
@@ -2052,6 +2071,66 @@ class SQLiteStore(AnnotationStore):
             )
             for key, properties, cx, cy, blob in cur.fetchall()
         }
+
+    def fquery(
+        self,
+        aggregator: Union[Callable, str],
+        geometry: Optional[QueryGeometry] = None,
+        where: Optional[Predicate] = None,
+        geometry_predicate: str = "intersects",
+        min_area=None,
+        as_raw: bool = False,
+        save_result_as_ann: bool = False,
+    ) -> Annotation:
+        query_geometry = geometry
+        if save_result_as_ann and query_geometry is None:
+            raise ValueError(
+                "Cannot save result as annotation without a query geometry."
+            )
+        if isinstance(aggregator, str):
+            columns = str(eval(aggregator, SQL_GLOBALS, {}))
+        else:
+            columns = "[key], properties, cx, cy, geometry"
+        cur = self._query(
+            columns=columns,
+            geometry=query_geometry,
+            geometry_predicate=geometry_predicate,
+            where=where,
+            min_area=min_area,
+        )
+        if isinstance(aggregator, str):
+            if isinstance(where, Callable):
+                raise ValueError("Cannot use `where` with `aggregator` as a string.")
+            result = Annotation(query_geometry, cur.fetchone()[0])
+            if save_result_as_ann:
+                self.append(result)
+            return result
+
+        if isinstance(where, Callable):
+            result = aggregator(
+                {
+                    key: Annotation(
+                        geometry=self._unpack_geometry(blob, cx, cy, as_raw=as_raw),
+                        properties=json.loads(properties),
+                    )
+                    for key, properties, cx, cy, blob in cur.fetchall()
+                    if where(json.loads(properties))
+                }
+            )
+        else:
+            result = aggregator(
+                {
+                    key: Annotation(
+                        geometry=self._unpack_geometry(blob, cx, cy, as_raw=as_raw),
+                        properties=json.loads(properties),
+                    )
+                    for key, properties, cx, cy, blob in cur.fetchall()
+                }
+            )
+        result = Annotation(query_geometry, result)
+        if save_result_as_ann:
+            self.append(result)
+        return result
 
     def bquery(
         self,
