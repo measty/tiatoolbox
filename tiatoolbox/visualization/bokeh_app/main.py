@@ -82,6 +82,15 @@ else:
     port = "5000"
 
 # Define helper functions
+def to_num(x):
+    """helper to convert a str representation of a number ot an appropriate
+    numerical value."""
+    if x == "None":
+        return None
+    try:
+        return int(x)
+    except:
+        return float(x)
 
 
 def make_ts(route):
@@ -355,7 +364,7 @@ def initialise_overlay():
             except KeyError:
                 color_column.children.append(
                     ColorPicker(
-                        color=to_int_rgb(vstate.mapper[int(t)][0:3]),
+                        color=to_int_rgb(vstate.mapper[to_num(t)][0:3]),
                         name=str(t),
                         width=60,
                         height=30,
