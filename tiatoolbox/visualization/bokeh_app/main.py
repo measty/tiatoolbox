@@ -850,6 +850,18 @@ opt_buttons = CheckboxButtonGroup(
 save_button = Button(
     label="Save", button_type="success", max_width=90, sizing_mode="stretch_width"
 )
+cmap_builder_input = MultiChoice(
+    title="Choose props and colors:",
+    max_items=10,
+    options=["*"],
+    search_option_limit=5000,
+    sizing_mode="stretch_width",
+    # max_width=300,
+)
+cmap_builder_button = Button(
+    label="Build Cmap", button_type="success", max_width=90, sizing_mode="stretch_width"
+)
+cmap_picker_column = column(children=[cmap_builder_button])
 
 
 # Define UI callbacks
@@ -970,6 +982,37 @@ def cprop_input_cb(attr, old, new):
     update_renderer("mapper", cmap)
     s.put(f"http://{host2}:5000/tileserver/change_color_prop/{new[0]}")
     vstate.update_state = 1
+
+
+def cmap_builder_cb(attr, old, new):
+    """add a property to the colormap and make a ColorPicker for it,
+    then add it to the cmap_picker_column. if new < old, remove the
+    ColorPicker wit the deselected property from the cmap_picker_column"""
+    if len(new) > len(old):
+        new_prop = set(new).difference(set(old))
+        new_prop = new_prop.pop()
+
+        color_picker = ColorPicker(
+            title=new_prop,
+            color=vstate.mapper[new_prop],
+            width=100,
+            height=50,
+            css_classes=["color_picker"],
+        )
+        color_picker.on_change("color", cmap_picker_cb)
+        cmap_picker_column.children.append(color_picker)
+    else:
+        old_prop = set(old).difference(set(new))
+        old_prop = old_prop.pop()
+        for i, cp in enumerate(cmap_picker_column.children):
+            if cp.title == old_prop:
+                cmap_picker_column.children.pop(i)
+                break
+
+
+def cmap_picker_cb(attr, old, new):
+    """update the colormap with the new color"""
+    prop = attr.obj.title
 
 
 def set_graph_alpha(g_renderer, value):

@@ -572,6 +572,7 @@ class AnnotationRenderer:
         secondary_cmap=None,
         blur_radius=0,
         score_prop_edge=None,
+        function_mapper=False,
     ):
         if mapper is None:
             mapper = cm.get_cmap("jet")
@@ -595,6 +596,7 @@ class AnnotationRenderer:
         self.zoomed_out_strat = zoomed_out_strat
         self.secondary_cmap = secondary_cmap
         self.blur_radius = blur_radius
+        self.function_mapper = function_mapper
         if blur_radius > 0:
             self.blur = ImageFilter.GaussianBlur(blur_radius)
             self.edge_thickness = 0
@@ -707,6 +709,8 @@ class AnnotationRenderer:
                         )
                     )
                 )
+            if self.function_mapper:
+                return self.multi_mapper(annotation.properties)
             if score_prop == "color":
                 # use colors directly specified in annotation properties
                 return (*[int(255 * c) for c in annotation.properties["color"]], 255)
