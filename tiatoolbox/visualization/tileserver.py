@@ -1,6 +1,4 @@
 """Simple Flask WSGI apps to display tiles as slippery maps."""
-from __future__ import annotations
-
 import ast
 import copy
 import io
@@ -8,6 +6,7 @@ import json
 import os
 import secrets
 import urllib
+from functools import partial
 from pathlib import Path
 from typing import Dict, List, Union
 
@@ -149,6 +148,9 @@ class TileServer(Flask):
         self.route(
             "/tileserver/change_secondary_cmap/<type_id>/<prop>/<cmap>", methods=["PUT"]
         )(self.change_secondary_cmap)
+        self.route("/tileserver/build_cmap/<mix_type>/<cmap>/<cdict>", methods=["PUT"])(
+            self.build_cmap
+        )
         self.route("/tileserver/get_prop_names")(self.get_properties)
         self.route("/tileserver/get_prop_values/<prop>")(self.get_property_values)
         self.route("/tileserver/reset")(self.reset)
@@ -375,8 +377,9 @@ class TileServer(Flask):
         for layer in self.tia_pyramids[user].values():
             if isinstance(layer, AnnotationTileGenerator):
                 if cmap == "None":
-                    cmap = None
+                    cmapp = None
                 layer.renderer.mapper = cmapp
+                layer.renderer.function_mapper = None
 
         return "done"
 
@@ -403,6 +406,56 @@ class TileServer(Flask):
                     cmapp = None
                 layer.renderer.secondary_cmap = cmap_dict
 
+        return "done"
+
+    def build_cmap(self, cmap, mix_type, cdict):
+        """build a color mapper function from a dictionary."""
+        user = self._get_user()
+        cdict = json.loads(cdict)
+        props_list = list(cdict.keys())
+        color_matrix = np.array([cdict[prop] for prop in props_list])
+
+        def mapper_fn(props, props_list, color_matrix, mix_type, cmap):
+            prop_vals = np.array([props[prop] for prop in props_list])
+            # prop_vals[prop_vals < 0.3] = 0
+            # prop_vals = prop_vals ** 3 * (np.sum(prop_vals) / np.sum(prop_vals ** 3))
+            if mix_type == "pow":
+                prop_vals = prop_vals**3 * (
+                    np.max(prop_vals) / (np.max(prop_vals**3) + 0.00001)
+                )
+            elif mix_type == "max":
+                prop_vals[prop_vals < np.max(prop_vals)] = 0
+            elif mix_type == "softm":
+                # calculate softmax
+                mv = np.max(prop_vals)
+                prop_vals = np.exp(prop_vals)
+                prop_vals = prop_vals / np.sum(prop_vals)
+                prop_vals = prop_vals * mv / np.max(prop_vals)
+            elif mix_type == "lin":
+                prop_vals[prop_vals < 0.1] = 0
+            # calculate weighted average
+            if mix_type in ["pow", "max", "lin", "softm"]:
+                color = np.matmul(prop_vals, color_matrix) * 255
+                if np.max(color) > 255:
+                    color = color * (255 / np.max(color))
+                # import pdb; pdb.set_trace()
+            elif mix_type == "avg":
+                color = np.array(cmap(np.mean(prop_vals))) * 255
+            else:
+                color = (
+                    np.array(cmap(np.prod(prop_vals))) * 255 * (1.15 ** len(prop_vals))
+                )
+            return (int(color[0]), int(color[1]), int(color[2]), 255)
+
+        mapper_fn = partial(
+            mapper_fn,
+            props_list=props_list,
+            color_matrix=color_matrix,
+            mix_type=mix_type,
+            cmap=cm.get_cmap(cmap),
+        )
+        # set renderer mapper
+        self.tia_pyramids[user]["overlay"].renderer.function_mapper = mapper_fn
         return "done"
 
     def update_renderer(self, prop, val):

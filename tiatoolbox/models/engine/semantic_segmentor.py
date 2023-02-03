@@ -951,8 +951,8 @@ class SemanticSegmentor:
             patch_shape_in_wsi = tuple(br_in_wsi - tl_in_wsi)
             # conversion to make cv2 happy
             prediction = prediction.astype(np.float32)
-            if prediction.shape[:2] != patch_shape_in_wsi:
-                prediction = cv2.resize(prediction, patch_shape_in_wsi[::-1])
+            # if prediction.shape[:2] != patch_shape_in_wsi:
+            prediction = cv2.resize(prediction, patch_shape_in_wsi[::-1])
             # ! cv2 resize will remove singleton !
             if add_singleton_dim:
                 prediction = prediction[..., None]

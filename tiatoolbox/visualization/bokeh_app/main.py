@@ -145,6 +145,7 @@ def hex2rgb(hex_val):
 
 
 def rgb2hex(rgb):
+    """covert float rgb(a) tuple to hex string"""
     return "#{:02x}{:02x}{:02x}".format(*to_int_rgb(rgb))
 
 
@@ -439,6 +440,24 @@ class TileGroup:
         return self.group
 
 
+class ColorCycler:
+    def __init__(self, colors=None):
+        if colors is None:
+            colors = ["red", "blue", "lime", "yellow", "cyan", "magenta", "orange"]
+        self.colors = colors
+        self.index = -1
+
+    def get_next(self):
+        self.index = (self.index + 1) % len(self.colors)
+        return self.colors[self.index]
+
+    def get_random(self):
+        return str(np.random.choice(self.colors))
+
+    def generate_random(self):
+        return rgb2hex(np.random.choice(256, 3) / 255)
+
+
 tg = TileGroup()
 
 
@@ -548,6 +567,8 @@ vstate.dims = wsi[0].info.slide_dimensions
 vstate.mpp = wsi[0].info.mpp
 if vstate.mpp is None:
     vstate.mpp = [1, 1]
+
+color_cycler = ColorCycler()
 
 
 def run_app():
@@ -861,7 +882,11 @@ cmap_builder_input = MultiChoice(
 cmap_builder_button = Button(
     label="Build Cmap", button_type="success", max_width=90, sizing_mode="stretch_width"
 )
-cmap_picker_column = column(children=[cmap_builder_button])
+cmap_picker_column = column(children=[])
+subcat_select = Select(title="subcat", options=["All"], value="All")
+mixing_type_select = RadioButtonGroup(
+    labels=["lin", "max", "avg", "prod", "pow", "softm"], active=4
+)
 
 
 # Define UI callbacks
@@ -988,16 +1013,16 @@ def cmap_builder_cb(attr, old, new):
     """add a property to the colormap and make a ColorPicker for it,
     then add it to the cmap_picker_column. if new < old, remove the
     ColorPicker wit the deselected property from the cmap_picker_column"""
+    # import pdb; pdb.set_trace()
     if len(new) > len(old):
         new_prop = set(new).difference(set(old))
         new_prop = new_prop.pop()
 
         color_picker = ColorPicker(
             title=new_prop,
-            color=vstate.mapper[new_prop],
+            color=color_cycler.get_next(),
             width=100,
             height=50,
-            css_classes=["color_picker"],
         )
         color_picker.on_change("color", cmap_picker_cb)
         cmap_picker_column.children.append(color_picker)
@@ -1012,7 +1037,23 @@ def cmap_builder_cb(attr, old, new):
 
 def cmap_picker_cb(attr, old, new):
     """update the colormap with the new color"""
-    prop = attr.obj.title
+    pass  # anything needed here?
+
+
+def cmap_builder_button_cb():
+    """submit the dict of properties and colors to the server"""
+    cmap = {}
+    for cp in cmap_picker_column.children:
+        cmap[cp.title] = hex2rgb(cp.color)
+    if len(cmap) == 0:
+        return
+    if len(cmap) == 1:
+        cprop_input_cb(None, None, list(cmap.keys()))
+        return
+    s.put(
+        f"http://{host2}:5000/tileserver/build_cmap/{mixing_type_select.labels[mixing_type_select.active]}/{cmap_select.value}/{json.dumps(cmap)}"
+    )
+    vstate.update_state = 1
 
 
 def set_graph_alpha(g_renderer, value):
@@ -1237,7 +1278,11 @@ def layer_drop_cb(attr):
         vstate.props = json.loads(props.text)
         # type_cmap_select.options = vstate.props
         cprop_input.options = vstate.props
+        subcat_select.options = ["All"] + list(
+            set([p.split("_")[0] for p in vstate.props])
+        )
         cprop_input.options.append("None")
+        cmap_builder_input.options = vstate.props
         if not vstate.props == vstate.props_old:
             update_mapper()
             vstate.props_old = vstate.props
@@ -1394,6 +1439,16 @@ def save_cb(attr):
     s.get(f"http://{host2}:5000/tileserver/commit/{save_path}")
 
 
+def subcat_select_cb(attr, old, new):
+    if new == "All":
+        cmap_builder_input.options = vstate.props
+        return
+    new_opts = [p for p in vstate.props if new in p]
+    cmap_builder_input.options = new_opts + [
+        a for a in cmap_builder_input.value if a not in new_opts
+    ]
+
+
 # run NucleusInstanceSegmentor on a region of wsi defined by the box in box_source
 def segment_on_box(attr):
     print(vstate.types)
@@ -1446,6 +1501,8 @@ def segment_on_box(attr):
     vstate.props = json.loads(props.text)
     # type_cmap_select.options = vstate.props
     cprop_input.options = vstate.props
+    subcat_select.options = ["All"] + list(set([p.split("_")[0] for p in vstate.props]))
+    cmap_builder_input.options = vstate.props
     if not vstate.props == vstate.props_old:
         update_mapper()
         vstate.props_old = vstate.props
@@ -1533,6 +1590,9 @@ node_source.selected.on_change("indices", node_select_cb)
 type_cmap_select.on_change("value", type_cmap_cb)
 swap_button.on_click(swap_cb)
 options_check.on_change("active", options_check_cb)
+cmap_builder_input.on_change("value", cmap_builder_cb)
+cmap_builder_button.on_click(cmap_builder_button_cb)
+subcat_select.on_change("value", subcat_select_cb)
 
 populate_slide_list(slide_folder)
 populate_layer_list(Path(vstate.slide_path).stem, overlay_folder)
@@ -1562,7 +1622,18 @@ ui_layout = column(
     sizing_mode="stretch_width",
 )
 
-extra_options = column([opt_buttons, pt_size_spinner, edge_size_spinner, res_switch])
+extra_options = column(
+    [
+        opt_buttons,
+        pt_size_spinner,
+        edge_size_spinner,
+        res_switch,
+        mixing_type_select,
+        row([subcat_select, cmap_builder_input]),
+        cmap_picker_column,
+        cmap_builder_button,
+    ]
+)
 
 control_tabs = Tabs(
     tabs=[

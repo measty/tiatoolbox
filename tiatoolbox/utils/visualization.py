@@ -710,7 +710,7 @@ class AnnotationRenderer:
                     )
                 )
             if self.function_mapper:
-                return self.multi_mapper(annotation.properties)
+                return self.function_mapper(annotation.properties)
             if score_prop == "color":
                 # use colors directly specified in annotation properties
                 return (*[int(255 * c) for c in annotation.properties["color"]], 255)
