@@ -68,7 +68,7 @@ from tiatoolbox.visualization.tileserver import TileServer
 from tiatoolbox.visualization.ui_utils import get_level_by_extent
 from tiatoolbox.wsicore.wsireader import WSIReader
 
-is_deployed = False
+is_deployed = True
 rand_id = token.generate_session_id()
 print(f"rand id is: {rand_id}")
 
