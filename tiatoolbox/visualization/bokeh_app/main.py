@@ -82,6 +82,15 @@ else:
     port = "5000"
 
 # Define helper functions
+def to_num(x):
+    """helper to convert a str representation of a number ot an appropriate
+    numerical value."""
+    if x == "None":
+        return None
+    try:
+        return int(x)
+    except:
+        return float(x)
 
 
 def make_ts(route):
