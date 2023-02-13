@@ -1,7 +1,4 @@
 """Simple Flask WSGI apps to display tiles as slippery maps."""
-from __future__ import annotations
-
-import ast
 import copy
 import io
 import json
@@ -541,7 +538,6 @@ class TileServer(Flask):
             where=where,
             unique=False,
         )
-        # import pdb; pdb.set_trace()
         props = []
         for prop_dict in ann_props.values():
             props.extend(list(prop_dict.keys()))
@@ -559,7 +555,6 @@ class TileServer(Flask):
             where=where,
             unique=True,
         )
-        # import pdb; pdb.set_trace()
         return json.dumps(list(ann_props))
 
     def commit_db(self, save_path):

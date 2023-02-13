@@ -15,7 +15,6 @@ from numpy.typing import ArrayLike
 from PIL import Image, ImageFilter, ImageOps
 from shapely import speedups
 from shapely.geometry import Polygon
-from shapely.geos import WKBReader, lgeos
 
 from tiatoolbox.annotation.storage import Annotation, AnnotationStore
 
