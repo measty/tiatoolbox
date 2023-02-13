@@ -36,6 +36,7 @@ from bokeh.models import (
     LinearColorMapper,
     MultiChoice,
     PointDrawTool,
+    PreText,
     RadioButtonGroup,
     Segment,
     Select,
@@ -45,6 +46,7 @@ from bokeh.models import (
     TabPanel,
     Tabs,
     TapTool,
+    TextAreaInput,
     TextInput,
     Toggle,
 )
@@ -678,6 +680,11 @@ active_options = []
 
 res_switch = RadioButtonGroup(labels=["1x", "2x"], active=1)
 
+text_area_input = TextAreaInput(
+    value="enter python code here", rows=6, title="Enter code:"
+)
+text_results = PreText(text="results will appear here", width=500)
+
 slide_alpha = Slider(
     title="Slide Alpha",
     start=0,
@@ -1299,6 +1306,11 @@ def model_drop_cb(attr):
     vstate.current_model = attr.item
 
 
+def text_area_cb(attr, old, new):
+    resp = s.put(f"http://{host2}:5000/tileserver/submit_code/{new}")
+    text_results.text = json.loads(resp.text)
+
+
 def to_model_cb(attr):
     if vstate.current_model == "hovernet":
         segment_on_box(attr)
@@ -1501,6 +1513,7 @@ node_source.selected.on_change("indices", node_select_cb)
 type_cmap_select.on_change("value", type_cmap_cb)
 swap_button.on_click(swap_cb)
 options_check.on_change("active", options_check_cb)
+text_area_input.on_change("value", text_area_cb)
 
 populate_slide_list(slide_folder)
 populate_layer_list(Path(vstate.slide_path).stem, overlay_folder)
