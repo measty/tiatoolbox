@@ -167,7 +167,14 @@ def make_safe_name(name):
 
 def make_color_dict(types):
     colors = random_colors(len(types))
-    return {key: (*color, 1) for key, color in zip(types, colors)}
+    # grab colors out of colour_dict if possible, otherwise use random
+    type_colours = {}
+    for i, t in enumerate(types):
+        if t in colour_dict:
+            type_colours[t] = to_float_rgb(colour_dict[t])
+        else:
+            type_colours[t] = (*colors[i], 1)
+    return type_colours
 
 
 def set_alpha_glyph(glyph, alpha):
@@ -289,6 +296,7 @@ def initialise_slide():
     if vstate.mpp is None:
         vstate.mpp = [1, 1]
     vstate.dims = wsi[0].info.slide_dimensions
+    slide_name = wsi[0].info.file_path.stem
     vstate.types = []
     vstate.props = []
     pad = int(np.mean(vstate.dims) / 10)
@@ -297,27 +305,35 @@ def initialise_slide():
     large_dim = np.argmax(np.array(vstate.dims) / plot_size)
 
     vstate.micron_formatter.args["mpp"] = vstate.mpp[0]
-    if large_dim == 1:
-        p.x_range.start = (
-            -0.5 * (vstate.dims[1] * aspect_ratio - vstate.dims[0]) - aspect_ratio * pad
-        )
-        p.x_range.end = (
-            vstate.dims[1] * aspect_ratio
-            - 0.5 * (vstate.dims[1] * aspect_ratio - vstate.dims[0])
-            + aspect_ratio * pad
-        )
-        p.y_range.start = -vstate.dims[1] - pad
-        p.y_range.end = pad
-        # p.x_range.min_interval = ?
+    if slide_name in initial_views:
+        lims = initial_views[slide_name]
+        p.x_range.start = lims[0]
+        p.x_range.end = lims[2]
+        p.y_range.start = lims[3]
+        p.y_range.end = lims[1]
     else:
-        p.x_range.start = -aspect_ratio * pad
-        p.x_range.end = vstate.dims[0] + pad * aspect_ratio
-        p.y_range.start = (
-            -vstate.dims[0] / aspect_ratio
-            + 0.5 * (vstate.dims[0] / aspect_ratio - vstate.dims[1])
-            - pad
-        )
-        p.y_range.end = 0.5 * (vstate.dims[0] / aspect_ratio - vstate.dims[1]) + pad
+        if large_dim == 1:
+            p.x_range.start = (
+                -0.5 * (vstate.dims[1] * aspect_ratio - vstate.dims[0])
+                - aspect_ratio * pad
+            )
+            p.x_range.end = (
+                vstate.dims[1] * aspect_ratio
+                - 0.5 * (vstate.dims[1] * aspect_ratio - vstate.dims[0])
+                + aspect_ratio * pad
+            )
+            p.y_range.start = -vstate.dims[1] - pad
+            p.y_range.end = pad
+            # p.x_range.min_interval = ?
+        else:
+            p.x_range.start = -aspect_ratio * pad
+            p.x_range.end = vstate.dims[0] + pad * aspect_ratio
+            p.y_range.start = (
+                -vstate.dims[0] / aspect_ratio
+                + 0.5 * (vstate.dims[0] / aspect_ratio - vstate.dims[1])
+                - pad
+            )
+            p.y_range.end = 0.5 * (vstate.dims[0] / aspect_ratio - vstate.dims[1]) + pad
 
     # p.x_range.bounds = (p.x_range.start - 2 * pad, p.x_range.end + 2 * pad)
     # p.y_range.bounds = (p.y_range.start - 2 * pad, p.y_range.end + 2 * pad)
@@ -538,9 +554,25 @@ if len(sys.argv) > 1 and sys.argv[1] != "None":
     base_folder = Path(sys.argv[1])
     slide_folder = base_folder.joinpath("slides")
     overlay_folder = base_folder.joinpath("overlays")
+    if not overlay_folder.exists():
+        overlay_folder = None
 if len(sys.argv) == 3:
     slide_folder = Path(sys.argv[1])
     overlay_folder = Path(sys.argv[2])
+# load a color_dict and/or slide intial view windows from a json file
+colour_dict = {}
+initial_views = {}
+if (overlay_folder / "config.json").exists():
+    with open(overlay_folder / "config.json", "r") as f:
+        config = json.load(f)
+        print(config)
+    if "colour_dict" in config:
+        colour_dict = config["colour_dict"]
+        print(colour_dict)
+    if "initial_views" in config:
+        initial_views = config["initial_views"]
+        print(initial_views)
+
 
 # vstate.slide_path = r"E:\\TTB_vis_folder\\slides\\TCGA-SC-A6LN-01Z-00-DX1.svs"
 # vstate.slide_path=Path(r'/tiatoolbox/app_data/slides/TCGA-SC-A6LN-01Z-00-DX1.svs')
@@ -942,6 +974,8 @@ def folder_input_cb(attr, old, new):
 
 
 def populate_layer_list(slide_name, overlay_path: Path):
+    if overlay_path is None:
+        return
     file_list = []
     for ext in [
         "*.db",
@@ -1433,9 +1467,15 @@ def type_cmap_cb(attr, old, new):
 
 
 def save_cb(attr):
-    save_path = make_safe_name(
-        str(overlay_folder / (vstate.slide_path.stem + "_saved_anns.db"))
-    )
+    if overlay_folder is None:
+        # save in slide folder instead
+        save_path = make_safe_name(
+            str(slide_folder / (vstate.slide_path.stem + "_saved_anns.db"))
+        )
+    else:
+        save_path = make_safe_name(
+            str(overlay_folder / (vstate.slide_path.stem + "_saved_anns.db"))
+        )
     s.get(f"http://{host2}:5000/tileserver/commit/{save_path}")
 
 
