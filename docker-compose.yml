@@ -3,39 +3,40 @@ version: '3'
 services:
 
   # Proxies requests to internal services
-  reverse-proxy:
+  reverse-proxy-mg:
     image: nginx:1.23.0
-    container_name: reverse_proxy
+    container_name: reverse_proxy_mg
     depends_on:
-        - bokeh-app
-        - tile-service
+        - mesograph-app
+        - tile-service-mg
     volumes:
       - ./tiatoolbox/visualization/reverse_proxy/nginx.conf:/etc/nginx/nginx.conf
     ports:
-      - 80:80
+      - 20.0.0.12:8080:80
 
   # serves the bokeh app
-  bokeh-app:
-    image: bokeh-app
-    container_name: bokeh-app
+  mesograph-app:
+    image: mesograph-app
+    container_name: mesograph-app
     build:
       context: .
       dockerfile: DockerfileB
     depends_on:
-        - tile-service
+        - tile-service-mg
     #ports:
      # - 5100:5100
     restart: on-failure
     env_file:
       - .env
     volumes:
-      - ../app_data/:/app_data
-
+      - ../meso_data/:/meso_data
+    command: >
+      sh -c "bokeh serve ./tiatoolbox/visualization/bokeh_app --log-level=debug --allow-websocket-origin="*" --port 5100 --use-xheaders --unused-session-lifetime 1000 --check-unused-sessions 1000 --args /meso_data"
 
   # serves the tiles
-  tile-service:
-    image: tile-service
-    container_name: tile-service
+  tile-service-mg:
+    image: tile-service-mg
+    container_name: tile-service-mg
     build:
       context: .
       dockerfile: DockerfileTS
@@ -43,4 +44,8 @@ services:
       #- 5000:5000
     restart: on-failure
     volumes:
-      - ../app_data/:/app_data
+      - ../meso_data/:/meso_data
+
+networks:
+  default:
+    name: meso-app-network
