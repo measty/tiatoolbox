@@ -152,7 +152,7 @@ class TileServer(Flask):
         )
         self.route("/tileserver/get_prop_names")(self.get_properties)
         self.route("/tileserver/get_prop_values/<prop>")(self.get_property_values)
-        self.route("/tileserver/reset")(self.reset)
+        self.route("/tileserver/reset/<user>")(self.reset)
 
     def _get_user(self):
         """Get the user from the request.
@@ -303,22 +303,19 @@ class TileServer(Flask):
     def change_pred(self, pred):
         """Change predicate in store."""
         user = self._get_user()
-        for layer in self.tia_pyramids[user].values():
-            if isinstance(layer, AnnotationTileGenerator):
-                if pred == "None":
-                    pred = None
-                layer.renderer.where = pred
+        if pred == "None":
+            pred = None
+        self.renderers[user].where = pred
 
         return "done"
 
     def change_prop(self, prop):
         """Change the property to colour by."""
         user = self._get_user()
-        for layer in self.tia_pyramids[user].values():
-            if isinstance(layer, AnnotationTileGenerator):
-                if prop == "None":
-                    prop = None
-                layer.renderer.score_prop = prop
+
+        if prop == "None":
+            prop = None
+        self.renderers[user].score_prop = prop
 
         return "done"
 
@@ -333,14 +330,18 @@ class TileServer(Flask):
         resp.set_cookie("user", user, httponly=True)
         self.renderers[user] = copy.deepcopy(self.renderer)
         self.overlaps[user] = 0
-        return resp
-
-    def reset(self):
-        """Reset the tileserver."""
-        user = self._get_user()
         self.tia_layers[user] = {}
         self.tia_pyramids[user] = {}
-        self.slide_mpps[user] = None
+        return resp
+
+    def reset(self, user):
+        """Reset the tileserver."""
+        # user = self._get_user()
+        del self.tia_layers[user]
+        del self.tia_pyramids[user]
+        del self.slide_mpps[user]
+        del self.renderers[user]
+        del self.overlaps[user]
         return "done"
 
     def change_slide(self, layer, layer_path):
@@ -373,12 +374,10 @@ class TileServer(Flask):
             def cmapp(x):
                 return cmap[x]
 
-        for layer in self.tia_pyramids[user].values():
-            if isinstance(layer, AnnotationTileGenerator):
-                if cmap == "None":
-                    cmapp = None
-                layer.renderer.mapper = cmapp
-                layer.renderer.function_mapper = None
+        if cmap == "None":
+            cmapp = None
+        self.renderers[user].mapper = cmapp
+        self.renderers[user].function_mapper = None
 
         return "done"
 
@@ -399,11 +398,9 @@ class TileServer(Flask):
 
         cmap_dict = {"type": type_id, "score_prop": prop, "mapper": cmapp}
 
-        for layer in self.tia_pyramids[user].values():
-            if isinstance(layer, AnnotationTileGenerator):
-                if cmapp == "None":
-                    cmapp = None
-                layer.renderer.secondary_cmap = cmap_dict
+        if cmapp == "None":
+            cmapp = None
+        self.renderers[user].secondary_cmap = cmap_dict
 
         return "done"
 
@@ -454,7 +451,7 @@ class TileServer(Flask):
             cmap=cm.get_cmap(cmap),
         )
         # set renderer mapper
-        self.tia_pyramids[user]["overlay"].renderer.function_mapper = mapper_fn
+        self.renderers[user].function_mapper = mapper_fn
         return "done"
 
     def update_renderer(self, prop, val):
@@ -466,7 +463,8 @@ class TileServer(Flask):
         self.renderers[user].__setattr__(prop, val)
         if prop == "blur_radius":
             self.overlaps[user] = int(1.5 * val)
-            self.tia_pyramids[user]["overlay"].overlap = self.overlaps[user]
+            if "overlay" in self.tia_pyramids[user]:
+                self.tia_pyramids[user]["overlay"].overlap = self.overlaps[user]
         return "done"
 
     def update_where(self):
@@ -605,6 +603,8 @@ class TileServer(Flask):
             where = None
         if where is not None:
             where = (f'props["type"]="{where}"',)
+        if "overlay" not in self.tia_pyramids[user]:
+            return json.dumps([])
         ann_props = self.tia_pyramids[user]["overlay"].store.pquery(
             select=f"props['{prop}']",
             where=where,

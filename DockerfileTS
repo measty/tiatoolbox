@@ -17,5 +17,5 @@ COPY . .
 RUN python setup.py install
 EXPOSE 5000
 
-CMD [ "gunicorn", "tiatoolbox.visualization.tile_app.tile_app:app", "--bind", ":5000"]
+CMD [ "gunicorn", "tiatoolbox.visualization.tile_app.tile_app:app", "--timeout", "100", "--bind", ":5000"]
 #CMD [ "python3", "tiatoolbox/visualization/tile_app/tile_app.py"]

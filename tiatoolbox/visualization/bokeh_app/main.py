@@ -68,7 +68,10 @@ from tiatoolbox.visualization.tileserver import TileServer
 from tiatoolbox.visualization.ui_utils import get_level_by_extent
 from tiatoolbox.wsicore.wsireader import WSIReader
 
-is_deployed = False
+req_args = curdoc().session_context.request.arguments
+print(f"req args are: {req_args}")
+
+is_deployed = True
 rand_id = token.generate_session_id()
 print(f"rand id is: {rand_id}")
 
@@ -81,6 +84,12 @@ else:
     host2 = "127.0.0.1"
     port = "5000"
 
+
+class DummyAttr:
+    def __init__(self, val):
+        self.item = val
+
+
 # Define helper functions
 def to_num(x):
     """helper to convert a str representation of a number ot an appropriate
@@ -91,6 +100,17 @@ def to_num(x):
         return int(x)
     except:
         return float(x)
+
+
+def get_from_config(keys, default=None):
+    """helper to get a value from a config dict"""
+    c_dict = config
+    for k in keys:
+        if k in c_dict:
+            c_dict = c_dict[k]
+        else:
+            return default
+    return c_dict
 
 
 def make_ts(route):
@@ -156,7 +176,7 @@ def make_color_seq_from_cmap(cmap):
             rgb2hex((1.0, 1.0, 1.0)),
         ]  # no colors if using dict
     colors = []
-    for v in np.linspace(0, 1, 20):
+    for v in np.linspace(0, 1, 50):
         colors.append(rgb2hex(cmap(v)))
     return colors
 
@@ -189,7 +209,7 @@ def get_mapper_for_prop(prop, enforce_dict=False):
     resp = s.get(f"http://{host2}:5000/tileserver/get_prop_values/{prop}")
     prop_vals = json.loads(resp.text)
     # guess what cmap should be
-    if len(prop_vals) > 10 and not enforce_dict:
+    if (len(prop_vals) > 10 or len(prop_vals) == 0) and not enforce_dict:
         cmap = "viridis" if cmap_select.value == "Dict" else cmap_select.value
     else:
         cmap = make_color_dict(prop_vals)
@@ -550,8 +570,13 @@ vstate = ViewerState()
 
 # base_folder = r"E:\TTB_vis_folder"
 base_folder = "/app_data"
+demo_name = "TIAvis"
 if len(sys.argv) > 1 and sys.argv[1] != "None":
     base_folder = Path(sys.argv[1])
+    if len(req_args) > 0:
+        print(req_args)
+        demo_name = str(req_args["demo"][0], "utf-8")
+        base_folder = base_folder.joinpath(str(req_args["demo"][0], "utf-8"))
     slide_folder = base_folder.joinpath("slides")
     overlay_folder = base_folder.joinpath("overlays")
     if not overlay_folder.exists():
@@ -559,21 +584,29 @@ if len(sys.argv) > 1 and sys.argv[1] != "None":
 if len(sys.argv) == 3:
     slide_folder = Path(sys.argv[1])
     overlay_folder = Path(sys.argv[2])
-# load a color_dict and/or slide intial view windows from a json file
+# load a color_dict and/or slide initial view windows from a json file
 colour_dict = {}
 initial_views = {}
-if (overlay_folder / "config.json").exists():
-    with open(overlay_folder / "config.json", "r") as f:
-        config = json.load(f)
-        print(config)
-    if "colour_dict" in config:
-        colour_dict = config["colour_dict"]
-        print(colour_dict)
-    if "initial_views" in config:
-        initial_views = config["initial_views"]
-        print(initial_views)
+default_cprop = None
+config = {}
+config_file = list(overlay_folder.glob("*_config.json"))
+if len(config_file) > 0:
+    config_file = config_file[0]
+    if (config_file).exists():
+        with open(config_file, "r") as f:
+            config = json.load(f)
+            print(config)
+        if "colour_dict" in config:
+            colour_dict = config["colour_dict"]
+            print(colour_dict)
+        if "initial_views" in config:
+            initial_views = config["initial_views"]
+            print(initial_views)
+        if "default_cprop" in config:
+            default_cprop = config["default_cprop"]
+            print(default_cprop)
 
-
+auto_load = get_from_config(["auto_load"], 0) == 1
 # vstate.slide_path = r"E:\\TTB_vis_folder\\slides\\TCGA-SC-A6LN-01Z-00-DX1.svs"
 # vstate.slide_path=Path(r'/tiatoolbox/app_data/slides/TCGA-SC-A6LN-01Z-00-DX1.svs')
 
@@ -583,12 +616,15 @@ for ext in ["*.svs", "*ndpi", "*.tiff", "*.mrxs", "*.png", "*.jpg"]:
     slide_list.extend(list(slide_folder.glob(ext)))
     slide_list.extend(list(slide_folder.glob(str(Path("*") / ext))))
 vstate.slide_path = slide_list[0]
+if "first_slide" in config:
+    vstate.slide_path = slide_folder / config["first_slide"]
+
 
 renderer = AnnotationRenderer(
     "type",
     {"class1": (1, 0, 0, 1), "class2": (0, 0, 1, 1), "class3": (0, 1, 0, 1)},
     thickness=-1,
-    edge_thickness=1,
+    edge_thickness=get_from_config(["UI_settings", "edge_thickness"], 1),
     zoomed_out_strat="scale",
     max_scale=8,
 )
@@ -630,6 +666,7 @@ vstate.micron_formatter = FuncTickFormatter(
 )
 
 do_feats = False
+tool_str = "pan,wheel_zoom,reset,save"
 
 p = figure(
     x_range=(0, vstate.dims[0]),
@@ -643,7 +680,7 @@ p = figure(
     # width_policy="max",
     # height_policy="max",
     # tooltips=TOOLTIPS,
-    tools="pan,wheel_zoom,reset,save",
+    tools=tool_str,
     active_scroll="wheel_zoom",
     output_backend="webgl",
     hidpi=True,
@@ -655,7 +692,7 @@ p = figure(
     sizing_mode="stretch_both",
     name="slide_window",
 )
-# p.axis.visible = False
+p.axis.visible = False
 initialise_slide()
 p.toolbar.tools[1].zoom_on_axis = False
 
@@ -672,6 +709,7 @@ resp = s.get(f"http://{host2}:5000/tileserver/setup")
 print(f"cookies are: {resp.cookies}")
 cookies = resp.cookies
 user = resp.cookies.get("user")
+curdoc().session_context.request.arguments["user"] = user
 
 ts1 = make_ts(
     f"http://{host}:{port}/tileserver/layer/slide/{user}/zoomify/TileGroup1"
@@ -692,7 +730,8 @@ c = p.circle("x", "y", source=pt_source, color="red", size=5)
 p.add_tools(BoxEditTool(renderers=[r], num_objects=1))
 p.add_tools(PointDrawTool(renderers=[c]))
 p.add_tools(TapTool())
-p.toolbar.active_inspect = None
+if get_from_config(["opts", "hover_on"], 0) == 0:
+    p.toolbar.active_inspect = None
 tslist = []
 
 p.renderers[0].tile_source.max_zoom = 10
@@ -702,12 +741,23 @@ edge_source = ColumnDataSource({"x0_": [], "y0_": [], "x1_": [], "y1_": []})
 vstate.graph_node = Circle(x="x_", y="y_", fill_color="node_color_", size=5)
 vstate.graph_edge = Segment(x0="x0_", y0="y0_", x1="x1_", y1="y1_")
 p.add_glyph(node_source, vstate.graph_node)
+if not get_from_config(["opts", "nodes_on"], True):
+    p.renderers[-1].glyph.fill_alpha = 0
+    p.renderers[-1].glyph.line_alpha = 0
 p.add_glyph(edge_source, vstate.graph_edge)
-p.renderers[-1].visible = False
+if not get_from_config(["opts", "edges_on"], False):
+    p.renderers[-1].visible = False
 vstate.layer_dict["nodes"] = len(p.renderers) - 2
 vstate.layer_dict["edges"] = len(p.renderers) - 1
 hover = HoverTool(renderers=[p.renderers[-2]])
 p.add_tools(hover)
+
+color_bar = ColorBar(
+    color_mapper=LinearColorMapper(make_color_seq_from_cmap(cm.get_cmap("viridis"))),
+    label_standoff=12,
+)
+if get_from_config(["opts", "colorbar_on"], 1) == 1:
+    p.add_layout(color_bar, "below")
 
 # Define UI elements
 options_button = Button(label="Options", button_type="primary")
@@ -766,11 +816,6 @@ pt_size_spinner = Spinner(
     sizing_mode="stretch_width",
 )
 
-color_bar = ColorBar(
-    color_mapper=LinearColorMapper(make_color_seq_from_cmap(cm.get_cmap("viridis"))),
-    label_standoff=12,
-)
-# p.add_layout(color_bar, 'below')
 slide_toggle = Toggle(
     label="Slide",
     button_type="success",
@@ -792,7 +837,8 @@ filter_input = TextInput(value="None", title="Filter:", sizing_mode="stretch_wid
 cprop_input = MultiChoice(
     title="Colour by:",
     max_items=1,
-    options=["*"],
+    options=[get_from_config(["default_cprop"], "type")],
+    value=[get_from_config(["default_cprop"], "type")],
     search_option_limit=5000,
     sizing_mode="stretch_width",
     # max_width=300,
@@ -800,7 +846,8 @@ cprop_input = MultiChoice(
 slide_select = MultiChoice(
     title="Select Slide:",
     max_items=1,
-    options=["*"],
+    options=[get_from_config(["first_slide"], "*")],
+    value=[get_from_config(["first_slide"], "*")],
     search_option_limit=5000,
     # max_width=300,
     sizing_mode="stretch_width",
@@ -815,7 +862,7 @@ cmap_select = Select(
     title="Cmap",
     options=cmmenu,
     width=60,
-    value="coolwarm",
+    value=get_from_config(["UI_settings", "mapper"], "coolwarm"),
     # max_width=60,
     height=45,
     sizing_mode="stretch_width",
@@ -823,9 +870,9 @@ cmap_select = Select(
 blur_spinner = Spinner(
     title="Blur:",
     low=0,
-    high=10,
+    high=20,
     step=1,
-    value=0,
+    value=get_from_config(["UI_settings", "blur_radius"], 0),
     width=60,
     height=50,
     # max_width=60,
@@ -836,7 +883,7 @@ scale_spinner = Spinner(
     low=0,
     high=540,
     step=8,
-    value=16,
+    value=get_from_config(["UI_settings", "max_scale"], 16),
     width=60,
     # max_width=60,
     height=50,
@@ -1208,6 +1255,20 @@ def slide_select_cb(attr, old, new):
     # p.x_range.bounds=MinMaxBounds(0,vstate.dims[0])
     # p.y_range.bounds=(0,-vstate.dims[1])
 
+    # load the overlay and graph automatically for demo purposes
+    if auto_load:
+        for f in layer_drop.menu:
+            dummy_attr = DummyAttr(f[0])
+            layer_drop_cb(dummy_attr)
+
+
+# set up any initial ui settings from config file
+if "UI_settings" in config:
+    for k in config["UI_settings"]:
+        update_renderer(k, config["UI_settings"][k])
+if default_cprop is not None:
+    s.put(f"http://{host2}:5000/tileserver/change_color_prop/{default_cprop}")
+
 
 def layer_drop_cb(attr):
     """setup the newly chosen overlay"""
@@ -1318,7 +1379,9 @@ def layer_drop_cb(attr):
         cprop_input.options.append("None")
         cmap_builder_input.options = vstate.props
         if not vstate.props == vstate.props_old:
-            update_mapper()
+            # if color by prop no longer exists, reset to type
+            if len(cprop_input.value) == 0 or cprop_input.value[0] not in vstate.props:
+                update_mapper()
             vstate.props_old = vstate.props
         initialise_overlay()
         change_tiles("overlay")
@@ -1640,41 +1703,101 @@ populate_layer_list(Path(vstate.slide_path).stem, overlay_folder)
 box_column = column(children=layer_boxes)
 color_column = column(children=lcolors, sizing_mode="stretch_width")
 
-# open up first slide in list
-slide_select_cb(None, None, new=[slide_list[0]])
+# open up initial slide
+slide_select_cb(None, None, new=[vstate.slide_path])
+if "default_type_cprop" in config:
+    type_cmap_select.value = list(config["default_type_cprop"].values())
 
-ui_layout = column(
-    [
-        slide_select,
-        layer_drop,
-        row([slide_toggle, slide_alpha], sizing_mode="stretch_width"),
-        row([overlay_toggle, overlay_alpha], sizing_mode="stretch_width"),
-        filter_input,
-        cprop_input,
-        row(
-            [cmap_select, scale_spinner, blur_spinner],
-            sizing_mode="stretch_width",
-        ),
-        type_cmap_select,
-        row([to_model_button, model_drop, save_button], sizing_mode="stretch_width"),
-        row(children=[box_column, color_column], sizing_mode="stretch_width"),
-    ],
+# create the layout
+slide_row = row([slide_toggle, slide_alpha], sizing_mode="stretch_width")
+overlay_row = row([overlay_toggle, overlay_alpha], sizing_mode="stretch_width")
+cmap_row = row(
+    [cmap_select, scale_spinner, blur_spinner],
     sizing_mode="stretch_width",
 )
+model_row = row([to_model_button, model_drop, save_button], sizing_mode="stretch_width")
+type_select_row = row(children=[box_column, color_column], sizing_mode="stretch_width")
 
-extra_options = column(
-    [
-        opt_buttons,
-        pt_size_spinner,
-        edge_size_spinner,
-        res_switch,
-        mixing_type_select,
-        # row([subcat_select, cmap_builder_input]),
-        cmap_builder_input,
-        cmap_picker_column,
-        cmap_builder_button,
-    ]
+# make element dictionaries
+UI_elements_1 = dict(
+    zip(
+        [
+            "slide_select",
+            "layer_drop",
+            "slide_row",
+            "overlay_row",
+            "filter_input",
+            "cprop_input",
+            "cmap_row",
+            "type_cmap_select",
+            "model_row",
+            "type_select_row",
+        ],
+        [
+            slide_select,
+            layer_drop,
+            slide_row,
+            overlay_row,
+            filter_input,
+            cprop_input,
+            cmap_row,
+            type_cmap_select,
+            model_row,
+            type_select_row,
+        ],
+    )
 )
+if "UI_elements_1" in config:
+    ui_layout = column(
+        [
+            UI_elements_1[el]
+            for el in config["UI_elements_1"]
+            if config["UI_elements_1"][el] == 1
+        ],
+        sizing_mode="stretch_width",
+    )
+else:
+    ui_layout = column(
+        list(UI_elements_1.values()),
+        sizing_mode="stretch_width",
+    )
+
+UI_elements_2 = dict(
+    zip(
+        [
+            "opt_buttons",
+            "pt_size_spinner",
+            "edge_size_spinner",
+            "res_switch",
+            "mixing_type_select",
+            "cmap_builder_input",
+            "cmap_picker_column",
+            "cmap_builder_button",
+        ],
+        [
+            opt_buttons,
+            pt_size_spinner,
+            edge_size_spinner,
+            res_switch,
+            mixing_type_select,
+            cmap_builder_input,
+            cmap_picker_column,
+            cmap_builder_button,
+        ],
+    )
+)
+if "UI_elements_2" in config:
+    extra_options = column(
+        [
+            UI_elements_2[el]
+            for el in config["UI_elements_2"]
+            if config["UI_elements_2"][el] == 1
+        ],
+    )
+else:
+    extra_options = column(
+        list(UI_elements_2.values()),
+    )
 
 control_tabs = Tabs(
     tabs=[
@@ -1699,9 +1822,14 @@ def update():
         vstate.update_state = 2
 
 
+print(curdoc().template)
+curdoc().template_variables["demo_name"] = demo_name
+# import pdb; pdb.set_trace()
 curdoc().add_periodic_callback(update, 220)
 curdoc().add_root(p)
 # curdoc().add_root(ui_layout)
 curdoc().add_root(control_tabs)
 # curdoc().add_root(opts_column)
 curdoc().title = "Tiatoolbox Visualization Tool"
+# if "template" in config:
+#    curdoc().template = str(Path(r"C:\Users\meast\app_data\templates") / config["template"])
