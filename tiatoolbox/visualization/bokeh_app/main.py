@@ -329,8 +329,8 @@ def initialise_slide():
         lims = initial_views[slide_name]
         p.x_range.start = lims[0]
         p.x_range.end = lims[2]
-        p.y_range.start = lims[3]
-        p.y_range.end = lims[1]
+        p.y_range.start = -lims[3]
+        p.y_range.end = -lims[1]
     else:
         if large_dim == 1:
             p.x_range.start = (
@@ -605,6 +605,15 @@ if len(config_file) > 0:
         if "default_cprop" in config:
             default_cprop = config["default_cprop"]
             print(default_cprop)
+# get any extra info from query url
+if "slide" in req_args:
+    config["first_slide"] = str(req_args["slide"][0], "utf-8")
+    if "window" in req_args:
+        if "initial_views" not in config:
+            config["initial_views"] = {}
+        config["initial_views"][Path(config["first_slide"]).stem] = [
+            int(s) for s in str(req_args["window"][0], "utf-8")[1:-1].split(",")
+        ]
 
 auto_load = get_from_config(["auto_load"], 0) == 1
 # vstate.slide_path = r"E:\\TTB_vis_folder\\slides\\TCGA-SC-A6LN-01Z-00-DX1.svs"
