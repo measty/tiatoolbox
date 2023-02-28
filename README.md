@@ -139,6 +139,59 @@ The buttons 'filled', 'mpp', 'grid', respectively toggle between filled and outl
 A filter can be applied to annotations using the filter box. For example, entering props\['score'\]>0.5 would show only annotations for which the 'score' property  is greater than 0.5.
 See the annotation store documentation on valid 'where' statements for more details.
 
+### Config files
+A json config file can be placed in the overlays folder, to customize various aspects of the UI and annotation display when visualizing overlays in that location. This is especially useful for customising online demos. An example .json explaining all the fields available is below:
+
+```
+{
+    "colour_dict": {
+        "typeA": [252, 161, 3, 255],   # annotations whose 'type' property matches these, will display in the specified color
+        "typeB": [3, 252, 40, 255]
+    },
+    "initial_views": {
+        "slideA": [0,19000,35000,44000],    # if a slide with specified name is opened, initial view window will be set to this
+        "slideB": [44200,59100,69700,76600]
+            },
+    "auto_load": 1,     # if 1, upon opening a slide will also load all annotations associated with it
+    "default_cprop": "some_property",     # default property to color annotations by
+    "first_slide": "slideA.svs",            # initial slide to open upon launching viewer
+    "UI_settings": {
+        "blur_radius": 0,           # applies a blur to rendererd annotations
+        "edge_thickness": 0,        # thickness of boundaries drawn around annotation geometries (0=off)
+        "mapper": "jet",            # default colormapper to use when coloring by a continuous property
+        "max_scale": 32             # controls zoom level at which small annotations are no longer rendered (larger val->smaller
+    },                              # annotations visible when zoomed out)
+    "opts": {
+        "edges_on": 0,              # graph edges are shown or hidden by default
+        "nodes_on": 1,              # graph nodes are shown or hidden by default
+        "colorbar_on": 1,           # whether colorbar is shown below main window
+        "hover_on": 1
+    },
+    "UI_elements_1": {              # controls which UI elements are visible
+        "slide_select": 1,          # slide select box
+        "layer_drop": 1,            # overlay select drop down
+        "slide_row": 1,             # slide alpha toggle and slider
+        "overlay_row": 1,           # overlay alpha toggle and slider
+        "filter_input": 1,          # filter text input box
+        "cprop_input": 1,           # box to select which property to color annotations by ('color by' box)
+        "cmap_row": 1,              # row of UI elements with colormap select, blur, max_scale
+        "type_cmap_select": 1,      # UI element to select a secondary colormap for a specific type (i.e 'color type by' box)
+        "model_row": 0,             # UI elements to chose and run a model
+        "type_select_row": 1        # buttom group for toggling specific types of annotations on/off
+    },
+    "UI_elements_2": {              # controls visible UI elements on second tab in UI
+        "opt_buttons": 1,           # UI elements providing a few options including if annotations should be filled/outline only
+        "pt_size_spinner": 1,       # control for point size and graph node size
+        "edge_size_spinner": 1,     # control for edge thickness
+        "res_switch": 1,            # allows to switch to lower res tiles for faster loading
+        "mixing_type_select": 1,    # select mixing type for multi-property cmap builder
+        "cmap_builder_input": 1,    # property select box for multi-prop cmap builder
+        "cmap_picker_column": 1,    # controls color chosen for each property in multi-prop cmap
+        "cmap_builder_button": 1    # button to build the multi-prop cmap
+    }
+    }
+```
+
 <p align="center">
   <img src="https://raw.githubusercontent.com/TissueImageAnalytics/tiatoolbox/develop/docs/tiatoolbox-logo.png">
 </p>
