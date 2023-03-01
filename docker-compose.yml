@@ -3,49 +3,56 @@ version: '3'
 services:
 
   # Proxies requests to internal services
-  reverse-proxy-mg:
+  reverse-proxy:
     image: nginx:1.23.0
-    container_name: reverse_proxy_mg
+    container_name: reverse_proxy
     depends_on:
-        - mesograph-app
-        - tile-service-mg
+        - demo-app
+        - tile-service
     volumes:
       - ./tiatoolbox/visualization/reverse_proxy/nginx.conf:/etc/nginx/nginx.conf
+      - ../app_data/:/app_data
     ports:
-      - 20.0.0.12:8080:80
+      - 80:80
+    networks:
+      - tia-demos
 
   # serves the bokeh app
-  mesograph-app:
-    image: mesograph-app
-    container_name: mesograph-app
+  demo-app:
+    image: demo-app
+    container_name: demo-app
     build:
       context: .
       dockerfile: DockerfileB
     depends_on:
-        - tile-service-mg
-    #ports:
-     # - 5100:5100
+        - tile-service
+    ports:
+      - 5100:5100
     restart: on-failure
     env_file:
       - .env
     volumes:
-      - ../meso_data/:/meso_data
+      - ../app_data/:/app_data
+      - ../app_data/:/tiatoolbox/tiatoolbox/visualization/bokeh_app/static
+    networks:
+      - tia-demos
     command: >
-      sh -c "bokeh serve ./tiatoolbox/visualization/bokeh_app --log-level=debug --allow-websocket-origin="*" --port 5100 --use-xheaders --unused-session-lifetime 1000 --check-unused-sessions 1000 --args /meso_data"
+      sh -c "bokeh serve ./tiatoolbox/visualization/bokeh_app --log-level=debug --allow-websocket-origin="*" --port 5100 --use-xheaders --unused-session-lifetime 10000 --check-unused-sessions 5000 --keep-alive 0 --args /app_data"
 
   # serves the tiles
-  tile-service-mg:
-    image: tile-service-mg
-    container_name: tile-service-mg
+  tile-service:
+    image: tile-service
+    container_name: tile-service
     build:
       context: .
       dockerfile: DockerfileTS
-    #ports:
-      #- 5000:5000
+    ports:
+      - 5000:5000
     restart: on-failure
     volumes:
-      - ../meso_data/:/meso_data
+      - ../app_data/:/app_data
+    networks:
+      - tia-demos
 
 networks:
-  default:
-    name: meso-app-network
+  tia-demos:
