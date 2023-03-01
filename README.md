@@ -154,6 +154,10 @@ A json config file can be placed in the overlays folder, to customize various as
             },
     "auto_load": 1,     # if 1, upon opening a slide will also load all annotations associated with it
     "default_cprop": "some_property",     # default property to color annotations by
+    "default_type_cprop": {               # a property to colour a specific type by
+    "type": "Gland",
+    "cprop": "Explanation"
+    },
     "first_slide": "slideA.svs",            # initial slide to open upon launching viewer
     "UI_settings": {
         "blur_radius": 0,           # applies a blur to rendererd annotations
