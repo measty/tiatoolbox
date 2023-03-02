@@ -1,16 +1,30 @@
 This visualization tool is in the process of being added to tiatoolbox, but for the moment is not usable there. This tiatoolbox fork makes it available, but it is a work in progress and will probably have a few issues. If you find one let me know! also, if there is any sort of visualization task you'd like to do which seems like it might fit in this tool but which can't be easily done with it at the moment, please suggest it.
 
-## Setup
+# Setup
 
-Install tiatoolbox into a conda environment as normal from this fork.\
-Install a couple of additional dependencies with:
+## If you already have a 'develop' tiatoolbox install
+
+If you already have tiatoolbox set up for development, with paths set up to your local tiatoolbox repository, it should be sufficient to crete a new branch for your local tiatoolbox git from this repository, and switch to that when you want to do some visualization stuff.
+
+git remote add tiavis https://github.com/measty/tiatoolbox\
+git fetch tiavis\
+git checkout -b feature-add-gui tiavis/feature-add-gui
+
+You will also need to add a couple of extra packages to your environment:
 
 conda install bokeh -c bokeh\
 conda install flask-cors
 
-enter command:\
-python setup.py install\
-while in the cloned tiatoolbox top directory.
+## For most other cases
+
+Install tiatoolbox into a new conda environment as normal from this fork. The easiest way to do this would be using pip:
+
+conda create -n tiatoolbox-vis python=3.9\
+pip install git+https://github.com/measty/tiatoolbox.git@feature-add-gui
+
+Though you could use any of the methods described in the tiatoolbox docs at the bottom of the readme.
+
+# Usage
 
 start the interface using:
 
@@ -66,7 +80,9 @@ Most use-cases should be covered in there, or something close enough that a few 
 
 ### Heatmaps:
 
-will display a low-res heatmap in .jpg or .png format. Should be the same aspect ratio as the WSI it will be overlaid on.
+will display a low-res heatmap in .jpg or .png format. Should be the same aspect ratio as the WSI it will be overlaid on. When creating the image, keep in mind that white regions (255,255,255) will be made transparent.
+
+Single channel images can also be used but are not recommended; they should take values between 0 and 255 and will simply be put through a viridis colormap. 0 values will become white background.
 
 ### Whole Slide Overlays:
 
@@ -83,14 +99,25 @@ graph_dict = {  'edge_index': 2 x n_edges array of indices of pairs of connected
 		}
 ```
 
+Additional features can be added to nodes by adding extra keys to the dictionary, eg:
+
+```graph_dict = {  'edge_index': 2 x n_edges array of indices of pairs of connected nodes
+    'coordinates': n x 2 array of x,y coordinates for each graph node
+    'feats': n x n_features array of features for each node
+    'feat_names': list n_features names for each feature
+    }
+```
+
+It will be possible to colour the nodes by these features in the interface, and the top 10 will appear in a tooltip when hovering over a node.
+
 ## Other stuff:
 
 ### Colormaps/colouring by score:
 
-Once you have selected a slide with the slide dropdown, you can add any number of overlays by repeatedly choosing files containing overlays from the overlay drop menu. They will be put on there as separate layers. In the case of segmentations, if your segmentations have the 'type' property as one of their properties, this can additionally be used to show/hide annotations of that specific type. Colors can be individually selected for each type also if the randomly-generated colour scheme is not suitable.
+Once you have selected a slide with the slide dropdown, you can overlays by repeatedly choosing files containing overlays from the overlay drop menu. They will be put on there as separate layers. In the case of segmentations, if your segmentations have the 'type' property as one of their properties, this can additionally be used to show/hide annotations of that specific type. Colors can be individually selected for each type also if the randomly-generated colour scheme is not suitable.
 
-You can select the property that will be used to colour annotations in the colour_prop box. The corresponding property should be either categorical (strings or ints), in which case a dict-based colour mapping should be used, or a float between 0-1 in which case a matplotlib colourmap should be applied.
-There is also the option for the special case 'color' to be used - if your annotations have a property called color, this will be assumed to be an rgb value for each annotation which will be used directly without any mapping.
+You can select the property that will be used to colour annotations in the colour_by box. The corresponding property should be either categorical (strings or ints), in which case a dict-based colour mapping should be used, or a float between 0-1 in which case a matplotlib colourmap should be applied.
+There is also the option for the special case 'color' to be used - if your annotations have a property called color, this will be assumed to be an rgb value in the form of a tuple (r, g, b) of floats between 0-1 for each annotation which will be used directly without any mapping.
 
 The 'colour type by property' box allows annotations of the specified type to be coloured by a different property to the 'global' one. For example, this could be used to have all detections coloured according to their type, but for Glands, colour by some feature describing them instead.
 
@@ -109,11 +136,74 @@ By default, the interface is set up to show only larger annotations while zoomed
 There are a few options for how annotations are displayed. You can change the colourmap used in the colormap field if you are colouring objects according to a continuous property (should be between 0-1) - by entering the text of a matplotlib cmap.
 The buttons 'filled', 'mpp', 'grid', respectively toggle between filled and outline only rendering of annotations, using mpp or baseline pixels as the scale for the plot, and showing a grid overlay.
 
+A filter can be applied to annotations using the filter box. For example, entering props\['score'\]>0.5 would show only annotations for which the 'score' property  is greater than 0.5.
+See the annotation store documentation on valid 'where' statements for more details.
+
+### Config files
+
+A json config file can be placed in the overlays folder, to customize various aspects of the UI and annotation display when visualizing overlays in that location. This is especially useful for customising online demos. An example .json explaining all the fields available is below:
+
+```
+{
+    "colour_dict": {
+        "typeA": [252, 161, 3, 255],   # annotations whose 'type' property matches these, will display in the specified color
+        "typeB": [3, 252, 40, 255]
+    },
+    "initial_views": {
+        "slideA": [0,19000,35000,44000],    # if a slide with specified name is opened, initial view window will be set to this
+        "slideB": [44200,59100,69700,76600]
+            },
+    "auto_load": 1,     # if 1, upon opening a slide will also load all annotations associated with it
+    "default_cprop": "some_property",     # default property to color annotations by
+    "default_type_cprop": {               # a property to colour a specific type by
+    "type": "Gland",
+    "cprop": "Explanation"
+    },
+    "first_slide": "slideA.svs",            # initial slide to open upon launching viewer
+    "UI_settings": {
+        "blur_radius": 0,           # applies a blur to rendererd annotations
+        "edge_thickness": 0,        # thickness of boundaries drawn around annotation geometries (0=off)
+        "mapper": "jet",            # default colormapper to use when coloring by a continuous property
+        "max_scale": 32             # controls zoom level at which small annotations are no longer rendered (larger val->smaller
+    },                              # annotations visible when zoomed out)
+    "opts": {
+        "edges_on": 0,              # graph edges are shown or hidden by default
+        "nodes_on": 1,              # graph nodes are shown or hidden by default
+        "colorbar_on": 1,           # whether colorbar is shown below main window
+        "hover_on": 1
+    },
+    "UI_elements_1": {              # controls which UI elements are visible
+        "slide_select": 1,          # slide select box
+        "layer_drop": 1,            # overlay select drop down
+        "slide_row": 1,             # slide alpha toggle and slider
+        "overlay_row": 1,           # overlay alpha toggle and slider
+        "filter_input": 1,          # filter text input box
+        "cprop_input": 1,           # box to select which property to color annotations by ('color by' box)
+        "cmap_row": 1,              # row of UI elements with colormap select, blur, max_scale
+        "type_cmap_select": 1,      # UI element to select a secondary colormap for a specific type (i.e 'color type by' box)
+        "model_row": 0,             # UI elements to chose and run a model
+        "type_select_row": 1        # buttom group for toggling specific types of annotations on/off
+    },
+    "UI_elements_2": {              # controls visible UI elements on second tab in UI
+        "opt_buttons": 1,           # UI elements providing a few options including if annotations should be filled/outline only
+        "pt_size_spinner": 1,       # control for point size and graph node size
+        "edge_size_spinner": 1,     # control for edge thickness
+        "res_switch": 1,            # allows to switch to lower res tiles for faster loading
+        "mixing_type_select": 1,    # select mixing type for multi-property cmap builder
+        "cmap_builder_input": 1,    # property select box for multi-prop cmap builder
+        "cmap_picker_column": 1,    # controls color chosen for each property in multi-prop cmap
+        "cmap_builder_button": 1    # button to build the multi-prop cmap
+    }
+    }
+```
+
 <p align="center">
   <img src="https://raw.githubusercontent.com/TissueImageAnalytics/tiatoolbox/develop/docs/tiatoolbox-logo.png">
 </p>
 <h1 align="center">TIA Toolbox</h1>
-  <a href="https://badge.fury.io/py/tiatoolbox">
+<h3 align="center">Computational Pathology Toolbox developed at the TIA Centre</h3>
+
+<a href="https://badge.fury.io/py/tiatoolbox">
     <img src="https://badge.fury.io/py/tiatoolbox.svg" alt="PyPI Status" />
   </a>
     <a href="https://pepy.tech/project/tiatoolbox">
@@ -127,9 +217,12 @@ The buttons 'filled', 'mpp', 'grid', respectively toggle between filled and outl
             <img src="https://shields.io/conda/dn/conda-forge/tiatoolbox"  alt="conda-forge downloads"/>
     </a>
   <br>
-  <a href="https://github.com/TissueImageAnalytics/tiatoolbox/tree/master#license">
-      <img src="https://img.shields.io/badge/license-BSD--3--clause-orange"  alt="License BSD-3-Clause"/>
+  <a href="https://tia-toolbox.readthedocs.io/en/latest/?badge=latest">
+    <img src="https://readthedocs.org/projects/tia-toolbox/badge/?version=latest" alt="Documentation Status" />
   </a>
+  <br>
+  <a href="https://github.com/TissueImageAnalytics/tiatoolbox/blob/develop/LICENSE">
+    <img alt="GitHub license" src="https://img.shields.io/github/license/TissueImageAnalytics/tiatoolbox"></a>
   <br>
   <br>
   <a href="https://github.com/TissueImageAnalytics/tiatoolbox/actions/workflows/pip-install.yml">
@@ -141,40 +234,12 @@ The buttons 'filled', 'mpp', 'grid', respectively toggle between filled and outl
   <a href="https://github.com/TissueImageAnalytics/tiatoolbox/actions/workflows/python-package.yml">
     <img src="https://github.com/TissueImageAnalytics/tiatoolbox/actions/workflows/python-package.yml/badge.svg"  alt="GitHub Workflow passing"/>
   </a>
-  <a href="https://tia-toolbox.readthedocs.io/en/latest/?badge=latest">
-    <img src="https://readthedocs.org/projects/tia-toolbox/badge/?version=latest" alt="Documentation Status" />
-  </a>
   <a href="https://codecov.io/gh/TissueImageAnalytics/tiatoolbox">
       <img src="https://codecov.io/gh/TissueImageAnalytics/tiatoolbox/branch/master/graph/badge.svg?token=7UZEMacQHm" alt="Code Coverage"/>
   </a>
   <br><br>
-  <a href="https://doi.org/10.1038/s43856-022-00186-5"><img src="https://img.shields.io/badge/DOI-10.1038%2Fs43856--022--00186--5-blue" alt="DOI"></a>
-
-Computational Pathology Toolbox developed at the TIA Centre
-
-## Cite this repository
-
-If you find TIAToolbox useful or use it in your research, please consider citing our paper:
-
-Pocock, J. et al. TIAToolbox as an end-to-end library for advanced tissue image analytics. Communications Medicine 2, 120 (2022).
-
-```
-@article{
-    Pocock2022,
-    author = {Pocock, Johnathan and Graham, Simon and Vu, Quoc Dang and Jahanifar, Mostafa and Deshpande, Srijay and Hadjigeorghiou, Giorgos and Shephard, Adam and Bashir, Raja Muhammad Saad and Bilal, Mohsin and Lu, Wenqi and Epstein, David and Minhas, Fayyaz and Rajpoot, Nasir M and Raza, Shan E Ahmed},
-    doi = {10.1038/s43856-022-00186-5},
-    issn = {2730-664X},
-    journal = {Communications Medicine},
-    month = {sep},
-    number = {1},
-    pages = {120},
-    publisher = {Springer US},
-    title = {{TIAToolbox as an end-to-end library for advanced tissue image analytics}},
-    url = {https://www.nature.com/articles/s43856-022-00186-5},
-    volume = {2},
-    year = {2022}
-}
-```
+  <a href="#cite-this-repository"><img src="https://img.shields.io/badge/Cite%20this%20repository-BibTeX-brightgreen" alt="DOI"></a> <a href="https://doi.org/10.1038/s43856-022-00186-5"><img src="https://img.shields.io/badge/DOI-10.1038%2Fs43856--022--00186--5-blue" alt="DOI"></a>
+<br>
 
 ## Getting Started
 
@@ -264,6 +329,28 @@ or
 The source code TIA Toolbox (tiatoolbox) as hosted on GitHub is released under the [The 3-Clause BSD License].
 
 The full text of the licence is included in [LICENSE](https://raw.githubusercontent.com/TissueImageAnalytics/tiatoolbox/develop/LICENSE).
+
+### Cite this repository
+
+If you find TIAToolbox useful or use it in your research, please consider citing our paper:
+
+```
+@article{
+    Pocock2022,
+    author = {Pocock, Johnathan and Graham, Simon and Vu, Quoc Dang and Jahanifar, Mostafa and Deshpande, Srijay and Hadjigeorghiou, Giorgos and Shephard, Adam and Bashir, Raja Muhammad Saad and Bilal, Mohsin and Lu, Wenqi and Epstein, David and Minhas, Fayyaz and Rajpoot, Nasir M and Raza, Shan E Ahmed},
+    doi = {10.1038/s43856-022-00186-5},
+    issn = {2730-664X},
+    journal = {Communications Medicine},
+    month = {sep},
+    number = {1},
+    pages = {120},
+    publisher = {Springer US},
+    title = {{TIAToolbox as an end-to-end library for advanced tissue image analytics}},
+    url = {https://www.nature.com/articles/s43856-022-00186-5},
+    volume = {2},
+    year = {2022}
+}
+```
 
 ### Auxiliary Files
 

@@ -173,30 +173,6 @@ def fill_store(cell_grid, points_grid):
     return _fill_store
 
 
-# Generate Parameterized Tests
-
-
-def pytest_generate_tests(metafunc):
-    """Generate (parameterize) test scenarios.
-
-    Adapted from pytest documentation. For more information on
-    parameterized tests see:
-    https://docs.pytest.org/en/6.2.x/example/parametrize.html#a-quick-port-of-testscenarios
-
-    """
-    # Return if the test is not part of a class
-    if metafunc.cls is None:
-        return
-    id_list = []
-    arg_values = []
-    for scenario in metafunc.cls.scenarios:
-        id_list.append(scenario[0])
-        items = scenario[1].items()
-        arg_names = [x[0] for x in items]
-        arg_values.append([x[1] for x in items])
-    metafunc.parametrize(arg_names, arg_values, ids=id_list, scope="class")
-
-
 # Class Specific Tests
 
 
@@ -861,9 +837,9 @@ class TestStore:
         _, store = fill_store(store_cls, tmp_path / "polygon.db")
         com = annotations_center_of_mass(list(store.values()))
         store.to_geojson(tmp_path / "polygon.json")
-        # load the store translated relative to (100,100) and scaled by 2
+        # load the store translated so that origin is (100,100) and scaled by 2
         store2 = store_cls.from_geojson(
-            tmp_path / "polygon.json", scale_factor=2, relative_to=(100, 100)
+            tmp_path / "polygon.json", scale_factor=(2, 2), origin=(100, 100)
         )
         assert len(store) == len(store2)
         com2 = annotations_center_of_mass(list(store2.values()))
@@ -871,7 +847,7 @@ class TestStore:
         assert com2.y == pytest.approx((com.y - 100) * 2)
 
     @staticmethod
-    def test_transform_db(fill_store, tmp_path, store_cls):
+    def test_transform(fill_store, tmp_path, store_cls):
         """Test translating a store."""
 
         def test_translation(geom):
@@ -880,7 +856,7 @@ class TestStore:
 
         _, store = fill_store(store_cls, tmp_path / "polygon.db")
         com = annotations_center_of_mass(list(store.values()))
-        store.transform_db(test_translation)
+        store.transform(test_translation)
         com2 = annotations_center_of_mass(list(store.values()))
         assert com2.x - com.x == pytest.approx(100)
         assert com2.y - com.y == pytest.approx(100)

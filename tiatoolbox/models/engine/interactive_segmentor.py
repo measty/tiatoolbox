@@ -3,19 +3,19 @@ import os
 import pathlib
 import warnings
 from collections import OrderedDict
-from typing import Tuple, List
+from typing import List, Tuple
+
 import joblib
 import matplotlib.pyplot as plt
-
 import numpy as np
 import torch
 import tqdm
-from tiatoolbox.models.architecture.nuclick import NuClick
 
+from tiatoolbox.models.architecture import get_pretrained_model
+from tiatoolbox.models.architecture.nuclick import NuClick
 from tiatoolbox.models.dataset.interactive_segmentation import (
     InteractiveSegmentorDataset,
 )
-from tiatoolbox.models.architecture import get_pretrained_model
 from tiatoolbox.models.models_abc import IOConfigABC
 from tiatoolbox.utils import misc
 
@@ -161,10 +161,10 @@ class InteractiveSegmentor:
             batch_output_predictions = NuClick.postproc(
                 preds=batch_output_probabilities,
                 thresh=0.5,
-                minSize=10,
-                minHole=30,
-                doReconstruction=True,
-                nucPoints=nuc_points,
+                min_size=10,
+                min_hole_size=30,
+                do_reconstruction=True,
+                nuc_points=nuc_points,
             )
 
             # tolist might be very expensive
@@ -306,7 +306,7 @@ class InteractiveSegmentor:
 
         if save_dir is not None:
             save_dir = pathlib.Path(save_dir)
-            save_dir.mkdir(parents=True, exist_ok=False)
+            save_dir.mkdir(parents=True, exist_ok=True)
 
         # None if no output
         outputs = None

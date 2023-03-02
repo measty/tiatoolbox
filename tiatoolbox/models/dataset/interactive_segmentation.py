@@ -1,9 +1,10 @@
-import numpy as np
 import os
 
+import numpy as np
+
 from tiatoolbox.models.dataset.dataset_abc import PatchDatasetABC
-from tiatoolbox.utils.misc import read_locations
 from tiatoolbox.tools.patchextraction import get_patch_extractor
+from tiatoolbox.utils.misc import read_locations
 
 
 class InteractiveSegmentorDataset(PatchDatasetABC):

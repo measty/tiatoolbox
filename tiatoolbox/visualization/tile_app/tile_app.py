@@ -7,7 +7,6 @@ app = TileServer(
     layers={
         # "slide": wsi[0],
     },
-    state={},
 )
 CORS(app, send_wildcard=True)
 # app.run(host="0.0.0.0", threaded=False)

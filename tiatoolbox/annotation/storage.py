@@ -47,6 +47,7 @@ from typing import (
     IO,
     Any,
     Callable,
+    DefaultDict,
     Dict,
     Generator,
     Iterable,
@@ -982,13 +983,16 @@ class AnnotationStore(ABC, MutableMapping):
             """  # noqa Q440, Q441
             if select == "*" and unique:
                 raise ValueError("unique=True cannot be used with select='*'")
+
             if select == "*":  # Special case for all properties
                 return annotation.properties
+
             if isinstance(select, str):
                 py_locals = {"props": annotation.properties}
                 return eval(select, PY_GLOBALS, py_locals)  # skipcq: PYL-W0123
-            elif isinstance(select, bytes):
+            if isinstance(select, bytes):
                 return pickle.loads(select)(annotation.properties)  # skipcq: BAN-B301
+
             return select(annotation.properties)
 
         return self._handle_pquery_results(
@@ -1122,19 +1126,19 @@ class AnnotationStore(ABC, MutableMapping):
     @classmethod
     def from_geojson(
         cls,
-        full_path: Union[IO, str],
-        scale_factor: float = 1,
-        relative_to: Tuple[float, float] = None,
+        fp: Union[IO, str],
+        scale_factor: Tuple[float, float] = (1, 1),
+        origin: Tuple[float, float] = (0, 0),
     ) -> "AnnotationStore":
         """Create a new database with annotations loaded from a geoJSON file.
         Args:
             full_path (Union[IO, str, Path]):
                 The file path or handle to load from.
-            scale_factor (float):
-                The scale factor to use when loading the annotations. All coordinates
-                will be multiplied by this factor to allow import of annotations saved
-                at non-baseline resolution.
-            relative_to [float, float]:
+            scale_factor (Tuple[float, float]):
+                The scale factor in each dimension to use when loading the annotations.
+                All coordinates will be multiplied by this factor to allow import of
+                annotations saved at non-baseline resolution.
+            origin (Tuple[float, float]):
                 The x and y coordinates to use as the origin for the annotations.
 
         Returns:
@@ -1143,14 +1147,14 @@ class AnnotationStore(ABC, MutableMapping):
 
         """
         store = cls()
-        store.add_from_geojson(full_path, scale_factor, relative_to=relative_to)
+        store.add_from_geojson(fp, scale_factor, origin=origin)
         return store
 
     def add_from_geojson(
         self,
-        full_path: Union[IO, str],
-        scale_factor: float = 1,
-        relative_to: Tuple[float, float] = None,
+        fp: Union[IO, str],
+        scale_factor: Tuple[float, float] = (1, 1),
+        origin: Tuple[float, float] = (0, 0),
     ) -> None:
         """Add annotations from a .geojson file to an existing store. Make
         a best effort to create valid shapely geometries from provided contours.
@@ -1162,34 +1166,34 @@ class AnnotationStore(ABC, MutableMapping):
                 The scale factor to use when loading the annotations. All coordinates
                 will be multiplied by this factor to allow import of annotations saved
                 at non-baseline resolution.
-            relative_to [float, float]:
+            origin [float, float]:
                 The x and y coordinates to use as the origin for the annotations.
 
         """
 
-        def transform_geom(geom):
+        def transform_geometry(geom):
             """Helper function to transform a geometry if needed."""
-            if relative_to is not None:
-                # transform coords to be relative to given pt.
-                geom = translate(geom, -relative_to[0], -relative_to[1])
-            if scale_factor != 1:
+            if origin != (0, 0):
+                # transform coords to be relative to given origin.
+                geom = translate(geom, -origin[0], -origin[1])
+            if scale_factor != (1, 1):
                 geom = scale(
                     geom,
-                    xfact=scale_factor,
-                    yfact=scale_factor,
+                    xfact=scale_factor[0],
+                    yfact=scale_factor[1],
                     origin=(0, 0, 0),
                 )
             return geom
 
         geojson = self._load_cases(
-            full_path=full_path,
+            fp=fp,
             string_fn=json.loads,
             file_fn=json.load,
         )
 
         annotations = [
             Annotation(
-                transform_geom(
+                transform_geometry(
                     feature2geometry(feature["geometry"]),
                 ),
                 feature["properties"],
@@ -1200,7 +1204,7 @@ class AnnotationStore(ABC, MutableMapping):
         print(f"added {len(annotations)} annotations")
         self.append_many(annotations)
 
-    def to_geojson(self, full_path: Optional[IO] = None) -> Optional[str]:
+    def to_geojson(self, fp: Optional[Union[IO, str, Path]] = None) -> Optional[str]:
         """Serialise the store to geoJSON.
 
         For more information on the geoJSON format see:
@@ -1358,7 +1362,7 @@ class AnnotationStore(ABC, MutableMapping):
         )
         return pd.json_normalize(features).set_index("key")
 
-    def transform_db(self, transform: Callable[[Geometry], Geometry]) -> None:
+    def transform(self, transform: Callable[[Geometry], Geometry]) -> None:
         """Transform all annotations in the store using provided function.
 
         Useful for transforming coordinates from slide space into
@@ -1458,6 +1462,12 @@ class SQLiteStore(AnnotationStore):
 
     Uses and rtree index for fast spatial queries.
 
+    Version History:
+    1.0.0:
+        Initial version.
+    1.0.1 (07/10/2022):
+        Added optional "area" column and queries sorted/filtered by area.
+
     """
 
     @classmethod  # noqa: A003
@@ -1516,7 +1526,7 @@ class SQLiteStore(AnnotationStore):
         # Set up metadata
         self.metadata = SQLiteMetadata(self.con)
         if not exists:
-            self.metadata["version"] = "1.0.0"
+            self.metadata["version"] = "1.0.1"
             self.metadata["compression"] = compression
             self.metadata["compression_level"] = compression_level
 
@@ -1639,7 +1649,9 @@ class SQLiteStore(AnnotationStore):
             return zlib.compress(data, level=self.compression_level)
         raise ValueError("Unsupported compression method.")
 
-    def _unpack_geometry(self, data: Union[str, bytes], cx: int, cy: int) -> Geometry:
+    def _unpack_geometry(
+        self, data: Union[str, bytes], cx: int, cy: int, as_raw: bool = False
+    ) -> Geometry:
         """Return the geometry using WKB data and rtree bounds index.
 
         For space optimisation, points are stored as centroids and all
@@ -1660,6 +1672,15 @@ class SQLiteStore(AnnotationStore):
                 The Shapely geometry.
 
         """
+        if as_raw:
+            if data is None:
+                return (
+                    np.uint8(0).tobytes()
+                    + np.uint32(1).tobytes()
+                    + np.double(cx).tobytes()
+                    + np.double(cy).tobytes()
+                )
+            return data if self.compression is None else zlib.decompress(data)
         return Point(cx, cy) if data is None else self.deserialize_geometry(data)
 
     def deserialize_geometry(  # skipcq: PYL-W0221
@@ -1943,9 +1964,11 @@ class SQLiteStore(AnnotationStore):
 
         if min_area is not None and "area" in self.table_columns:
             query_string += f"\nAND area > {min_area}"
-            print(min_area)
         elif min_area is not None:
-            raise ValueError("Cannot use `min_area` without an area column.")
+            raise ValueError(
+                """Cannot use `min_area` without an area column.
+            SQLiteStore.add_area_column() can be used to add an area column."""
+            )
 
         if unique:
             query_string = query_string.replace("SELECT", "SELECT DISTINCT")
@@ -1996,6 +2019,7 @@ class SQLiteStore(AnnotationStore):
         where: Optional[Predicate] = None,
         geometry_predicate: str = "intersects",
         min_area=None,
+        as_raw: bool = False,
     ) -> Dict[str, Annotation]:
         query_geometry = geometry
         cur = self._query(
@@ -2005,11 +2029,10 @@ class SQLiteStore(AnnotationStore):
             where=where,
             min_area=min_area,
         )
-        comp = self.metadata["compression"]
         if isinstance(where, Callable):
             return {
                 key: Annotation(
-                    geometry=self._unpack_geometry(blob, cx, cy),
+                    geometry=self._unpack_geometry(blob, cx, cy, as_raw=as_raw),
                     properties=json.loads(properties),
                 )
                 for key, properties, cx, cy, blob in cur.fetchall()
@@ -2017,7 +2040,7 @@ class SQLiteStore(AnnotationStore):
             }
         return {
             key: Annotation(
-                geometry=self._unpack_geometry(blob, cx, cy),
+                geometry=self._unpack_geometry(blob, cx, cy, as_raw=as_raw),
                 properties=json.loads(properties),
             )
             for key, properties, cx, cy, blob in cur.fetchall()
@@ -2030,7 +2053,7 @@ class SQLiteStore(AnnotationStore):
         min_area=None,
     ) -> Dict[str, Tuple[float, float, float, float]]:
         cur = self._query(
-            columns="[key], properties, min_x, min_y, max_x, max_y",
+            columns="[key], min_x, min_y, max_x, max_y",
             geometry=geometry,
             geometry_predicate="bbox_intersects",
             where=where,
@@ -2043,10 +2066,7 @@ class SQLiteStore(AnnotationStore):
                 for key, properties, *bounds in cur.fetchall()
                 if where(json.loads(properties))
             }
-        return {
-            key: Annotation(Polygon.from_bounds(*bounds), json.loads(properties))
-            for key, properties, *bounds in cur.fetchall()
-        }
+        return {key: bounds for key, *bounds in cur.fetchall()}
 
     @staticmethod
     def _handle_pickle_callable_pquery(
@@ -2079,8 +2099,18 @@ class SQLiteStore(AnnotationStore):
 
         """
 
-        def add_props_to_result(result, properties):
-            """Add the properties to the appropriate set in result."""
+        def add_props_to_result(
+            result: DefaultDict[str, set], properties: Dict[str, Any]
+        ) -> None:
+            """Add the properties to the appropriate set in result.
+
+            Args:
+                result (DefaultDict[str, set]):
+                    The result dictionary to add the properties to.
+                properties (Dict[str, Any]):
+                    The properties to add to the result.
+
+            """
             # Get the selected values
             selection = select(properties)
             # Wrap scalar values into a tuple
@@ -2348,7 +2378,7 @@ class SQLiteStore(AnnotationStore):
         cur.execute("SELECT EXISTS(SELECT 1 FROM annotations WHERE [key] = ?)", (key,))
         return cur.fetchone()[0] == 1
 
-    def __getitem__(self, key: str) -> Annotation:
+    def __getitem__(self, key: str, as_raw=False) -> Annotation:
         cur = self.con.cursor()
         cur.execute(
             """
@@ -2367,6 +2397,7 @@ class SQLiteStore(AnnotationStore):
             serialised_geometry,
             cx,
             cy,
+            as_raw=as_raw,
         )
         return Annotation(geometry, properties)
 
