@@ -34,7 +34,6 @@ from bokeh.models import (
     HoverTool,
     LinearColorMapper,
     MultiChoice,
-    Panel,
     PointDrawTool,
     RadioGroup,
     Select,
