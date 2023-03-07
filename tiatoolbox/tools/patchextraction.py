@@ -158,6 +158,9 @@ class PatchExtractor(PatchExtractorABC):
         self.n = 0
         return self
 
+    def __len__(self):
+        return self.locations_df.shape[0]
+
     def __next__(self):
         n = self.n
 
