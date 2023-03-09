@@ -16,7 +16,7 @@ import warnings
 import zipfile
 from io import BytesIO
 from pathlib import Path
-from typing import Iterable, Tuple, Union
+from typing import Callable, Iterable, Tuple, Union
 
 import defusedxml
 import numpy as np
@@ -55,11 +55,13 @@ class TilePyramidGenerator:
         tile_size: int = 256,
         downsample: int = 2,
         overlap: int = 0,
+        post_proc: Callable = None,
     ) -> None:
         self.wsi = wsi
         self.tile_size = tile_size
         self.overlap = overlap
         self.downsample = downsample
+        self.post_proc = post_proc
 
     @property
     def output_tile_size(self) -> int:
@@ -136,6 +138,8 @@ class TilePyramidGenerator:
             bounds, resolution=self.wsi.info.level_count - 1, units="level"
         )
         thumb = imresize(thumb, output_size=out_dims)
+        if self.post_proc:
+            thumb = self.post_proc(thumb)
         return Image.fromarray(thumb)
 
     def get_tile(
@@ -225,6 +229,8 @@ class TilePyramidGenerator:
         # is this needed? get rid of it or do a better way
         alph = 255 - np.all(tile == 0, axis=2).astype("uint8") * 255
         tile = np.dstack((tile, alph))
+        if self.post_proc:
+            tile = self.post_proc(tile)
         return Image.fromarray(tile)
 
     def tile_path(self, level: int, x: int, y: int) -> Path:
@@ -477,6 +483,7 @@ class AnnotationTileGenerator(ZoomifyGenerator):
         tile_size: int = 256,
         downsample: int = 2,
         overlap: int = 0,
+        post_proc: Callable = None,
     ):
         super().__init__(None, tile_size, downsample, overlap)
         self.info = info
@@ -488,6 +495,7 @@ class AnnotationTileGenerator(ZoomifyGenerator):
         # factor of 1.5 below chosen empirically as a good balance between
         # empirical visual quality and added rendering time.
         self.overlap = int(1.5 * renderer.blur_radius)
+        self.post_proc = post_proc
 
         output_size = [self.output_tile_size] * 2
         self.empty_img = Image.fromarray(
@@ -613,5 +621,6 @@ class AnnotationTileGenerator(ZoomifyGenerator):
         tile = self.renderer.render_annotations(
             self.store, bounds, scale, res, self.overlap
         )
-
+        if self.post_proc is not None:
+            tile = self.post_proc(tile)
         return Image.fromarray(tile)

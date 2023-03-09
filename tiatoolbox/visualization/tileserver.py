@@ -15,6 +15,7 @@ from flask import Flask, Response, make_response, request, send_file
 from flask.templating import render_template
 from PIL import Image
 
+import tiatoolbox.visualization.bokeh_app.postproc_defs as postproc
 from tiatoolbox import data
 from tiatoolbox.annotation.storage import SQLiteStore
 from tiatoolbox.tools.pyramid import AnnotationTileGenerator, ZoomifyGenerator
@@ -150,6 +151,7 @@ class TileServer(Flask):
         self.route("/tileserver/build_cmap/<mix_type>/<cmap>/<cdict>", methods=["PUT"])(
             self.build_cmap
         )
+        self.route("/tileserver/add_post_proc", methods=["POST"])(self.add_post_proc)
         self.route("/tileserver/get_prop_names")(self.get_properties)
         self.route("/tileserver/get_prop_values/<prop>")(self.get_property_values)
         self.route("/tileserver/reset/<user>")(self.reset)
@@ -611,6 +613,14 @@ class TileServer(Flask):
             unique=True,
         )
         return json.dumps(list(ann_props))
+
+    def add_post_proc(self):
+        user = self._get_user()
+        post_processor = json.loads(request.form["name"])
+        kwargs = json.loads(request.form["kwargs"])
+        pp_class = getattr(postproc, post_processor)
+        self.tia_pyramids[user][request.form["layer"]].post_proc = pp_class(**kwargs)
+        return "done"
 
     def commit_db(self, save_path):
         """Commit changes to the current store.
