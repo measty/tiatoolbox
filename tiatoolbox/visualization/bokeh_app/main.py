@@ -1318,6 +1318,41 @@ def subcat_select_cb(attr, old, new):
     ]
 
 
+def stain_select_cb(attr, old, new):
+    stain = UI["stain_select"].options[new]
+    wed = UI["wed_slider"].value
+    weh = UI["weh_slider"].value
+    wdh = UI["wdh_slider"].value
+    wde = UI["wde_slider"].value
+    UI["s"].put(
+        f"http://{host2}:5000/tileserver/change_demux/{stain}/{wed}/{weh}/{wdh}/{wde}"
+    )
+
+
+def demux_slider_cb(attr, old, new):
+    stain = UI["stain_select"].value
+    wed = UI["wed_slider"].value
+    weh = UI["weh_slider"].value
+    wdh = UI["wdh_slider"].value
+    wde = UI["wde_slider"].value
+    UI["s"].put(
+        f"http://{host2}:5000/tileserver/change_demux/{stain}/{wed}/{weh}/{wdh}/{wde}"
+    )
+
+
+def add_postproc_cb(attr):
+    UI["s"].post(
+        f"http://{host2}:5000/tileserver/add_postproc",
+        data={
+            "name": "VirtualStainer",
+            "layer": "slide",
+            "kwargs": {
+                "load_path": slide_folder / f"{UI['vstate'].slide_path.stem}_info.pkl"
+            },
+        },
+    )
+
+
 # run NucleusInstanceSegmentor on a region of wsi defined by the box in box_source
 def segment_on_box(attr):
     print(UI["vstate"].types)
@@ -1780,6 +1815,23 @@ def make_window(vstate):
     mixing_type_select = RadioButtonGroup(
         labels=["lin", "max", "avg", "prod", "pow", "softm"], active=4
     )
+    add_postproc_button = Button(
+        label="Add Postproc",
+        button_type="success",
+        max_width=90,
+        sizing_mode="stretch_width",
+    )
+    stain_select = RadioButtonGroup(
+        labels=["H&E", "HD", "IHC"],
+        active=0,
+        width=100,
+        max_width=100,
+        sizing_mode="stretch_width",
+    )
+    weh_slider = Slider(start=0, end=1, value=0.5, step=0.01, title="weh")
+    wed_slider = Slider(start=0, end=1, value=0.5, step=0.01, title="wed")
+    wde_slider = Slider(start=0, end=1, value=0.5, step=0.01, title="wde")
+    wdh_slider = Slider(start=0, end=1, value=0.5, step=0.01, title="wdh")
 
     # associate callback functions to the widgets
     slide_alpha.on_change("value", slide_alpha_cb)
@@ -1807,6 +1859,12 @@ def make_window(vstate):
     cmap_builder_input.on_change("value", cmap_builder_cb)
     cmap_builder_button.on_click(cmap_builder_button_cb)
     subcat_select.on_change("value", subcat_select_cb)
+    add_postproc_button.on_click(add_postproc_cb)
+    stain_select.on_change("active", stain_select_cb)
+    weh_slider.on_change("value", demux_slider_cb)
+    wed_slider.on_change("value", demux_slider_cb)
+    wde_slider.on_change("value", demux_slider_cb)
+    wdh_slider.on_change("value", demux_slider_cb)
 
     vstate.cprop = default_cprop
 
