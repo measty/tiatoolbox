@@ -1305,7 +1305,7 @@ class WSIReader:
         """
         from tiatoolbox.tools import tissuemask
 
-        thumbnail = self.slide_thumbnail(resolution, units)
+        thumbnail = self.slide_thumbnail(resolution, units).copy()
         if method not in ["otsu", "morphological"]:
             raise ValueError(f"Invalid tissue masking method: {method}.")
         if method == "morphological":
@@ -1320,6 +1320,8 @@ class WSIReader:
             )
         elif method == "otsu":
             masker = tissuemask.OtsuTissueMasker(**masker_kwargs)
+        # replace 'pure white' pixels with 'off white' to avoid bad masks
+        thumbnail[np.all(thumbnail == 255, axis=2)] = 238
         mask_img = masker.fit_transform([thumbnail])[0]
         return VirtualWSIReader(mask_img.astype(np.uint8), info=self.info, mode="bool")
 
@@ -4025,7 +4027,8 @@ class DICOMWSIReader(WSIReader):
         _, constrained_read_size = utils.transforms.bounds2locsize(
             constrained_read_bounds
         )
-        im_region = wsi.read_region(location, read_level, constrained_read_size)
+        dicom_level = wsi.levels[read_level].level
+        im_region = wsi.read_region(location, dicom_level, constrained_read_size)
         im_region = np.array(im_region)
 
         # Apply padding outside of the slide area
@@ -4199,8 +4202,9 @@ class DICOMWSIReader(WSIReader):
             level_location, size_at_read_level, level_size
         )
         _, read_size = utils.transforms.bounds2locsize(read_bounds)
+        dicom_level = wsi.levels[read_level].level
         im_region = wsi.read_region(
-            location=location_at_baseline, level=read_level, size=read_size
+            location=location_at_baseline, level=dicom_level, size=read_size
         )
         im_region = np.array(im_region)
 

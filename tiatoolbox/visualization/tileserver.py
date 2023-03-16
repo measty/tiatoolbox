@@ -152,6 +152,10 @@ class TileServer(Flask):
             self.build_cmap
         )
         self.route("/tileserver/add_post_proc", methods=["POST"])(self.add_post_proc)
+        self.route(
+            "/tileserver/change_demux/<stain>/<float:wed>/<float:weh>/<float:wdh>/<float:wde>",
+            methods=["PUT"],
+        )(self.change_demux)
         self.route("/tileserver/get_prop_names")(self.get_properties)
         self.route("/tileserver/get_prop_values/<prop>")(self.get_property_values)
         self.route("/tileserver/reset/<user>")(self.reset)
@@ -619,7 +623,20 @@ class TileServer(Flask):
         post_processor = json.loads(request.form["name"])
         kwargs = json.loads(request.form["kwargs"])
         pp_class = getattr(postproc, post_processor)
-        self.tia_pyramids[user][request.form["layer"]].post_proc = pp_class(**kwargs)
+        self.tia_pyramids[user][json.loads(request.form["layer"])].post_proc = pp_class(
+            **kwargs
+        )
+        return "done"
+
+    def change_demux(self, stain, wed, weh, wdh, wde):
+        user = self._get_user()
+        self.tia_pyramids[user]["slide"].post_proc.stains = stain
+        self.tia_pyramids[user]["slide"].post_proc.coupling_coeffs = {
+            "wed": wed,
+            "weh": weh,
+            "wdh": wdh,
+            "wde": wde,
+        }
         return "done"
 
     def commit_db(self, save_path):

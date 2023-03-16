@@ -632,6 +632,7 @@ class ViewerState:
         self.current_model = "hovernet"
         self.props = []
         self.props_old = []
+        self.to_update = set()
         self.graph = []
         self.res = 2
 
@@ -740,6 +741,7 @@ def res_switch_cb(attr, old, new):
     else:
         raise ValueError("Invalid resolution")
     UI["vstate"].update_state = 1
+    UI["vstate"].to_update.update(["overlay", "slide"])
 
 
 def options_check_cb(attr, old, new):
@@ -838,6 +840,7 @@ def filter_input_cb(attr, old, new):
     # UI["s"].get(f"http://{host2}:5000/tileserver/change_predicate/{new}")
     build_predicate()
     UI["vstate"].update_state = 1
+    UI["vstate"].to_update.update(["overlay"])
 
 
 def cprop_input_cb(attr, old, new):
@@ -852,6 +855,7 @@ def cprop_input_cb(attr, old, new):
     update_renderer("mapper", cmap)
     UI["s"].put(f"http://{host2}:5000/tileserver/change_color_prop/{new[0]}")
     UI["vstate"].update_state = 1
+    UI["vstate"].to_update.update(["overlay"])
 
 
 def cmap_builder_cb(attr, old, new):
@@ -898,6 +902,7 @@ def cmap_builder_button_cb():
         f"http://{host2}:5000/tileserver/build_cmap/{UI['mixing_type_select'].labels[UI['mixing_type_select'].active]}/{UI['cmap_select'].value}/{json.dumps(cmap)}"
     )
     UI["vstate"].update_state = 1
+    UI["vstate"].to_update.update(["overlay"])
 
 
 def set_graph_alpha(g_renderer, value):
@@ -929,6 +934,7 @@ def pt_size_cb(attr, old, new):
 def edge_size_cb(attr, old, new):
     update_renderer("edge_thickness", new)
     UI["vstate"].update_state = 1
+    UI["vstate"].to_update.update(["overlay"])
 
 
 def opt_buttons_cb(attr, old, new):
@@ -941,6 +947,7 @@ def opt_buttons_cb(attr, old, new):
         update_renderer("thickness", 1)
     if old_thickness != UI["vstate"].thickness:
         UI["vstate"].update_state = 1
+        UI["vstate"].to_update.update(["overlay"])
     if 1 in new:
         UI["p"].xaxis[0].formatter = UI["vstate"].micron_formatter
         UI["p"].yaxis[0].formatter = UI["vstate"].micron_formatter
@@ -963,16 +970,19 @@ def cmap_select_cb(attr, old, new):
     update_renderer("mapper", new)
     # change_tiles('overlay')
     UI["vstate"].update_state = 1
+    UI["vstate"].to_update.update(["overlay"])
 
 
 def blur_spinner_cb(attr, old, new):
     update_renderer("blur_radius", new)
     UI["vstate"].update_state = 1
+    UI["vstate"].to_update.update(["overlay"])
 
 
 def scale_spinner_cb(attr, old, new):
     update_renderer("max_scale", new)
     UI["vstate"].update_state = 1
+    UI["vstate"].to_update.update(["overlay"])
 
 
 def slide_select_cb(attr, old, new):
@@ -1154,6 +1164,7 @@ def layer_select_cb(attr):
     build_predicate()
     # change_tiles('overlay')
     UI["vstate"].update_state = 1
+    UI["vstate"].to_update.update(["overlay"])
 
 
 def fixed_layer_select_cb(obj, attr):
@@ -1206,6 +1217,7 @@ def color_input_cb(obj, attr, old, new):
         update_renderer("mapper", UI["vstate"].mapper)
     # change_tiles('overlay')
     UI["vstate"].update_state = 1
+    UI["vstate"].to_update.update(["overlay"])
 
 
 def bind_cb_obj(cb_obj, cb):
@@ -1253,6 +1265,7 @@ def type_cmap_cb(attr, old, new):
             f"http://{host2}:5000/tileserver/change_secondary_cmap/{'None'}/{'None'}/viridis"
         )
         UI["vstate"].update_state = 1
+        UI["vstate"].to_update.update(["overlay"])
         return
     if len(new) == 1:
         # find out what still has to be selected
@@ -1293,6 +1306,7 @@ def type_cmap_cb(attr, old, new):
         )
         UI["color_bar"].visible = True
         UI["vstate"].update_state = 1
+        UI["vstate"].to_update.update(["overlay"])
 
 
 def save_cb(attr):
@@ -1319,7 +1333,7 @@ def subcat_select_cb(attr, old, new):
 
 
 def stain_select_cb(attr, old, new):
-    stain = UI["stain_select"].options[new]
+    stain = UI["stain_select"].labels[new]
     wed = UI["wed_slider"].value
     weh = UI["weh_slider"].value
     wdh = UI["wdh_slider"].value
@@ -1327,30 +1341,47 @@ def stain_select_cb(attr, old, new):
     UI["s"].put(
         f"http://{host2}:5000/tileserver/change_demux/{stain}/{wed}/{weh}/{wdh}/{wde}"
     )
+    UI["vstate"].update_state = 1
+    UI["vstate"].to_update.update(["slide"])
 
 
 def demux_slider_cb(attr, old, new):
-    stain = UI["stain_select"].value
-    wed = UI["wed_slider"].value
-    weh = UI["weh_slider"].value
-    wdh = UI["wdh_slider"].value
-    wde = UI["wde_slider"].value
+    stain = UI["stain_select"].labels[UI["stain_select"].active]
+    wed = float(UI["wed_slider"].value)
+    weh = float(UI["weh_slider"].value)
+    wdh = float(UI["wdh_slider"].value)
+    wde = float(UI["wde_slider"].value)
     UI["s"].put(
         f"http://{host2}:5000/tileserver/change_demux/{stain}/{wed}/{weh}/{wdh}/{wde}"
     )
+    UI["vstate"].update_state = 1
+    UI["vstate"].to_update.update(["slide"])
 
 
 def add_postproc_cb(attr):
     UI["s"].post(
-        f"http://{host2}:5000/tileserver/add_postproc",
+        f"http://{host2}:5000/tileserver/add_post_proc",
         data={
-            "name": "VirtualStainer",
-            "layer": "slide",
-            "kwargs": {
-                "load_path": slide_folder / f"{UI['vstate'].slide_path.stem}_info.pkl"
-            },
+            "name": json.dumps("VirtualRestainer"),
+            "layer": json.dumps("slide"),
+            "kwargs": json.dumps(
+                {
+                    "stains": UI["stain_select"].labels[UI["stain_select"].active],
+                    "coupling_coeffs": {
+                        "wed": UI["wed_slider"].value,
+                        "weh": UI["weh_slider"].value,
+                        "wdh": UI["wdh_slider"].value,
+                        "wde": UI["wde_slider"].value,
+                    },
+                    "load_path": str(
+                        slide_folder / f"{UI['vstate'].slide_path.stem}_info.pkl"
+                    ),
+                }
+            ),
         },
     )
+    UI["vstate"].update_state = 1
+    UI["vstate"].to_update.update(["slide"])
 
 
 # run NucleusInstanceSegmentor on a region of wsi defined by the box in box_source
@@ -1822,13 +1853,13 @@ def make_window(vstate):
         sizing_mode="stretch_width",
     )
     stain_select = RadioButtonGroup(
-        labels=["H&E", "HD", "IHC"],
+        labels=["HE", "HD", "HED"],
         active=0,
         width=100,
         max_width=100,
         sizing_mode="stretch_width",
     )
-    weh_slider = Slider(start=0, end=1, value=0.5, step=0.01, title="weh")
+    weh_slider = Slider(start=0, end=1, value=0.1, step=0.01, title="weh")
     wed_slider = Slider(start=0, end=1, value=0.5, step=0.01, title="wed")
     wde_slider = Slider(start=0, end=1, value=0.5, step=0.01, title="wde")
     wdh_slider = Slider(start=0, end=1, value=0.5, step=0.01, title="wdh")
@@ -1940,6 +1971,12 @@ def make_window(vstate):
                 "cmap_builder_input",
                 "cmap_picker_column",
                 "cmap_builder_button",
+                "add_postproc_button",
+                "stain_select",
+                "weh_slider",
+                "wed_slider",
+                "wde_slider",
+                "wdh_slider",
             ],
             [
                 opt_buttons,
@@ -1950,6 +1987,12 @@ def make_window(vstate):
                 cmap_builder_input,
                 cmap_picker_column,
                 cmap_builder_button,
+                add_postproc_button,
+                stain_select,
+                weh_slider,
+                wed_slider,
+                wde_slider,
+                wdh_slider,
             ],
         )
     )
@@ -2095,9 +2138,11 @@ def cleanup_session(session_context):
 
 def update():
     if UI["vstate"].update_state == 2:
-        if "overlay" in UI["vstate"].layer_dict:
-            change_tiles("overlay")
+        for layer in UI["vstate"].to_update:
+            if layer in UI["vstate"].layer_dict:
+                change_tiles(layer)
         UI["vstate"].update_state = 0
+        UI["vstate"].to_update = set()
     if UI["vstate"].update_state == 1:
         UI["vstate"].update_state = 2
 
