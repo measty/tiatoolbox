@@ -8,8 +8,8 @@ Medical Image Analysis, 65, 101771.
 import warnings
 from typing import Tuple, Union
 
-import numpy as np
 import cv2
+import numpy as np
 import torch
 import torch.nn as nn
 from skimage.morphology import (
@@ -62,7 +62,6 @@ class ConvBnRelu(nn.Module):
         activation: str = "relu",
         do_batchnorm: bool = True,
     ):
-
         super().__init__()
         if isinstance(kernel_size, int):
             kernel_size = (kernel_size, kernel_size)
@@ -569,7 +568,7 @@ class NuClick(ModelABC):
         """To collect instance information and store it within a dictionary.
         Args:
             pred_mask: A list of (binary) prediction masks, shape(no.patch, h, w)
-            bounding_boxes: ndarray, A list of bounding boxes. 
+            bounding_boxes: ndarray, A list of bounding boxes.
                 bounding box: `[start_x, start_y, end_x, end_y]`.
         Returns:
             inst_info_dict (dict): A dictionary containing a mapping of each instance
@@ -613,7 +612,7 @@ class NuClick(ModelABC):
             inst_box_tl = inst_box[:2]
             inst_contour += inst_box_tl[None]
             inst_centroid += inst_box_tl  # X
-            inst_info_dict[i+1] = {  # inst_id should start at 1
+            inst_info_dict[i + 1] = {  # inst_id should start at 1
                 "box": inst_box,
                 "centroid": inst_centroid,
                 "contour": inst_contour,
@@ -661,11 +660,14 @@ class NuClick(ModelABC):
                 this_marker = nuc_points[i, :, :] > 0
 
                 if np.any(this_mask[this_marker > 0]):
-                    this_mask = reconstruction(this_marker, this_mask, selem=disk(1))
+                    this_mask = reconstruction(
+                        this_marker, this_mask, footprint=disk(1)
+                    )
                     masks[i] = np.array([this_mask])
                 else:
                     warnings.warn(
-                        f"Nuclei reconstruction was not done for nucleus #{i}"
+                        f"Nuclei reconstruction was not done for nucleus #{i}",
+                        stacklevel=2,
                     )
         return masks
 

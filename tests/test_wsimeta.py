@@ -3,15 +3,14 @@
 import numpy as np
 import pytest
 
-from tiatoolbox.wsicore import wsimeta, wsireader
+from tiatoolbox.wsicore import WSIMeta, wsimeta, wsireader
 
 
 # noinspection PyTypeChecker
 def test_wsimeta_init_fail():
     """Test incorrect init for WSIMeta raises TypeError."""
     with pytest.raises(TypeError):
-        # skipcq: PYL-E1120
-        wsimeta.WSIMeta(slide_dimensions=(None, None))
+        wsimeta.WSIMeta(slide_dimensions=(None, None), axes="YXS")
 
 
 @pytest.mark.filterwarnings("ignore")
@@ -64,7 +63,8 @@ def test_wsimeta_validate_pass():
     meta = wsimeta.WSIMeta(slide_dimensions=(512, 512), axes="YXS")
     assert meta.validate()
 
-    meta = wsimeta.WSIMeta(
+    # Test with top-level import
+    meta = WSIMeta(
         slide_dimensions=(512, 512),
         axes="YXS",
         level_dimensions=[(512, 512), (256, 256)],

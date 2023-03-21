@@ -325,7 +325,8 @@ class WSIStreamDataset(torch_data.Dataset):
             warnings.warn(
                 "WSIPatchDataset only reads image tile at "
                 '`units="baseline"`. Resolutions will be converted '
-                "to baseline value."
+                "to baseline value.",
+                stacklevel=2,
             )
             self.ioconfig = self.ioconfig.to_baseline()
 
@@ -999,11 +1000,10 @@ class SemanticSegmentor:
         """Prepare save directory and cache."""
         if save_dir is None:
             warnings.warn(
-                (
-                    "Segmentor will only output to directory. "
-                    "All subsequent output will be saved to current runtime "
-                    "location under folder 'output'. Overwriting may happen! "
-                )
+                "Segmentor will only output to directory. "
+                "All subsequent output will be saved to current runtime "
+                "location under folder 'output'. Overwriting may happen! ",
+                stacklevel=2,
             )
             save_dir = os.path.join(os.getcwd(), "output")
 
@@ -1086,7 +1086,8 @@ class SemanticSegmentor:
             warnings.warn(
                 "WSIPatchDataset only reads image tile at "
                 '`units="baseline"`. Resolutions will be converted '
-                "to baseline value."
+                "to baseline value.",
+                stacklevel=2,
             )
             return ioconfig.to_baseline()
 
