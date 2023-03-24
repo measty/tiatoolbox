@@ -179,10 +179,10 @@ def _process_tile_predictions(
         ]
 
         sel_indices = [
-            index_by_id[id(geo)]
+            geo
             for bounds in sel_boxes
             for geo in tile_rtree.query(bounds)
-            if bounds.contains(geo)
+            if bounds.contains(geometries[geo])
         ]
     elif tile_mode in [1, 2]:
         # for `horizontal/vertical strip` tiles
@@ -197,7 +197,7 @@ def _process_tile_predictions(
         ]
 
         sel_indices = [
-            index_by_id[id(geo)]
+            geo
             for bounds in sel_boxes
             for geo in tile_rtree.query(bounds)
         ]
@@ -226,7 +226,7 @@ def _process_tile_predictions(
         index_by_id = {id(geo): idx for idx, geo in enumerate(geometries)}
         ref_inst_rtree = STRtree(geometries)
         sel_indices = [
-            index_by_id[id(geo)]
+            geo
             for bounds in margin_lines
             for geo in ref_inst_rtree.query(bounds)
         ]
@@ -427,7 +427,8 @@ class NucleusInstanceSegmentor(SemanticSegmentor):
 
             for idx, sel_box in enumerate(sel_boxes):
                 sel_indices = [
-                    index_by_id[id(geo)] for geo in spatial_indexer.query(sel_box)
+                    #index_by_id[id(geo)] for geo in spatial_indexer.query(sel_box)
+                    geo for geo in spatial_indexer.query(sel_box)
                 ]
                 removal_flag[sel_indices, idx] = 0
             return removal_flag
@@ -672,7 +673,8 @@ class NucleusInstanceSegmentor(SemanticSegmentor):
                 # within the current tile
                 sel_box = shapely_box(*tile_bounds)
                 sel_indices = [
-                    index_by_id[id(geo)] for geo in spatial_indexer.query(sel_box)
+                    #index_by_id[id(geo)] for geo in spatial_indexer.query(sel_box)
+                    geo for geo in spatial_indexer.query(sel_box)
                 ]
 
                 # there is nothing in the tile

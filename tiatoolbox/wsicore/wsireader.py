@@ -3051,7 +3051,7 @@ class TIFFWSIReader(WSIReader):
                 len(self.tiff.pages) == 1,
             ]
         )
-        if not any([self.tiff.is_svs, self.tiff.is_ome, is_single_page_tiled]):
+        if not any([self.tiff.is_svs, self.tiff.is_ome, self.tiff.is_bigtiff, is_single_page_tiled]):
             raise ValueError("Unsupported TIFF WSI format.")
 
         self.series_n = series

@@ -841,7 +841,7 @@ def ppu2mpp(ppu: int, units: Union[str, int]) -> float:
     }
     if units not in microns_per_unit:
         raise ValueError(f"Invalid units: {units}")
-    return 1 / ppu * microns_per_unit[units]
+    return microns_per_unit[units] / ppu
 
 
 def select_cv2_interpolation(scale_factor):
