@@ -86,6 +86,7 @@ else:
     host2 = "127.0.0.1"
     port = "5000"
 
+
 # Define helper functions/classes
 # region
 class DummyAttr:
@@ -128,6 +129,8 @@ def get_view_bounds(dims, plot_size):
 def to_num(x):
     """helper to convert a str representation of a number to an appropriate
     numerical value."""
+    if not isinstance(x, str):
+        return x
     if x == "None":
         return None
     try:
@@ -550,11 +553,9 @@ tg = TileGroup()
 
 
 def change_tiles(layer_name="overlay"):
-
     grp = tg.get_grp()
 
     if layer_name == "graph" and layer_name not in UI["vstate"].layer_dict.keys():
-
         # for layer_key in UI["vstate"].layer_dict.keys():
         #     if layer_key in ["rect", "pts", "nodes", "edges"]:
         #         continue
@@ -710,7 +711,6 @@ color_cycler = ColorCycler()
 
 
 def run_app():
-
     app = TileServer(
         title="Testing TileServer",
         layers={
@@ -730,6 +730,7 @@ if not is_deployed:
 do_feats = False
 tool_str = "pan,wheel_zoom,reset,save"
 # endregion
+
 
 # Define UI callbacks
 # region
@@ -1048,7 +1049,9 @@ def layer_drop_cb(attr):
             UI["node_source"].data = {
                 "x_": graph_dict["coordinates"][:, 0],
                 "y_": -graph_dict["coordinates"][:, 1],
-                "node_color_": [rgb2hex(node_cm(v)) for v in graph_dict["score"]],
+                "node_color_": [
+                    rgb2hex(node_cm(to_num(v))) for v in graph_dict["score"]
+                ],
             }
         else:
             # default to green
@@ -1293,7 +1296,7 @@ def type_cmap_cb(attr, old, new):
             if new[1] in UI["node_source"].data:
                 node_cm = cm.get_cmap("viridis")
                 UI["node_source"].data["node_color_"] = [
-                    rgb2hex(node_cm(v)) for v in UI["node_source"].data[new[1]]
+                    rgb2hex(node_cm(to_num(v))) for v in UI["node_source"].data[new[1]]
                 ]
             return
         cmap = get_mapper_for_prop(new[1])  # separate cmap select ?
