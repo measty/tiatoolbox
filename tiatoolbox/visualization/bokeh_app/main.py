@@ -69,23 +69,6 @@ from tiatoolbox.visualization.tileserver import TileServer
 from tiatoolbox.visualization.ui_utils import get_level_by_extent
 from tiatoolbox.wsicore.wsireader import WSIReader
 
-req_args = curdoc().session_context.request.arguments
-print(f"req args are: {req_args}")
-
-is_deployed = False
-rand_id = token.generate_session_id()
-print(f"rand id is: {rand_id}")
-first_z = [1]
-
-if is_deployed:
-    host = os.environ.get("HOST")
-    host2 = os.environ.get("HOST2")
-    port = os.environ.get("PORT")
-else:
-    host = "127.0.0.1"
-    host2 = "127.0.0.1"
-    port = "5000"
-
 
 # Define helper functions/classes
 # region
@@ -549,9 +532,6 @@ class ColorCycler:
         return rgb2hex(np.random.choice(256, 3) / 255)
 
 
-tg = TileGroup()
-
-
 def change_tiles(layer_name="overlay"):
     grp = tg.get_grp()
 
@@ -598,6 +578,17 @@ def change_tiles(layer_name="overlay"):
 
     print(UI["vstate"].layer_dict)
     print(UI["p"].renderers)
+
+
+def run_app():
+    app = TileServer(
+        title="Testing TileServer",
+        layers={
+            # "slide": UI["vstate"].wsi,
+        },
+    )
+    CORS(app, send_wildcard=True)
+    app.run(host="127.0.0.1", threaded=False)
 
 
 class ViewerState:
@@ -651,84 +642,6 @@ class ViewerState:
         self.__dict__[__name] = __value
 
 
-# endregion
-
-# some setup
-# region
-# base_folder = r"E:\TTB_vis_folder"
-base_folder = "/app_data"
-demo_name = "TIAvis"
-if len(sys.argv) > 1 and sys.argv[1] != "None":
-    base_folder = Path(sys.argv[1])
-    if len(req_args) > 0:
-        print(req_args)
-        demo_name = str(req_args["demo"][0], "utf-8")
-        base_folder = base_folder.joinpath(str(req_args["demo"][0], "utf-8"))
-    slide_folder = base_folder.joinpath("slides")
-    overlay_folder = base_folder.joinpath("overlays")
-    if not overlay_folder.exists():
-        overlay_folder = None
-if len(sys.argv) == 3:
-    slide_folder = Path(sys.argv[1])
-    overlay_folder = Path(sys.argv[2])
-# load a color_dict and/or slide initial view windows from a json file
-colour_dict = {}
-initial_views = {}
-default_cprop = "type"
-config = {}
-config_file = list(overlay_folder.glob("*_config.json"))
-if len(config_file) > 0:
-    config_file = config_file[0]
-    if (config_file).exists():
-        with open(config_file, "r") as f:
-            config = json.load(f)
-            print(config)
-        if "colour_dict" in config:
-            colour_dict = config["colour_dict"]
-            print(colour_dict)
-        if "initial_views" in config:
-            initial_views = config["initial_views"]
-            print(initial_views)
-        if "default_cprop" in config:
-            default_cprop = config["default_cprop"]
-            print(default_cprop)
-
-# get any extra info from query url
-if "slide" in req_args:
-    config["first_slide"] = str(req_args["slide"][0], "utf-8")
-    if "window" in req_args:
-        if "initial_views" not in config:
-            config["initial_views"] = {}
-        config["initial_views"][Path(config["first_slide"]).stem] = [
-            int(s) for s in str(req_args["window"][0], "utf-8")[1:-1].split(",")
-        ]
-
-auto_load = get_from_config(["auto_load"], 0) == 1
-# UI["vstate"].slide_path = r"E:\\TTB_vis_folder\\slides\\TCGA-SC-A6LN-01Z-00-DX1.svs"
-# UI["vstate"].slide_path=Path(r'/tiatoolbox/app_data/slides/TCGA-SC-A6LN-01Z-00-DX1.svs')
-
-color_cycler = ColorCycler()
-
-
-def run_app():
-    app = TileServer(
-        title="Testing TileServer",
-        layers={
-            # "slide": UI["vstate"].wsi,
-        },
-    )
-    CORS(app, send_wildcard=True)
-    app.run(host="127.0.0.1", threaded=False)
-
-
-# start tile server
-if not is_deployed:
-    proc = Thread(target=run_app, daemon=True)
-    proc.start()
-
-
-do_feats = False
-tool_str = "pan,wheel_zoom,reset,save"
 # endregion
 
 
@@ -1513,6 +1426,7 @@ def nuclick_on_pts(attr):
 
 
 def make_window(vstate):
+    win_num = str(len(windows))
     if len(windows) == 1:
         slide_wins.children[0].width = 800
         p = figure(
@@ -1537,7 +1451,7 @@ def make_window(vstate):
             # lod_threshold=10,
             # lod_timeout=200,
             sizing_mode="stretch_both",
-            name="slide_window",
+            name=f"slide_window{win_num}",
         )
         init_z = first_z[0]
     else:
@@ -1563,7 +1477,7 @@ def make_window(vstate):
             # lod_threshold=10,
             # lod_timeout=200,
             sizing_mode="stretch_both",
-            name="slide_window",
+            name=f"slide_window{win_num}",
         )
         init_z = get_level_by_extent((0, p.y_range.start, p.x_range.end, 0))
         first_z[0] = init_z
@@ -1584,7 +1498,8 @@ def make_window(vstate):
     print(f"cookies are: {resp.cookies}")
     cookies = resp.cookies
     user = resp.cookies.get("user")
-    curdoc().session_context.request.arguments["user"] = user
+    if curdoc().session_context:
+        curdoc().session_context.request.arguments["user"] = user
     vstate.init_z = init_z
     ts1 = make_ts(
         f"http://{host}:{port}/tileserver/layer/slide/{user}/zoomify/TileGroup1"
@@ -1595,7 +1510,7 @@ def make_window(vstate):
     )
     print(p.renderers)
     print(p.y_range)
-    p.add_tile(ts1, smoothing=True, level="image", render_parents=False)
+    p.add_tile(ts1, smoothing=True, level="image", render_parents=True)
     print(p.y_range)
     print(f"max zoom is: {p.renderers[0].tile_source.max_zoom}")
 
@@ -1657,6 +1572,7 @@ def make_window(vstate):
         width=200,
         # max_width=200,
         sizing_mode="stretch_width",
+        name=f"slide_alpha{win_num}",
     )
 
     overlay_alpha = Slider(
@@ -1668,6 +1584,7 @@ def make_window(vstate):
         width=200,
         # max_width=200,
         sizing_mode="stretch_width",
+        name=f"overlay_alpha{win_num}",
     )
 
     edge_size_spinner = Spinner(
@@ -1680,6 +1597,7 @@ def make_window(vstate):
         # max_width=60,
         height=50,
         sizing_mode="stretch_width",
+        name=f"edge_size{win_num}",
     )
 
     pt_size_spinner = Spinner(
@@ -1692,6 +1610,7 @@ def make_window(vstate):
         # max_width=60,
         height=50,
         sizing_mode="stretch_width",
+        name=f"pt_size{win_num}",
     )
 
     slide_toggle = Toggle(
@@ -1700,6 +1619,7 @@ def make_window(vstate):
         width=90,
         # max_width=90,
         sizing_mode="stretch_width",
+        name=f"slide_toggle{win_num}",
     )
     overlay_toggle = Toggle(
         label="Overlay",
@@ -1707,8 +1627,14 @@ def make_window(vstate):
         width=90,
         # max_width=90,
         sizing_mode="stretch_width",
+        name=f"overlay_toggle{win_num}",
     )
-    filter_input = TextInput(value="None", title="Filter:", sizing_mode="stretch_width")
+    filter_input = TextInput(
+        value="None",
+        title="Filter:",
+        sizing_mode="stretch_width",
+        name=f"filter{win_num}",
+    )
     # cprop_input = TextInput(
     #    value="type", title="CProp:", max_width=300, sizing_mode="stretch_width"
     # )
@@ -1720,6 +1646,7 @@ def make_window(vstate):
         search_option_limit=5000,
         sizing_mode="stretch_width",
         # max_width=300,
+        name=f"cprop{win_num}",
     )
     slide_select = MultiChoice(
         title="Select Slide:",
@@ -1729,6 +1656,7 @@ def make_window(vstate):
         search_option_limit=5000,
         # max_width=300,
         sizing_mode="stretch_width",
+        name=f"slide_select{win_num}",
     )
     cmmenu = [
         ("jet", "jet"),
@@ -1744,6 +1672,7 @@ def make_window(vstate):
         # max_width=60,
         height=45,
         sizing_mode="stretch_width",
+        name=f"cmap{win_num}",
     )
     blur_spinner = Spinner(
         title="Blur:",
@@ -1755,6 +1684,7 @@ def make_window(vstate):
         height=50,
         # max_width=60,
         sizing_mode="stretch_width",
+        name=f"blur{win_num}",
     )
     scale_spinner = Spinner(
         title="max scale:",
@@ -1766,6 +1696,7 @@ def make_window(vstate):
         # max_width=60,
         height=50,
         sizing_mode="stretch_width",
+        name=f"scale{win_num}",
     )
     to_model_button = Button(
         label="Go",
@@ -1773,6 +1704,7 @@ def make_window(vstate):
         width=60,
         max_width=60,
         sizing_mode="stretch_width",
+        name=f"to_model{win_num}",
     )
     model_drop = Dropdown(
         label="Choose Model",
@@ -1781,6 +1713,7 @@ def make_window(vstate):
         width=120,
         max_width=120,
         sizing_mode="stretch_width",
+        name=f"model_drop{win_num}",
     )
     type_cmap_select = MultiChoice(
         title="Colour type by property:",
@@ -1789,14 +1722,7 @@ def make_window(vstate):
         search_option_limit=5000,
         sizing_mode="stretch_width",
         # max_width=300,
-    )
-    swap_button = Button(
-        label="Swap feat/importance",
-        button_type="success",
-        width=140,
-        max_width=140,
-        sizing_mode="stretch_width",
-        height=40,
+        name=f"type_cmap{win_num}",
     )
     layer_boxes = [
         Toggle(
@@ -1813,6 +1739,7 @@ def make_window(vstate):
         title="Overlay Folder:",
         # max_width=300,
         sizing_mode="stretch_width",
+        name=f"layer_folder{win_num}",
     )
     layer_drop = Dropdown(
         label="Add Overlay",
@@ -1820,15 +1747,21 @@ def make_window(vstate):
         menu=[None],
         # max_width=300,
         sizing_mode="stretch_width",
+        name=f"layer_drop{win_num}",
     )
     opt_buttons = CheckboxButtonGroup(
         labels=["Filled", "Microns", "Grid"],
         active=[0],
         # max_width=300,
         sizing_mode="stretch_width",
+        name=f"opt_buttons{win_num}",
     )
     save_button = Button(
-        label="Save", button_type="success", max_width=90, sizing_mode="stretch_width"
+        label="Save",
+        button_type="success",
+        max_width=90,
+        sizing_mode="stretch_width",
+        name=f"save_button{win_num}",
     )
     cmap_builder_input = MultiChoice(
         title="Choose props and colors:",
@@ -1837,35 +1770,31 @@ def make_window(vstate):
         search_option_limit=5000,
         sizing_mode="stretch_width",
         # max_width=300,
+        name=f"cmap_builder_input{win_num}",
     )
     cmap_builder_button = Button(
         label="Build Cmap",
         button_type="success",
         max_width=90,
         sizing_mode="stretch_width",
+        name=f"cmap_builder_button{win_num}",
     )
-    cmap_picker_column = column(children=[])
-    subcat_select = Select(title="subcat", options=["All"], value="All")
+    cmap_picker_column = column(children=[], name=f"cmap_picker_column{win_num}")
+    subcat_select = Select(
+        title="subcat", options=["All"], value="All", name=f"subcat_select{win_num}"
+    )
     mixing_type_select = RadioButtonGroup(
-        labels=["lin", "max", "avg", "prod", "pow", "softm"], active=4
+        labels=["lin", "max", "avg", "prod", "pow", "softm"],
+        active=4,
+        name=f"mixing_type_select{win_num}",
     )
     add_postproc_button = Button(
         label="Add Postproc",
         button_type="success",
         max_width=90,
         sizing_mode="stretch_width",
+        name=f"postproc_button{win_num}",
     )
-    stain_select = RadioButtonGroup(
-        labels=["HE", "HD", "HED"],
-        active=0,
-        width=100,
-        max_width=100,
-        sizing_mode="stretch_width",
-    )
-    weh_slider = Slider(start=0, end=1, value=0.1, step=0.01, title="weh")
-    wed_slider = Slider(start=0, end=1, value=0.5, step=0.01, title="wed")
-    wde_slider = Slider(start=0, end=1, value=0.5, step=0.01, title="wde")
-    wdh_slider = Slider(start=0, end=1, value=0.5, step=0.01, title="wdh")
 
     # associate callback functions to the widgets
     slide_alpha.on_change("value", slide_alpha_cb)
@@ -1888,17 +1817,11 @@ def make_window(vstate):
     cprop_input.on_change("value", cprop_input_cb)
     node_source.selected.on_change("indices", node_select_cb)
     type_cmap_select.on_change("value", type_cmap_cb)
-    swap_button.on_click(swap_cb)
     options_check.on_change("active", options_check_cb)
     cmap_builder_input.on_change("value", cmap_builder_cb)
     cmap_builder_button.on_click(cmap_builder_button_cb)
     subcat_select.on_change("value", subcat_select_cb)
     add_postproc_button.on_click(add_postproc_cb)
-    stain_select.on_change("active", stain_select_cb)
-    weh_slider.on_change("value", demux_slider_cb)
-    wed_slider.on_change("value", demux_slider_cb)
-    wde_slider.on_change("value", demux_slider_cb)
-    wdh_slider.on_change("value", demux_slider_cb)
 
     vstate.cprop = default_cprop
 
@@ -1975,11 +1898,6 @@ def make_window(vstate):
                 "cmap_picker_column",
                 "cmap_builder_button",
                 "add_postproc_button",
-                "stain_select",
-                "weh_slider",
-                "wed_slider",
-                "wde_slider",
-                "wdh_slider",
             ],
             [
                 opt_buttons,
@@ -1991,11 +1909,6 @@ def make_window(vstate):
                 cmap_picker_column,
                 cmap_builder_button,
                 add_postproc_button,
-                stain_select,
-                weh_slider,
-                wed_slider,
-                wde_slider,
-                wdh_slider,
             ],
         )
     )
@@ -2064,6 +1977,93 @@ UI = UIWrapper()
 windows = []
 controls = []
 
+# some setup
+# region
+# base_folder = r"E:\TTB_vis_folder"
+
+req_args = []
+if curdoc().session_context is not None:
+    req_args = curdoc().session_context.request.arguments
+print(f"req args are: {req_args}")
+
+is_deployed = False
+rand_id = token.generate_session_id()
+print(f"rand id is: {rand_id}")
+first_z = [1]
+
+if is_deployed:
+    host = os.environ.get("HOST")
+    host2 = os.environ.get("HOST2")
+    port = os.environ.get("PORT")
+else:
+    host = "127.0.0.1"
+    host2 = "127.0.0.1"
+    port = "5000"
+
+base_folder = "/app_data"
+demo_name = "TIAvis"
+if len(sys.argv) > 1 and sys.argv[1] != "None":
+    base_folder = Path(sys.argv[1])
+    if len(req_args) > 0:
+        print(req_args)
+        demo_name = str(req_args["demo"][0], "utf-8")
+        base_folder = base_folder.joinpath(str(req_args["demo"][0], "utf-8"))
+    slide_folder = base_folder.joinpath("slides")
+    overlay_folder = base_folder.joinpath("overlays")
+    if not overlay_folder.exists():
+        overlay_folder = None
+if len(sys.argv) == 3:
+    slide_folder = Path(sys.argv[1])
+    overlay_folder = Path(sys.argv[2])
+# load a color_dict and/or slide initial view windows from a json file
+colour_dict = {}
+initial_views = {}
+default_cprop = "type"
+config = {}
+config_file = list(overlay_folder.glob("*_config.json"))
+if len(config_file) > 0:
+    config_file = config_file[0]
+    if (config_file).exists():
+        with open(config_file, "r") as f:
+            config = json.load(f)
+            print(config)
+        if "colour_dict" in config:
+            colour_dict = config["colour_dict"]
+            print(colour_dict)
+        if "initial_views" in config:
+            initial_views = config["initial_views"]
+            print(initial_views)
+        if "default_cprop" in config:
+            default_cprop = config["default_cprop"]
+            print(default_cprop)
+
+# get any extra info from query url
+if "slide" in req_args:
+    config["first_slide"] = str(req_args["slide"][0], "utf-8")
+    if "window" in req_args:
+        if "initial_views" not in config:
+            config["initial_views"] = {}
+        config["initial_views"][Path(config["first_slide"]).stem] = [
+            int(s) for s in str(req_args["window"][0], "utf-8")[1:-1].split(",")
+        ]
+
+auto_load = get_from_config(["auto_load"], 0) == 1
+# UI["vstate"].slide_path = r"E:\\TTB_vis_folder\\slides\\TCGA-SC-A6LN-01Z-00-DX1.svs"
+# UI["vstate"].slide_path=Path(r'/tiatoolbox/app_data/slides/TCGA-SC-A6LN-01Z-00-DX1.svs')
+
+color_cycler = ColorCycler()
+tg = TileGroup()
+
+# start tile server
+if not is_deployed:
+    proc = Thread(target=run_app, daemon=True)
+    proc.start()
+
+
+do_feats = False
+tool_str = "pan,wheel_zoom,reset,save"
+# endregion
+
 # set initial slide to first one in base folder
 win_dicts = []
 active = 0
@@ -2095,7 +2095,7 @@ UI["vstate"].init = False
 # set up main window
 slide_wins = row(
     children=windows,
-    name="slide_window",
+    name="slide_windows",
     sizing_mode="stretch_both",
 )
 
