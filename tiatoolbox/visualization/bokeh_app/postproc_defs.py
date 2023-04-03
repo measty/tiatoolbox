@@ -1,5 +1,6 @@
 import numpy as np
-from demux_fixed import VirtualRestainer
+
+# from demux_fixed import VirtualRestainer
 from PIL import Image
 
 from tiatoolbox.tools.stainnorm import (

@@ -124,7 +124,7 @@ def to_num(x):
 
 def get_from_config(keys, default=None):
     """helper to get a value from a config dict"""
-    c_dict = config
+    c_dict = config.config
     for k in keys:
         if k in c_dict:
             c_dict = c_dict[k]
@@ -213,11 +213,11 @@ def make_safe_name(name):
 
 def make_color_dict(types):
     colors = random_colors(len(types))
-    # grab colors out of colour_dict if possible, otherwise use random
+    # grab colors out of config["colour_dict"] if possible, otherwise use random
     type_colours = {}
     for i, t in enumerate(types):
-        if t in colour_dict:
-            type_colours[t] = to_float_rgb(colour_dict[t])
+        if t in config["colour_dict"]:
+            type_colours[t] = to_float_rgb(config["colour_dict"][t])
         else:
             type_colours[t] = (*colors[i], 1)
     return type_colours
@@ -354,8 +354,8 @@ def initialise_slide():
     large_dim = np.argmax(np.array(UI["vstate"].dims) / plot_size)
 
     UI["vstate"].micron_formatter.args["mpp"] = UI["vstate"].mpp[0]
-    if slide_name in initial_views:
-        lims = initial_views[slide_name]
+    if slide_name in config["initial_views"]:
+        lims = config["initial_views"][slide_name]
         UI["p"].x_range.start = lims[0]
         UI["p"].x_range.end = lims[2]
         UI["p"].y_range.start = -lims[3]
@@ -696,7 +696,7 @@ def overlay_toggle_cb(attr):
 
 
 def folder_input_cb(attr, old, new):
-    populate_slide_list(slide_folder, new)
+    populate_slide_list(config["slide_folder"], new)
 
 
 def populate_layer_list(slide_name, overlay_path: Path):
@@ -903,7 +903,7 @@ def slide_select_cb(attr, old, new):
     """setup the newly chosen slide"""
     if len(new) == 0:
         return
-    slide_path = Path(slide_folder) / Path(new[0])
+    slide_path = Path(config["slide_folder"]) / Path(new[0])
     # reset the data sources for glyph overlays
     UI["pt_source"].data = {"x": [], "y": []}
     UI["box_source"].data = {"x": [], "y": [], "width": [], "height": []}
@@ -927,7 +927,7 @@ def slide_select_cb(attr, old, new):
     UI["box_column"].children = []
     print(UI["p"].renderers)
     print(slide_path)
-    populate_layer_list(slide_path.stem, overlay_folder)
+    populate_layer_list(slide_path.stem, config["overlay_folder"])
     UI["vstate"].wsi = WSIReader.open(slide_path)
     initialise_slide()
     # fname='-*-'.join(attr.item.split('\\'))
@@ -943,7 +943,7 @@ def slide_select_cb(attr, old, new):
     # UI["p"].y_range.bounds=(0,-UI["vstate"].dims[1])
 
     # load the overlay and graph automatically for demo purposes
-    if auto_load:
+    if config["auto_load"]:
         for f in UI["layer_drop"].menu:
             dummy_attr = DummyAttr(f[0])
             layer_drop_cb(dummy_attr)
@@ -1226,14 +1226,20 @@ def type_cmap_cb(attr, old, new):
 
 
 def save_cb(attr):
-    if overlay_folder is None:
+    if config["overlay_folder"] is None:
         # save in slide folder instead
         save_path = make_safe_name(
-            str(slide_folder / (UI["vstate"].slide_path.stem + "_saved_anns.db"))
+            str(
+                config["slide_folder"]
+                / (UI["vstate"].slide_path.stem + "_saved_anns.db")
+            )
         )
     else:
         save_path = make_safe_name(
-            str(overlay_folder / (UI["vstate"].slide_path.stem + "_saved_anns.db"))
+            str(
+                config["overlay_folder"]
+                / (UI["vstate"].slide_path.stem + "_saved_anns.db")
+            )
         )
     UI["s"].get(f"http://{host2}:5000/tileserver/commit/{save_path}")
 
@@ -1290,7 +1296,8 @@ def add_postproc_cb(attr):
                         "wde": UI["wde_slider"].value,
                     },
                     "load_path": str(
-                        slide_folder / f"{UI['vstate'].slide_path.stem}_info.pkl"
+                        config["slide_folder"]
+                        / f"{UI['vstate'].slide_path.stem}_info.pkl"
                     ),
                 }
             ),
@@ -1735,7 +1742,7 @@ def make_window(vstate):
         for col in vstate.colors
     ]
     layer_folder_input = TextInput(
-        value=str(overlay_folder),
+        value=str(config["overlay_folder"]),
         title="Overlay Folder:",
         # max_width=300,
         sizing_mode="stretch_width",
@@ -1823,7 +1830,7 @@ def make_window(vstate):
     subcat_select.on_change("value", subcat_select_cb)
     add_postproc_button.on_click(add_postproc_cb)
 
-    vstate.cprop = default_cprop
+    vstate.cprop = config["default_cprop"]
 
     box_column = column(children=layer_boxes)
     color_column = column(children=lcolors, sizing_mode="stretch_width")
@@ -1948,6 +1955,7 @@ def make_window(vstate):
                 ],
             ),
             title="window 2",
+            closable=True,
         )
         slide_wins.children.append(p)
 
@@ -1976,14 +1984,23 @@ def make_window(vstate):
 UI = UIWrapper()
 windows = []
 controls = []
+win_dicts = []
+
+color_cycler = ColorCycler()
+tg = TileGroup()
+do_feats = False
+tool_str = "pan,wheel_zoom,reset,save"
+
+active = 0
 
 # some setup
-# region
-# base_folder = r"E:\TTB_vis_folder"
+# config["base_folder"] = r"E:\TTB_vis_folder"
 
 req_args = []
+do_doc = False
 if curdoc().session_context is not None:
     req_args = curdoc().session_context.request.arguments
+    do_doc = True
 print(f"req args are: {req_args}")
 
 is_deployed = False
@@ -1999,139 +2016,6 @@ else:
     host = "127.0.0.1"
     host2 = "127.0.0.1"
     port = "5000"
-
-base_folder = "/app_data"
-demo_name = "TIAvis"
-if len(sys.argv) > 1 and sys.argv[1] != "None":
-    base_folder = Path(sys.argv[1])
-    if len(req_args) > 0:
-        print(req_args)
-        demo_name = str(req_args["demo"][0], "utf-8")
-        base_folder = base_folder.joinpath(str(req_args["demo"][0], "utf-8"))
-    slide_folder = base_folder.joinpath("slides")
-    overlay_folder = base_folder.joinpath("overlays")
-    if not overlay_folder.exists():
-        overlay_folder = None
-if len(sys.argv) == 3:
-    slide_folder = Path(sys.argv[1])
-    overlay_folder = Path(sys.argv[2])
-# load a color_dict and/or slide initial view windows from a json file
-colour_dict = {}
-initial_views = {}
-default_cprop = "type"
-config = {}
-config_file = list(overlay_folder.glob("*_config.json"))
-if len(config_file) > 0:
-    config_file = config_file[0]
-    if (config_file).exists():
-        with open(config_file, "r") as f:
-            config = json.load(f)
-            print(config)
-        if "colour_dict" in config:
-            colour_dict = config["colour_dict"]
-            print(colour_dict)
-        if "initial_views" in config:
-            initial_views = config["initial_views"]
-            print(initial_views)
-        if "default_cprop" in config:
-            default_cprop = config["default_cprop"]
-            print(default_cprop)
-
-# get any extra info from query url
-if "slide" in req_args:
-    config["first_slide"] = str(req_args["slide"][0], "utf-8")
-    if "window" in req_args:
-        if "initial_views" not in config:
-            config["initial_views"] = {}
-        config["initial_views"][Path(config["first_slide"]).stem] = [
-            int(s) for s in str(req_args["window"][0], "utf-8")[1:-1].split(",")
-        ]
-
-auto_load = get_from_config(["auto_load"], 0) == 1
-# UI["vstate"].slide_path = r"E:\\TTB_vis_folder\\slides\\TCGA-SC-A6LN-01Z-00-DX1.svs"
-# UI["vstate"].slide_path=Path(r'/tiatoolbox/app_data/slides/TCGA-SC-A6LN-01Z-00-DX1.svs')
-
-color_cycler = ColorCycler()
-tg = TileGroup()
-
-# start tile server
-if not is_deployed:
-    proc = Thread(target=run_app, daemon=True)
-    proc.start()
-
-
-do_feats = False
-tool_str = "pan,wheel_zoom,reset,save"
-# endregion
-
-# set initial slide to first one in base folder
-win_dicts = []
-active = 0
-slide_list = []
-for ext in ["*.svs", "*ndpi", "*.tiff", "*.mrxs", "*.png", "*.jpg"]:
-    slide_list.extend(list(slide_folder.glob(ext)))
-    slide_list.extend(list(slide_folder.glob(str(Path("*") / ext))))
-first_slide_path = slide_list[0]
-if "first_slide" in config:
-    first_slide_path = slide_folder / config["first_slide"]
-
-# make initial window
-win_dicts.append(make_window(ViewerState(first_slide_path)))
-# set up any initial ui settings from config file
-if "UI_settings" in config:
-    for k in config["UI_settings"]:
-        update_renderer(k, config["UI_settings"][k])
-if default_cprop is not None:
-    UI["s"].put(f"http://{host2}:5000/tileserver/change_color_prop/{default_cprop}")
-# open up initial slide
-slide_select_cb(None, None, new=[UI["vstate"].slide_path])
-if "default_type_cprop" in config:
-    UI["type_cmap_select"].value = list(config["default_type_cprop"].values())
-# initialise_slide()
-populate_slide_list(slide_folder)
-populate_layer_list(Path(UI["vstate"].slide_path).stem, overlay_folder)
-UI["vstate"].init = False
-
-# set up main window
-slide_wins = row(
-    children=windows,
-    name="slide_windows",
-    sizing_mode="stretch_both",
-)
-
-
-def control_tabs_cb(attr, old, new):
-    global active
-    if new == 1 and len(slide_wins.children) == 1:
-        # make new window
-        win_dicts.append(make_window(ViewerState(win_dicts[0]["vstate"].slide_path)))
-        bounds = get_view_bounds(
-            UI["vstate"].dims, np.array([UI["p"].width, UI["p"].height])
-        )
-        active = new
-        if "UI_settings" in config:
-            for k in config["UI_settings"]:
-                update_renderer(k, config["UI_settings"][k])
-            if default_cprop is not None:
-                UI["s"].put(
-                    f"http://{host2}:5000/tileserver/change_color_prop/{default_cprop}"
-                )
-        slide_select_cb(None, None, new=[UI["vstate"].slide_path])
-        if "default_type_cprop" in config:
-            UI["type_cmap_select"].value = list(config["default_type_cprop"].values())
-        # initialise_slide()
-        populate_slide_list(slide_folder)
-        populate_layer_list(Path(UI["vstate"].slide_path).stem, overlay_folder)
-        win_dicts[0]["vstate"].init_z = get_level_by_extent(
-            (0, bounds[2], bounds[1], 0)
-        )
-        UI["vstate"].init = False
-    else:
-        active = new
-
-
-control_tabs = Tabs(tabs=controls, name="ui_layout")
-control_tabs.on_change("active", control_tabs_cb)
 
 
 def cleanup_session(session_context):
@@ -2150,16 +2034,182 @@ def update():
         UI["vstate"].update_state = 2
 
 
-print("windows and controls are:")
-print(windows)
-print(controls)
-print(curdoc().template)
-curdoc().template_variables["demo_name"] = demo_name
-curdoc().add_periodic_callback(update, 220)
-curdoc().add_root(slide_wins)
-# curdoc().add_root(ui_layout)
-curdoc().add_root(control_tabs)
-# curdoc().add_root(opts_column)
-curdoc().title = "Tiatoolbox Visualization Tool"
-# if "template" in config:
-#    curdoc().template = str(Path(r"C:\Users\meast\app_data\templates") / config["template"])
+def control_tabs_cb(attr, old, new):
+    global active
+    if new == 1 and len(slide_wins.children) == 1:
+        # make new window
+        win_dicts.append(make_window(ViewerState(win_dicts[0]["vstate"].slide_path)))
+        bounds = get_view_bounds(
+            UI["vstate"].dims, np.array([UI["p"].width, UI["p"].height])
+        )
+        active = new
+        if "UI_settings" in config:
+            for k in config["UI_settings"]:
+                update_renderer(k, config["UI_settings"][k])
+            if config["default_cprop"] is not None:
+                UI["s"].put(
+                    f"http://{host2}:5000/tileserver/change_color_prop/{config['default_cprop']}"
+                )
+        slide_select_cb(None, None, new=[UI["vstate"].slide_path])
+        if "default_type_cprop" in config:
+            UI["type_cmap_select"].value = list(config["default_type_cprop"].values())
+        # initialise_slide()
+        populate_slide_list(config["slide_folder"])
+        populate_layer_list(
+            Path(UI["vstate"].slide_path).stem, config["overlay_folder"]
+        )
+        win_dicts[0]["vstate"].init_z = get_level_by_extent(
+            (0, bounds[2], bounds[1], 0)
+        )
+        UI["vstate"].init = False
+    else:
+        active = new
+
+
+def control_tabs_remove_cb(attr, old, new):
+    global active
+    if len(new) == 1:
+        # remove the second window
+        slide_wins.children.pop()
+        slide_wins.children[0].width = 1700  # set back to original size
+        control_tabs.tabs.append(TabPanel(child=Div(), title="window 2"))
+        win_dicts.pop()
+        active = 0
+
+
+class DocConfig:
+    def __init__(self) -> None:
+        config = {}
+        config["colour_dict"] = {}
+        config["initial_views"] = {}
+        config["default_cprop"] = "type"
+        config["demo_name"] = "TIAvis"
+        config["base_folder"] = Path("/app_data")
+        config["slide_folder"] = config["base_folder"].joinpath("slides")
+        config["overlay_folder"] = config["base_folder"].joinpath("overlays")
+        self.config = config
+
+    def __getitem__(self, key):
+        return self.config[key]
+
+    def __contains__(self, key):
+        return key in self.config
+
+    def setup_doc(self, sys_args):
+        if len(sys_args) > 1 and sys_args[1] != "None":
+            base_folder = Path(sys_args[1])
+            if len(req_args) > 0:
+                print(req_args)
+                config["demo_name"] = str(req_args["demo"][0], "utf-8")
+                base_folder = base_folder.joinpath(str(req_args["demo"][0], "utf-8"))
+            slide_folder = base_folder.joinpath("slides")
+            overlay_folder = base_folder.joinpath("overlays")
+            if not overlay_folder.exists():
+                overlay_folder = None
+        if len(sys_args) == 3:
+            slide_folder = Path(sys_args[1])
+            overlay_folder = Path(sys_args[2])
+        # load a color_dict and/or slide initial view windows from a json file
+        config_file = list(overlay_folder.glob("*_config.json"))
+        config = self.config
+        if len(config_file) > 0:
+            config_file = config_file[0]
+            if (config_file).exists():
+                with open(config_file, "r") as f:
+                    config = json.load(f)
+                    print(config)
+                # if "config["colour_dict"]" in config:
+                #     self.config["colour_dict"] = config["config["colour_dict"]"]
+                #     print(self.config["colour_dict"])
+                # if "config["initial_views"]" in config:
+                #     self.config["initial_views"] = config["config["initial_views"]"]
+                #     print(self.config["initial_views"])
+                # if "config["default_cprop"]" in config:
+                #     self.config["default_cprop"] = config["config["default_cprop"]"]
+                #     print(self.config["default_cprop"])
+
+        config["base_folder"] = base_folder
+        config["slide_folder"] = slide_folder
+        config["overlay_folder"] = overlay_folder
+        config["demo_name"] = "demo_name"
+
+        # get any extra info from query url
+        if "slide" in req_args:
+            config["first_slide"] = str(req_args["slide"][0], "utf-8")
+            if "window" in req_args:
+                if "initial_views" not in config:
+                    config["initial_views"] = {}
+                config["initial_views"][Path(config["first_slide"]).stem] = [
+                    int(s) for s in str(req_args["window"][0], "utf-8")[1:-1].split(",")
+                ]
+
+        self.config["auto_load"] = get_from_config(["auto_load"], 0) == 1
+        # UI["vstate"].slide_path = r"E:\\TTB_vis_folder\\slides\\TCGA-SC-A6LN-01Z-00-DX1.svs"
+        # UI["vstate"].slide_path=Path(r'/tiatoolbox/app_data/slides/TCGA-SC-A6LN-01Z-00-DX1.svs')
+
+        # start tile server
+        if not is_deployed:
+            proc = Thread(target=run_app, daemon=True)
+            proc.start()
+
+        # set initial slide to first one in base folder
+        slide_list = []
+        for ext in ["*.svs", "*ndpi", "*.tiff", "*.mrxs", "*.png", "*.jpg"]:
+            slide_list.extend(list(config["slide_folder"].glob(ext)))
+            slide_list.extend(list(config["slide_folder"].glob(str(Path("*") / ext))))
+        first_slide_path = slide_list[0]
+        if "first_slide" in config:
+            first_slide_path = config["slide_folder"] / config["first_slide"]
+
+        # make initial window
+        win_dicts.append(make_window(ViewerState(first_slide_path)))
+        # set up any initial ui settings from config file
+        if "UI_settings" in config:
+            for k in config["UI_settings"]:
+                update_renderer(k, config["UI_settings"][k])
+        if self.config["default_cprop"] is not None:
+            UI["s"].put(
+                f"http://{host2}:5000/tileserver/change_color_prop/{config['default_cprop']}"
+            )
+        # open up initial slide
+        slide_select_cb(None, None, new=[UI["vstate"].slide_path])
+        if "default_type_cprop" in config:
+            UI["type_cmap_select"].value = list(config["default_type_cprop"].values())
+        # initialise_slide()
+        populate_slide_list(config["slide_folder"])
+        populate_layer_list(
+            Path(UI["vstate"].slide_path).stem, config["overlay_folder"]
+        )
+        UI["vstate"].init = False
+        self.config = config
+
+        # set up main window
+        slide_wins = row(
+            children=windows,
+            name="slide_windows",
+            sizing_mode="stretch_both",
+        )
+
+        control_tabs = Tabs(tabs=controls, name="ui_layout")
+        control_tabs.on_change("active", control_tabs_cb)
+        control_tabs.on_change("tabs", control_tabs_remove_cb)
+
+        print("windows and controls are:")
+        print(windows)
+        print(controls)
+        print(curdoc().template)
+        curdoc().template_variables["demo_name"] = config["demo_name"]
+        curdoc().add_periodic_callback(update, 220)
+        curdoc().add_root(slide_wins)
+        # curdoc().add_root(ui_layout)
+        curdoc().add_root(control_tabs)
+        # curdoc().add_root(opts_column)
+        curdoc().title = "Tiatoolbox Visualization Tool"
+        # if "template" in config:
+        #    curdoc().template = str(Path(r"C:\Users\meast\app_data\templates") / config["template"])
+        return slide_wins, control_tabs
+
+
+config = DocConfig()
+if do_doc:
+    slide_wins, control_tabs = config.setup_doc(sys.argv)

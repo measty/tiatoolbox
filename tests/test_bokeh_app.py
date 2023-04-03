@@ -1,12 +1,11 @@
 import pkg_resources
 import pytest
 from bokeh.application import Application
-
-# from tiatoolbox.visualization.bokeh_app import main
 from bokeh.application.handlers import DirectoryHandler, FunctionHandler
 from bokeh.client.session import pull_session
 
 from tiatoolbox.data import _fetch_remote_sample
+from tiatoolbox.visualization.bokeh_app import main
 
 BOKEH_PATH = pkg_resources.resource_filename("tiatoolbox", "visualization/bokeh_app")
 
@@ -20,8 +19,8 @@ def test_bokeh_app(tmp_path):
     anns_path = _fetch_remote_sample("annotation_store_svs_1", tmp_path / "overlays")
 
     # make a bokeh app
-    handler = DirectoryHandler(filename=BOKEH_PATH, argv=[str(tmp_path)])
-    # handler = FunctionHandler(main)
+    # handler = DirectoryHandler(filename=BOKEH_PATH, argv=[str(tmp_path)])
+    handler = FunctionHandler(main)
     app = Application(handler)
     doc = app.create_document()
     # handler.modify_document(doc)
