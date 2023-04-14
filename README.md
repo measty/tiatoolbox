@@ -1,5 +1,9 @@
 This visualization tool is in the process of being added to tiatoolbox, but for the moment is not usable there. This tiatoolbox fork makes it available, but it is a work in progress and will probably have a few issues. If you find one let me know! also, if there is any sort of visualization task you'd like to do which seems like it might fit in this tool but which can't be easily done with it at the moment, please suggest it.
 
+An example of the visualization tool used to display results of work on colon screening reported in: https://www.medrxiv.org/content/10.1101/2022.10.17.22279804v1
+
+can be seen at: https://iguana.dcs.warwick.ac.uk/
+
 # Setup
 
 ## If you already have a 'develop' tiatoolbox install
