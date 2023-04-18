@@ -360,6 +360,15 @@ def initialise_slide():
         UI["p"].x_range.end = lims[2]
         UI["p"].y_range.start = -lims[3]
         UI["p"].y_range.end = -lims[1]
+    # if two windows open and new slide is 'related' to the other, use the same view
+    elif len(win_dicts) == 2 and (
+        win_dicts[0]["vstate"].slide_path.stem in win_dicts[1]["vstate"].slide_path.stem
+        or win_dicts[1]["vstate"].slide_path.stem
+        in win_dicts[0]["vstate"].slide_path.stem
+        or win_dicts[1]["vstate"].dims == win_dicts[0]["vstate"].dims
+    ):
+        # view should already be correct, pass
+        pass
     else:
         if large_dim == 1:
             UI["p"].x_range.start = (
