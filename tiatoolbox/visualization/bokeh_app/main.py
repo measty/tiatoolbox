@@ -28,6 +28,7 @@ from bokeh.models import (
     ColorBar,
     ColorPicker,
     ColumnDataSource,
+    CustomJS,
     Dropdown,
     FuncTickFormatter,
     GraphRenderer,
@@ -785,6 +786,7 @@ cmap_select = Select(
     height=45,
     sizing_mode="stretch_width",
 )
+popup_button = Button(label="Popup", button_type="primary")
 blur_spinner = Spinner(
     title="Blur:",
     low=0,
@@ -1490,6 +1492,10 @@ def nuclick_on_pts(attr):
     change_tiles("overlay")
 
 
+js_popup_code = """
+    document.querySelector('.popup-content').classList.toggle('hidden');
+"""
+
 # associate callback functions to the widgets
 slide_alpha.on_change("value", slide_alpha_cb)
 overlay_alpha.on_change("value", overlay_alpha_cb)
@@ -1514,6 +1520,7 @@ type_cmap_select.on_change("value", type_cmap_cb)
 swap_button.on_click(swap_cb)
 options_check.on_change("active", options_check_cb)
 text_area_input.on_change("value", text_area_cb)
+popup_button.js_on_click(CustomJS(args=dict(popup=popup_button), code=js_popup_code))
 
 populate_slide_list(slide_folder)
 populate_layer_list(Path(vstate.slide_path).stem, overlay_folder)
@@ -1532,6 +1539,7 @@ ui_layout = column(
         row([overlay_toggle, overlay_alpha], sizing_mode="stretch_width"),
         filter_input,
         cprop_input,
+        popup_button,
         row(
             [cmap_select, scale_spinner, blur_spinner],
             sizing_mode="stretch_width",
@@ -1568,9 +1576,29 @@ def update():
         vstate.update_state = 2
 
 
+test_plot = figure(
+    width=300,
+    height=300,
+    x_range=(0, 1),
+    y_range=(0, 1),
+    name="popup_window",
+    tools="",
+)
+test_source = ColumnDataSource(data=dict(x=[0.5], y=[0.5], color=["red"]))
+test_plot.circle(
+    x="x",
+    y="y",
+    color="color",
+    source=test_source,
+    size=10,
+    line_color="black",
+    line_width=1,
+)
+
+
 curdoc().add_periodic_callback(update, 220)
 curdoc().add_root(p)
 # curdoc().add_root(ui_layout)
 curdoc().add_root(control_tabs)
-# curdoc().add_root(opts_column)
+curdoc().add_root(test_plot)
 curdoc().title = "Tiatoolbox Visualization Tool"

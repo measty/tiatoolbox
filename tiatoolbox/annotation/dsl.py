@@ -409,6 +409,7 @@ SQL_GLOBALS = {
     "__builtins__": {**_COMMON_GLOBALS["__builtins__"], "sum": sql_list_sum},
     "func": SQLFuncHandler(),
     "props": SQLJSONDictionary(),
+    "nneighbors": "get_n_neighbors(geometry, cx, cy)",
     "geom": "get_geometry(geometry, cx, cy)",
     "is_none": sql_is_none,
     "is_not_none": sql_is_not_none,

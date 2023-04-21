@@ -22,10 +22,43 @@
         top: 0;
         right: 0;
     }
+    .hidden {
+      display: none;
+    }
+
+    .popup {
+      position: absolute;
+      top: 30%;
+      left: 20%;
+      width: 20%;
+      height: 30%;
+      background-color: rgba(0, 0, 0, 0.0);
+      display: flex;
+      justify-content: center;
+      align-items: center;
+    }
+
+    .popup-content {
+      background-color: white;
+      padding: 20px;
+      border-radius: 5px;
+      width: 80%;
+      max-width: 500px;
+      box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+      z-index: 2;
+    }
+
   </style>
 {% endblock %}
 
 <!-- goes in body -->
 {% block contents %}
+<div id="popup" class="popup">
+  <div class="popup-content">
+    {{ embed(roots.popup_window) }}
+    <button class="btn btn-primary" id="close-popup">Close</button>
+  </div>
+</div>
 <div class="slide"> {{ embed(roots.slide_window) }} </div><div class="ui"> {{ embed(roots.ui_layout) }} </div>
+<script src="script.js"></script>
 {% endblock %}

@@ -1561,6 +1561,12 @@ class SQLiteStore(AnnotationStore):
                 )
             )
 
+        def get_n_neighbors(geom: bytes, cx: int, cy: int) -> int:
+            """Function to get the number of neighbors."""
+            geom = self._unpack_geometry(geom, cx, cy)
+            neighbors = self.query(geom.buffer(100))
+            return len(neighbors) - 1
+
         # Register custom functions
         self.register_custom_function(
             "geometry_predicate", 5, wkb_predicate, deterministic=True
@@ -1574,6 +1580,7 @@ class SQLiteStore(AnnotationStore):
         self.register_custom_function("CONTAINS", 1, json_contains)
         self.register_custom_function("get_area", 1, get_area)
         self.register_custom_function("get_geometry", 3, get_geometry)
+        self.register_custom_function("get_n_neighbors", 3, get_n_neighbors)
 
         if exists:
             self.table_columns = self._get_table_columns()
