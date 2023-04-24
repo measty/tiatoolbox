@@ -1,4 +1,4 @@
-const closePopupBtn = document.getElementById('closePopup');
+const closePopupBtn = document.getElementById('close-popup');
 const popup = document.getElementById('popup');
 const popupContent = document.querySelector('.popup-content');
 const popupHeader = document.querySelector('.popup-header');
@@ -21,6 +21,7 @@ document.addEventListener('mousemove', function(e) {
         popupContent.style.left = (e.clientX - offsetX) + 'px';
         popupContent.style.top = (e.clientY - offsetY) + 'px';
         popupContent.style.position = 'fixed';
+        console.log('New position is:', popupContent.style.left, popupContent.style.top);
     }
 });
 

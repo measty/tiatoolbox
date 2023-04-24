@@ -48,6 +48,14 @@
       z-index: 2;
     }
 
+    .popup-header {
+      cursor: move;
+      user-select: none;
+      -webkit-user-select: none;
+      -moz-user-select: none;
+      -ms-user-select: none;
+    }
+
   </style>
 {% endblock %}
 
@@ -55,10 +63,44 @@
 {% block contents %}
 <div id="popup" class="popup">
   <div class="popup-content">
+    <div class="popup-header">
+      <h2>Pop-up Window</h2>
+    </div>
     {{ embed(roots.popup_window) }}
     <button class="btn btn-primary" id="close-popup">Close</button>
   </div>
 </div>
 <div class="slide"> {{ embed(roots.slide_window) }} </div><div class="ui"> {{ embed(roots.ui_layout) }} </div>
-<script src="script.js"></script>
+<script>
+  const closePopupBtn = document.getElementById('close-popup');
+  const popup = document.getElementById('popup');
+  const popupContent = document.querySelector('.popup-content');
+  const popupHeader = document.querySelector('.popup-header');
+
+  let isDragging = false;
+  let offsetX, offsetY;
+
+  closePopupBtn.addEventListener('click', function() {
+      popupContent.classList.add('hidden');
+  });
+
+  popupHeader.addEventListener('mousedown', function(e) {
+      isDragging = true;
+      offsetX = e.clientX - popupContent.getBoundingClientRect().left;
+      offsetY = e.clientY - popupContent.getBoundingClientRect().top;
+  });
+
+  document.addEventListener('mousemove', function(e) {
+      if (isDragging) {
+          popupContent.style.left = (e.clientX - offsetX) + 'px';
+          popupContent.style.top = (e.clientY - offsetY) + 'px';
+          popupContent.style.position = 'fixed';
+          console.log('New position is:', popupContent.style.left, popupContent.style.top);
+      }
+  });
+
+  document.addEventListener('mouseup', function() {
+      isDragging = false;
+  });
+</script>
 {% endblock %}
