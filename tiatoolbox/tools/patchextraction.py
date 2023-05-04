@@ -285,6 +285,9 @@ class PatchExtractor(PatchExtractorABC):
         # the tissue mask exists in the reader already, no need to generate it
         tissue_mask = mask_reader.img
 
+        if len(tissue_mask.shape) == 3:
+            tissue_mask = np.any(tissue_mask, axis=-1)
+
         # Scaling the coordinates_list to the `tissue_mask` array resolution
         scale_factors = np.array(tissue_mask.shape[::-1]) / np.array(wsi_shape)
         scaled_coords = coordinates_list.copy().astype(np.float32)
