@@ -16,6 +16,7 @@ from PIL import Image, ImageFilter, ImageOps
 from shapely import speedups
 from shapely.geometry import Polygon
 
+from tiatoolbox import logger
 from tiatoolbox.annotation.storage import Annotation, AnnotationStore
 
 if speedups.available:  # pragma: no branch
@@ -721,8 +722,9 @@ class AnnotationRenderer:
                     )
                 )
         except KeyError:
-            warnings.warn(
-                "score_prop not found in properties. Using default color.", stacklevel=2
+            logger.warning(
+                "'score_prop' not found in properties. Using default color.",
+                stacklevel=2,
             )
         except TypeError:
             warnings.warn(
@@ -997,4 +999,4 @@ class AnnotationRenderer:
         elif geom_type == "LineString":
             self.render_line(tile, annotation, top_left, scale)
         else:
-            warnings.warn(f"Unknown geometry: {geom_type}", stacklevel=3)
+            logger.warning("Unknown geometry: %s", geom_type, stacklevel=3)

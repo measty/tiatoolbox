@@ -10,20 +10,20 @@ can be seen at: https://iguana.dcs.warwick.ac.uk/
 
 If you already have tiatoolbox set up for development, with paths set up to your local tiatoolbox repository, it should be sufficient to crete a new branch for your local tiatoolbox git from this repository, and switch to that when you want to do some visualization stuff.
 
-git remote add tiavis https://github.com/measty/tiatoolbox  
-git fetch tiavis  
+git remote add tiavis https://github.com/measty/tiatoolbox\
+git fetch tiavis\
 git checkout -b feature-add-gui tiavis/feature-add-gui
 
 You will also need to add a couple of extra packages to your environment:
 
-conda install bokeh -c bokeh  
+conda install bokeh -c bokeh\
 conda install flask-cors
 
 ## For most other cases
 
-Install tiatoolbox into a new conda environment as normal from this fork. The easiest way to do this would be using pip:  
+Install tiatoolbox into a new conda environment as normal from this fork. The easiest way to do this would be using pip:
 
-conda create -n tiatoolbox-vis python=3.9  
+conda create -n tiatoolbox-vis python=3.9\
 pip install git+https://github.com/measty/tiatoolbox.git@feature-add-gui
 
 Though you could use any of the methods described in the tiatoolbox docs at the bottom of the readme.
@@ -34,8 +34,8 @@ start the interface using:
 
 `tiatoolbox visualize --img-input path\to\slides --img-input path\to\overlays`
 
-alternatively just one path can be provided; in this case it is assumed that slides and overlays are in subdirectories of that provided directory called 'slides' and 'overlays' respectively.  
-Another option to start the interface is:  
+alternatively just one path can be provided; in this case it is assumed that slides and overlays are in subdirectories of that provided directory called 'slides' and 'overlays' respectively.\
+Another option to start the interface is:\
 `bokeh serve --show ./tiatoolbox/visualization/bokeh_app --args path\to\slides path\to\overlays`
 
 In the folder(s) that your command pointed to, should be the things that you want to visualize, following the conventions in the next section.
@@ -144,6 +144,7 @@ A filter can be applied to annotations using the filter box. For example, enteri
 See the annotation store documentation on valid 'where' statements for more details.
 
 ### Config files
+
 A json config file can be placed in the overlays folder, to customize various aspects of the UI and annotation display when visualizing overlays in that location. This is especially useful for customising online demos. An example .json explaining all the fields available is below:
 
 ```
@@ -224,8 +225,8 @@ A json config file can be placed in the overlays folder, to customize various as
     <img src="https://readthedocs.org/projects/tia-toolbox/badge/?version=latest" alt="Documentation Status" />
   </a>
   <br>
-  <a href="https://github.com/TissueImageAnalytics/tiatoolbox/blob/develop/LICENSE">
-    <img alt="GitHub license" src="https://img.shields.io/github/license/TissueImageAnalytics/tiatoolbox"></a>
+  <a href="#license">
+    <img alt="GitHub license" src="https://img.shields.io/static/v1?label=license&message=BSD-3-Clause&color=green"></a>
   <br>
   <br>
   <a href="https://github.com/TissueImageAnalytics/tiatoolbox/actions/workflows/pip-install.yml">
@@ -311,13 +312,13 @@ Prepare a computer as a convenient platform for further development of the Pytho
 ```sh
     $ conda create -n tiatoolbox-dev python=3.8 # select version of your choice
     $ conda activate tiatoolbox-dev
-    $ pip install -r requirements_dev.txt
+    $ pip install -r requirements/requirements_dev.txt
 ```
 
 or
 
 ```sh
-    $ conda env create -f requirements.dev.conda.yml # for linux/mac only.
+    $ conda env create -f requirements/requirements.dev.conda.yml # for linux/mac only.
     $ conda activate tiatoolbox-dev
 ```
 
@@ -329,9 +330,9 @@ or
 
 ### License
 
-The source code TIA Toolbox (tiatoolbox) as hosted on GitHub is released under the [The 3-Clause BSD License].
+The source code TIA Toolbox (tiatoolbox) as hosted on GitHub is released under the [BSD-3-Clause license](https://github.com/TissueImageAnalytics/tiatoolbox/blob/develop/LICENSE). The full text of the licence is included in [LICENSE](https://raw.githubusercontent.com/TissueImageAnalytics/tiatoolbox/develop/LICENSE).
 
-The full text of the licence is included in [LICENSE](https://raw.githubusercontent.com/TissueImageAnalytics/tiatoolbox/develop/LICENSE).
+Models weights are dependent on the datasets that they were trained on. Please refer to the [documentation](https://tia-toolbox.readthedocs.io/en/latest/pretrained.html) for more details.
 
 ### Cite this repository
 
@@ -354,13 +355,3 @@ If you find TIAToolbox useful or use it in your research, please consider citing
     year = {2022}
 }
 ```
-
-### Auxiliary Files
-
-Auxiliary files, such as pre-trained model weights downloaded from the TIA Centre webpage (https://warwick.ac.uk/tia/), are provided under the [Creative Commons Attribution-NonCommercial-ShareAlike Version 4 (CC BY-NC-SA 4.0) license](https://creativecommons.org/licenses/by-nc-sa/4.0/).
-
-### Dual License
-
-If you would like to use any of the source code or auxiliary files (e.g. pre-trained model weights) under a different license agreement please contact the Tissue Image Analytics (TIA) Centre at the University of Warwick (tia@dcs.warwick.ac.uk).
-
-[the 3-clause bsd license]: https://opensource.org/licenses/BSD-3-Clause

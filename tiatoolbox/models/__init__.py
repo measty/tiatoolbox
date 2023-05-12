@@ -4,6 +4,7 @@ from tiatoolbox.models.engine.interactive_segmentor import (
     InteractiveSegmentor,
     IOInteractiveSegmentorConfig,
 )
+from tiatoolbox.models.engine.multi_task_segmentor import MultiTaskSegmentor
 from tiatoolbox.models.engine.nucleus_instance_segmentor import NucleusInstanceSegmentor
 from tiatoolbox.models.engine.patch_predictor import (
     IOPatchPredictorConfig,
