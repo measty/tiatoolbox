@@ -1,4 +1,5 @@
 """Simple Flask WSGI apps to display tiles as slippery maps."""
+import ast
 import copy
 import io
 import json
@@ -13,11 +14,12 @@ import matplotlib.cm as cm
 import numpy as np
 from flask import Flask, Response, make_response, request, send_file
 from flask.templating import render_template
+from matplotlib import colormaps
 from PIL import Image
 
 import tiatoolbox.visualization.bokeh_app.postproc_defs as postproc
 from tiatoolbox import data
-from tiatoolbox.annotation.storage import SQLiteStore
+from tiatoolbox.annotation.storage import AnnotationStore, SQLiteStore
 from tiatoolbox.tools.pyramid import AnnotationTileGenerator, ZoomifyGenerator
 from tiatoolbox.utils.misc import add_from_dat, store_from_dat
 from tiatoolbox.utils.visualization import AnnotationRenderer, colourise_image
@@ -32,11 +34,13 @@ class TileServer(Flask):
             The title of the tile server, displayed in the browser as
             the page title.
         layers (Dict[str, WSIReader | str] | List[WSIReader | str]):
-            A dictionary mapping layer names to image paths or
-            :obj:`WSIReader` objects to display. May also be a list, in
-            which case generic names 'layer-1', 'layer-2' etc. will be
-            used. If layer is a single-channel low-res overlay, it will
-            be colourized using the 'viridis' colourmap
+            A dictionary mapping layer names to image paths, annotation paths,
+            or :obj:`WSIReader` objects to display. The dictionary should have
+            a 'slide' key which is the base slide for the visualization.
+            May also be a list, in which case generic names 'slide', 'layer-1',
+            'layer-2' etc. will be used. First entry in list will be assumed to
+            be the base slide. If a layer is a single-channel low-res overlay,
+            it will be colourized using the 'viridis' colourmap.
 
     Examples:
         >>> from tiatoolbox.wsicore.wsireader import WSIReader
@@ -71,7 +75,7 @@ class TileServer(Flask):
         self.tia_pyramids = {}
         self.renderer = renderer
         self.overlap = 0
-        if renderer is None:
+        if renderer is None:  # pragma: no branch
             self.renderer = AnnotationRenderer(
                 score_prop="type",
                 thickness=-1,
@@ -86,7 +90,10 @@ class TileServer(Flask):
 
         # Generic layer names if none provided.
         if isinstance(layers, list):
-            layers = {f"layer-{i}": p for i, p in enumerate(layers)}
+            layers_dict = {"slide": layers[0]}
+            for i, p in enumerate(layers[1:]):
+                layers_dict[f"layer-{i+1}"] = p
+            layers = layers_dict
         # Set up the layer dict.
         meta = None
         # if layers provided directly, not using with app,
@@ -119,14 +126,11 @@ class TileServer(Flask):
             self.zoomify,
         )
         self.route("/")(self.index)
-        self.route("/tileserver/setup")(self.setup)
-        self.route("/tileserver/change_predicate/<pred>", methods=["PUT"])(
-            self.change_pred
-        )
+        self.route("/tileserver/get_user")(self.get_user)
         self.route("/tileserver/change_color_prop/<prop>", methods=["PUT"])(
             self.change_prop
         )
-        self.route("/tileserver/change_slide/<layer>/<layer_path>", methods=["PUT"])(
+        self.route("/tileserver/change_slide/<slide_path>", methods=["PUT"])(
             self.change_slide
         )
         self.route("/tileserver/change_cmap/<cmap>", methods=["PUT"])(
@@ -143,10 +147,6 @@ class TileServer(Flask):
         self.route("/tileserver/update_renderer/<prop>/<val>", methods=["PUT"])(
             self.update_renderer
         )
-        self.route("/tileserver/update_where", methods=["POST"])(self.update_where)
-        self.route(
-            "/tileserver/change_secondary_cmap/<type_id>/<prop>/<cmap>", methods=["PUT"]
-        )(self.change_secondary_cmap)
         self.route("/tileserver/build_cmap/<mix_type>/<cmap>/<cdict>", methods=["PUT"])(
             self.build_cmap
         )
@@ -155,9 +155,14 @@ class TileServer(Flask):
             "/tileserver/change_demux/<stain>/<float:wed>/<float:weh>/<float:wdh>/<float:wde>",
             methods=["PUT"],
         )(self.change_demux)
-        self.route("/tileserver/get_prop_names")(self.get_properties)
-        self.route("/tileserver/get_prop_values/<prop>")(self.get_property_values)
         self.route("/tileserver/reset/<user>")(self.reset)
+        self.route(
+            "/tileserver/change_secondary_cmap/<type_id>/<prop>/<cmap>", methods=["PUT"]
+        )(self.change_secondary_cmap)
+        self.route("/tileserver/get_prop_names/<ann_type>")(self.get_properties)
+        self.route("/tileserver/get_prop_values/<prop>/<ann_type>")(
+            self.get_property_values
+        )
 
     def _get_user(self):
         """Get the user from the request.
@@ -169,6 +174,23 @@ class TileServer(Flask):
         if self.default_user:
             return "default"
         return request.cookies.get("user")
+
+    @staticmethod
+    def _get_cmap(cmap):
+        """Get the colourmap from the string sent."""
+        if cmap[0] == "{":
+            cmap = ast.literal_eval(cmap)
+
+        if cmap == "None":
+            return None
+        if isinstance(cmap, str):
+            return colormaps[cmap]
+
+        def cmapp(x):
+            """Dictionary colormap callable wrapper"""
+            return cmap[x]
+
+        return cmapp
 
     def _get_layer_as_wsireader(self, layer, meta):
         """Gets appropriate image provider for layer.
@@ -214,16 +236,24 @@ class TileServer(Flask):
             layer = colourise_image(layer)
             return VirtualWSIReader(layer, info=meta)
 
+        if isinstance(layer, AnnotationStore):
+            layer = AnnotationTileGenerator(
+                meta,
+                layer,
+                self.renderers["default"],
+                overlap=self.overlap,
+            )
+
         return layer
 
     def zoomify(
         self,
         layer: str,
         user: str,
-        tile_group: int,
+        tile_group: int,  # skipcq: PYL-w0613
         z: int,
         x: int,
-        y: int,  # skipcq: PYL-w0613
+        y: int,
         res: int,
     ) -> Response:
         """Serve a Zoomify tile for a particular layer.
@@ -269,17 +299,24 @@ class TileServer(Flask):
         image_io.seek(0)
         return send_file(image_io, mimetype="image/webp")
 
-    def update_types(self, sq: SQLiteStore):
+    @staticmethod
+    def update_types(sq: SQLiteStore):
         """Get the available types from the store."""
         types = sq.pquery("props['type']")
-        if None in types:
-            types.remove(None)
+        types = [t for t in types if t is not None]
         return tuple(types)
 
     @staticmethod
     def decode_safe_name(name):
         """Decode a url-safe name."""
         return Path(urllib.parse.unquote(name).replace("\\", os.sep))
+
+    def get_ann_layer(self, user):
+        """Get the annotation layer for a user."""
+        for layer in self.tia_pyramids[user].values():
+            if isinstance(layer, AnnotationTileGenerator):
+                return layer
+        raise ValueError("No annotation layer found.")
 
     def index(self) -> Response:
         """Serve the index page.
@@ -305,27 +342,19 @@ class TileServer(Flask):
             "index.html", title=self.tia_title, layers=json.dumps(layers)
         )
 
-    def change_pred(self, pred):
-        """Change predicate in store."""
-        user = self._get_user()
-        if pred == "None":
-            pred = None
-        self.renderers[user].where = pred
-
-        return "done"
-
     def change_prop(self, prop):
-        """Change the property to colour by."""
+        """Change the property to colour annotations by."""
         user = self._get_user()
-
-        if prop == "None":
-            prop = None
-        self.renderers[user].score_prop = prop
+        for layer in self.tia_pyramids[user].values():
+            if isinstance(layer, AnnotationTileGenerator):
+                if prop == "None":
+                    prop = None
+                layer.renderer.score_prop = prop
 
         return "done"
 
-    def setup(self):
-        """Setup the tileserver."""
+    def get_user(self):
+        """Setup a user."""
         # respond with a random cookie
         resp = make_response("done")
         if self.default_user:
@@ -349,38 +378,26 @@ class TileServer(Flask):
         del self.overlaps[user]
         return "done"
 
-    def change_slide(self, layer, layer_path):
-        """Change the slide for a layer."""
+    def change_slide(self, slide_path):
+        """Change the slide."""
         user = self._get_user()
-        layer_path = self.decode_safe_name(layer_path)
+        slide_path = self.decode_safe_name(slide_path)
 
-        self.tia_layers[user] = {layer: WSIReader.open(Path(layer_path))}
+        self.tia_layers[user] = {"slide": WSIReader.open(Path(slide_path))}
         self.tia_pyramids[user] = {
-            layer: ZoomifyGenerator(self.tia_layers[user][layer], tile_size=256)
+            "slide": ZoomifyGenerator(self.tia_layers[user]["slide"], tile_size=256)
         }
-        if self.tia_layers[user][layer].info.mpp is None:
-            self.tia_layers[user][layer].info.mpp = [1, 1]
-        self.slide_mpps[user] = self.tia_layers[user][layer].info.mpp
+        if self.tia_layers[user]["slide"].info.mpp is None:
+            self.tia_layers[user]["slide"].info.mpp = [1, 1]
+        self.slide_mpps[user] = self.tia_layers[user]["slide"].info.mpp
 
-        return layer
+        return "done"
 
     def change_mapper(self, cmap):
         """Change the colour mapper for the overlay."""
         user = self._get_user()
-        if cmap[0] == "{":
-            cmap = eval(cmap)
+        cmapp = self._get_cmap(cmap)
 
-        if cmap is None:
-            cmapp = cm.get_cmap("jet")
-        elif isinstance(cmap, str):
-            cmapp = cm.get_cmap(cmap)
-        elif isinstance(cmap, dict):
-
-            def cmapp(x):
-                return cmap[x]
-
-        if cmap == "None":
-            cmapp = None
         self.renderers[user].mapper = cmapp
         self.renderers[user].function_mapper = None
 
@@ -389,22 +406,9 @@ class TileServer(Flask):
     def change_secondary_cmap(self, type_id, prop, cmap):
         """Change the type-specific colour mapper for the overlay."""
         user = self._get_user()
-        if cmap[0] == "{":
-            cmap = eval(cmap)
-
-        if cmap is None:
-            cmapp = cm.get_cmap("jet")
-        elif isinstance(cmap, str):
-            cmapp = cm.get_cmap(cmap)
-        elif isinstance(cmap, dict):
-
-            def cmapp(x):
-                return cmap[x]
+        cmapp = self._get_cmap(cmap)
 
         cmap_dict = {"type": type_id, "score_prop": prop, "mapper": cmapp}
-
-        if cmapp == "None":
-            cmapp = None
         self.renderers[user].secondary_cmap = cmap_dict
 
         return "done"
@@ -466,10 +470,10 @@ class TileServer(Flask):
         if val == "None" or val == "null":
             val = None
         self.renderers[user].__setattr__(prop, val)
+        self.renderers[user].__setattr__(prop, val)
         if prop == "blur_radius":
             self.overlaps[user] = int(1.5 * val)
-            if "overlay" in self.tia_pyramids[user]:
-                self.tia_pyramids[user]["overlay"].overlap = self.overlaps[user]
+            self.get_ann_layer(user).overlap = self.overlaps[user]
         return "done"
 
     def update_where(self):
@@ -584,14 +588,13 @@ class TileServer(Flask):
         types = self.update_types(sq)
         return json.dumps(types)
 
-    def get_properties(self, where=None):
+    def get_properties(self, ann_type):
         """Get all the properties of the annotations in the store."""
         user = self._get_user()
-        if where == "None":
-            where = None
-        if where is not None:
-            where = (f'props["type"]="{where}"',)
-        ann_props = self.tia_pyramids[user]["overlay"].store.pquery(
+        where = None
+        if ann_type != "all":
+            where = f'props["type"]=={ann_type}'
+        ann_props = self.get_ann_layer(user).store.pquery(
             select="*",
             where=where,
             unique=False,
@@ -601,16 +604,15 @@ class TileServer(Flask):
             props.extend(list(prop_dict.keys()))
         return json.dumps(list(set(props)))
 
-    def get_property_values(self, prop, where=None):
+    def get_property_values(self, prop, ann_type):
         """Get all the values of a property in the store."""
         user = self._get_user()
-        if where == "None":
-            where = None
-        if where is not None:
-            where = (f'props["type"]="{where}"',)
+        where = None
+        if ann_type != "all":
+            where = f'props["type"]=={ann_type}'
         if "overlay" not in self.tia_pyramids[user]:
             return json.dumps([])
-        ann_props = self.tia_pyramids[user]["overlay"].store.pquery(
+        ann_props = self.get_ann_layer(user).store.pquery(
             select=f"props['{prop}']",
             where=where,
             unique=True,
