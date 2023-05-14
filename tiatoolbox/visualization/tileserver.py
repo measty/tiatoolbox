@@ -286,6 +286,8 @@ class TileServer(Flask):
                 if isinstance(self.tia_layers[user][layer], VirtualWSIReader)
                 else "optimise"
             )
+            if isinstance(pyramid, AnnotationTileGenerator):
+                interpolation = None
         except KeyError:
             return Response("Layer not found", status=404)
         try:

@@ -232,7 +232,7 @@ def set_alpha_glyph(glyph, alpha):
 def get_mapper_for_prop(prop, enforce_dict=False):
     # find out the unique values of the chosen property
     print(prop)
-    resp = UI["s"].get(f"http://{host2}:5000/tileserver/get_prop_values/{prop}")
+    resp = UI["s"].get(f"http://{host2}:5000/tileserver/get_prop_values/{prop}/all")
     prop_vals = json.loads(resp.text)
     # guess what cmap should be
     if (len(prop_vals) > 10 or len(prop_vals) == 0) and not enforce_dict:
@@ -943,7 +943,7 @@ def slide_select_cb(attr, old, new):
     fname = make_safe_name(str(slide_path))
     print(fname)
     print(UI["vstate"].mpp)
-    UI["s"].put(f"http://{host2}:5000/tileserver/change_slide/slide/{fname}")
+    UI["s"].put(f"http://{host2}:5000/tileserver/change_slide/{fname}")
     change_tiles("slide")
     # if len(UI["p"].renderers)==1:
     # r=UI["p"].rect('x', 'y', 'width', 'height', source=box_source, fill_alpha=0)
@@ -1061,7 +1061,7 @@ def layer_drop_cb(attr):
 
     if Path(attr.item).suffix in [".db", ".dat", ".geojson"]:
         UI["vstate"].types = resp
-        props = UI["s"].get(f"http://{host2}:5000/tileserver/get_prop_names")
+        props = UI["s"].get(f"http://{host2}:5000/tileserver/get_prop_names/all")
         UI["vstate"].props = json.loads(props.text)
         # UI["type_cmap_select"].options = UI["vstate"].props
         UI["cprop_input"].options = UI["vstate"].props
@@ -1368,7 +1368,7 @@ def segment_on_box(attr):
     UI["vstate"].types = json.loads(resp.text)
 
     # update the props options if needed
-    props = UI["s"].get(f"http://{host2}:5000/tileserver/get_prop_names")
+    props = UI["s"].get(f"http://{host2}:5000/tileserver/get_prop_names/all")
     UI["vstate"].props = json.loads(props.text)
     # UI["type_cmap_select"].options = UI["vstate"].props
     UI["cprop_input"].options = UI["vstate"].props
@@ -1510,7 +1510,7 @@ def make_window(vstate):
     # status_forcelist=[ 500, 502, 503, 504 ])
     s.mount("http://", HTTPAdapter(max_retries=retries))
 
-    resp = s.get(f"http://{host2}:5000/tileserver/setup")
+    resp = s.get(f"http://{host2}:5000/tileserver/get_user")
     print(f"cookies are: {resp.cookies}")
     cookies = resp.cookies
     user = resp.cookies.get("user")

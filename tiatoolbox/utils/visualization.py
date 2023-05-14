@@ -16,7 +16,7 @@ from PIL import Image, ImageFilter, ImageOps
 from shapely import speedups
 from shapely.geometry import Polygon
 
-from tiatoolbox import logger
+from tiatoolbox import DuplicateFilter, logger
 from tiatoolbox.annotation.storage import Annotation, AnnotationStore
 
 if speedups.available:  # pragma: no branch
@@ -907,6 +907,9 @@ class AnnotationRenderer:
                 The tile with the annotations rendered.
 
         """
+        # Don't print out multiple warnings.
+        duplicate_filter = DuplicateFilter()
+        logger.addFilter(duplicate_filter)
         bound_geom = Polygon.from_bounds(*bounds)
         top_left = np.array(bounds[:2])
         output_size = [
@@ -962,6 +965,7 @@ class AnnotationRenderer:
             for ann in anns.values():
                 self.render_by_type(tile, ann, top_left, scale / res)
 
+        logger.removeFilter(duplicate_filter)
         if self.blur is None:
             return tile
         return np.array(
