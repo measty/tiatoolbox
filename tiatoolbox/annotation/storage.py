@@ -147,6 +147,16 @@ class Annotation:
         """
         return json.dumps(self.to_feature())
 
+    def to_wkb_geometry(self):
+        """
+        Return the annotation with a WKB geometry.
+
+        Returns:
+            Annotation:
+                The annotation with a WKB geometry.
+        """
+        return Annotation(self.geometry.wkb, self.properties)
+
     def __repr__(self) -> str:
         return f"Annotation({self.geometry}, {self.properties})"
 
@@ -626,7 +636,9 @@ class AnnotationStore(ABC, MutableMapping):
         geometry: Optional[QueryGeometry] = None,
         where: Optional[Predicate] = None,
         geometry_predicate: str = "intersects",
+        min_area: Optional[float] = None,
         distance: float = 0,
+        as_raw: bool = False,
     ) -> Dict[str, Annotation]:
         """Query the store for annotations.
 
@@ -672,6 +684,9 @@ class AnnotationStore(ABC, MutableMapping):
             distance (float):
                 Distance used when performing a distance based query.
                 E.g. "centers_within_k" geometry predicate.
+            as_raw (bool):
+                If True, return geometries as raw wkb bytes instead of
+                shapely geometries. Defaults to False.
 
             Returns:
                 list:
@@ -723,6 +738,8 @@ class AnnotationStore(ABC, MutableMapping):
                     query result.
 
             """
+            if min_area is not None and annotation.geometry.area < min_area:
+                return False
             return (  # Geometry is None or the geometry predicate matches
                 query_geometry is None
                 or any(
@@ -749,7 +766,7 @@ class AnnotationStore(ABC, MutableMapping):
             ) and self._eval_where(where, annotation.properties)
 
         return {
-            key: annotation
+            key: annotation.to_wkb_geometry() if as_raw else annotation
             for key, annotation in self.items()
             if filter_function(annotation)
         }
@@ -1064,6 +1081,7 @@ class AnnotationStore(ABC, MutableMapping):
         distance: float = 5.0,
         geometry_predicate: str = "intersects",
         mode: str = "poly-poly",
+        as_raw: bool = False,
     ) -> Dict[str, Dict[str, Annotation]]:
         """Query for annotations within a distance of another annotation.
 
@@ -1118,6 +1136,9 @@ class AnnotationStore(ABC, MutableMapping):
                 of two strings. The first string is the mode for the
                 query geometry and the second string is the mode for
                 the nearest annotation geometry.
+            as_raw (bool):
+                If True, return geometries as raw wkb bytes instead of
+                shapely geometries. Defaults to False.
 
         Returns:
             Dict[str, Dict[str, Annotation]]:
@@ -1240,6 +1261,7 @@ class AnnotationStore(ABC, MutableMapping):
                 where=n_where,
                 geometry_predicate=geometry_predicate,
                 distance=distance,
+                as_raw=as_raw,
             )
             if subquery_result:
                 result[key] = subquery_result
@@ -1930,6 +1952,7 @@ class SQLiteStore(AnnotationStore):
         """
         if as_raw:
             if data is None:
+                # make wkb point
                 return (
                     np.uint8(0).tobytes()
                     + np.uint32(1).tobytes()
@@ -2279,7 +2302,6 @@ class SQLiteStore(AnnotationStore):
         geometry: Optional[QueryGeometry] = None,
         where: Optional[Predicate] = None,
         geometry_predicate="intersects",
-        min_area=None,
         distance: float = 0,
     ) -> List[str]:
         """Query the store for annotation keys.
@@ -2342,7 +2364,6 @@ class SQLiteStore(AnnotationStore):
             geometry_predicate=geometry_predicate,
             where=where,
             callable_columns="[key], properties",
-            min_area=min_area,
             distance=distance,
         )
         if isinstance(where, Callable):
@@ -2359,8 +2380,8 @@ class SQLiteStore(AnnotationStore):
         where: Optional[Predicate] = None,
         geometry_predicate: str = "intersects",
         min_area=None,
-        as_raw: bool = False,
         distance: float = 0,
+        as_raw: bool = False,
     ) -> Dict[str, Annotation]:
         """Runs Query."""
         query_geometry = geometry
@@ -2393,7 +2414,6 @@ class SQLiteStore(AnnotationStore):
         self,
         geometry: Optional[QueryGeometry] = None,
         where: Union[str, bytes, Callable[[Geometry, Dict[str, Any]], bool]] = None,
-        min_area=None,
     ) -> Dict[str, Tuple[float, float, float, float]]:
         """Query the store for annotation bounding boxes.
 
@@ -2467,7 +2487,6 @@ class SQLiteStore(AnnotationStore):
             geometry_predicate="bbox_intersects",
             where=where,
             callable_columns="[key], properties, min_x, min_y, max_x, max_y",
-            min_area=min_area,
         )
         if isinstance(where, Callable):
             return {
