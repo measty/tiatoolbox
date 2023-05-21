@@ -1440,6 +1440,15 @@ def nuclick_on_pts(attr):
 
 # endregion
 
+# set up main window
+slide_wins = row(
+    children=[],
+    name="slide_windows",
+    sizing_mode="stretch_both",
+)
+# and the controls
+control_tabs = Tabs(tabs=[], name="ui_layout")
+
 
 def make_window(vstate):
     win_num = str(len(windows))
@@ -2097,6 +2106,7 @@ class DocConfig:
         config["slide_folder"] = config["base_folder"].joinpath("slides")
         config["overlay_folder"] = config["base_folder"].joinpath("overlays")
         self.config = config
+        self.sys_args = None
 
     def __getitem__(self, key):
         return self.config[key]
@@ -2104,7 +2114,11 @@ class DocConfig:
     def __contains__(self, key):
         return key in self.config
 
-    def setup_doc(self, sys_args):
+    def set_sys_args(self, argv):
+        self.sys_args = argv
+
+    def setup_doc(self, doc):
+        sys_args = self.sys_args
         if len(sys_args) > 1 and sys_args[1] != "None":
             base_folder = Path(sys_args[1])
             if len(req_args) > 0:
@@ -2192,28 +2206,32 @@ class DocConfig:
         UI["vstate"].init = False
         self.config = config
 
-        # set up main window
-        slide_wins = row(
-            children=windows,
-            name="slide_windows",
-            sizing_mode="stretch_both",
-        )
+        # # set up main window
+        # slide_wins = row(
+        #     children=windows,
+        #     name="slide_windows",
+        #     sizing_mode="stretch_both",
+        # )
 
-        control_tabs = Tabs(tabs=controls, name="ui_layout")
+        # control_tabs = Tabs(tabs=controls, name="ui_layout")
+
+        slide_wins.children = windows
+        control_tabs.tabs = controls
+
         control_tabs.on_change("active", control_tabs_cb)
         control_tabs.on_change("tabs", control_tabs_remove_cb)
 
         print("windows and controls are:")
         print(windows)
         print(controls)
-        print(curdoc().template)
-        curdoc().template_variables["demo_name"] = config["demo_name"]
-        curdoc().add_periodic_callback(update, 220)
-        curdoc().add_root(slide_wins)
+        print(doc.template)
+        doc.template_variables["demo_name"] = config["demo_name"]
+        doc.add_periodic_callback(update, 220)
+        doc.add_root(slide_wins)
         # curdoc().add_root(ui_layout)
-        curdoc().add_root(control_tabs)
+        doc.add_root(control_tabs)
         # curdoc().add_root(opts_column)
-        curdoc().title = "Tiatoolbox Visualization Tool"
+        doc.title = "Tiatoolbox Visualization Tool"
         # if "template" in config:
         #    curdoc().template = str(Path(r"C:\Users\meast\app_data\templates") / config["template"])
         return slide_wins, control_tabs
@@ -2221,4 +2239,6 @@ class DocConfig:
 
 config = DocConfig()
 if do_doc:
-    slide_wins, control_tabs = config.setup_doc(sys.argv)
+    config.set_sys_args(sys.argv)
+    doc = curdoc()
+    slide_wins, control_tabs = config.setup_doc(doc)

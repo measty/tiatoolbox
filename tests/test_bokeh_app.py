@@ -20,7 +20,8 @@ def test_bokeh_app(tmp_path):
 
     # make a bokeh app
     # handler = DirectoryHandler(filename=BOKEH_PATH, argv=[str(tmp_path)])
-    handler = FunctionHandler(main)
+    main.config.set_sys_args(argv=["dummy_str", str(tmp_path)])
+    handler = FunctionHandler(main.config.setup_doc)
     app = Application(handler)
     doc = app.create_document()
     # handler.modify_document(doc)
@@ -28,10 +29,16 @@ def test_bokeh_app(tmp_path):
     # need to get doc to use tmp_path as base
     # doc = main.curdoc()
     assert len(doc.roots) == 2
-
-    slide_select = doc.get_model_by_name("slide_select")
+    slide_select = doc.get_model_by_name("slide_select0")
     assert len(slide_select.options) == 2
-    assert slide_select.options[0] == "svs-1-small.svs"
+    assert slide_select.options[0][0] == wsi_path.name
 
     slide_select.value = ["CMU-1.ndpi"]
-    assert doc.vstate.slide_path == wsi_path_2
+    assert main.UI["vstate"].slide_path == wsi_path_2
+
+    control_tabs = doc.get_model_by_name("ui_layout")
+    slide_wins = doc.get_model_by_name("slide_windows")
+    control_tabs.active = 1
+    slide_select = doc.get_model_by_name("slide_select1")
+    assert len(slide_select.options) == 2
+    assert slide_select.options[0][0] == wsi_path.name
