@@ -723,7 +723,7 @@ class AnnotationRenderer:
                 )
         except KeyError:
             logger.warning(
-                "'score_prop' not found in properties. Using default color.",
+                f"property: {score_prop} not found in properties. Using default color.",
                 stacklevel=2,
             )
         except TypeError:

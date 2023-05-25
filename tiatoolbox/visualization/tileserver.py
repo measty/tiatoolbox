@@ -410,7 +410,7 @@ class TileServer(Flask):
         user = self._get_user()
         cmapp = self._get_cmap(cmap)
 
-        cmap_dict = {"type": type_id, "score_prop": prop, "mapper": cmapp}
+        cmap_dict = {"type": json.loads(type_id), "score_prop": prop, "mapper": cmapp}
         self.renderers[user].secondary_cmap = cmap_dict
 
         return "done"

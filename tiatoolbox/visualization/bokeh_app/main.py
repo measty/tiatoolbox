@@ -173,13 +173,13 @@ def to_int_rgb(rgb):
 
 
 def name2type(name):
-    try:
-        return int(name)
-    except:
+    name = UI["vstate"].orig_types[name]
+    if isinstance(name, str):
         return f'"{name}"'
 
 
 def name2type_key(name):
+    # do we need this?
     try:
         return int(name)
     except:
@@ -246,7 +246,7 @@ def get_mapper_for_prop(prop, enforce_dict=False):
 
 def update_mapper():
     if UI["vstate"].types is not None:
-        UI["type_cmap_select"].options = [str(t) for t in UI["vstate"].types]
+        UI["type_cmap_select"].options = [t for t in UI["vstate"].types]
         if len(UI["node_source"].data["x_"]) > 0:
             UI["type_cmap_select"].options.append("graph_overlay")
         # UI["vstate"].mapper = make_color_dict(UI["vstate"].types)
@@ -300,6 +300,7 @@ def build_predicate():
 
 
 def build_predicate_callable():
+    # do we need this ?
     get_types = [
         name2type_key(l.label)
         for l in UI["box_column"].children
@@ -409,9 +410,9 @@ def initialise_slide():
 
 def initialise_overlay():
     UI["vstate"].colors = list(UI["vstate"].mapper.values())
-    UI["vstate"].types = [
-        str(t) for t in UI["vstate"].types
-    ]  # UI["vstate"].mapper.keys()]
+    # UI["vstate"].types = [
+    #     t for t in UI["vstate"].types
+    # ]  # UI["vstate"].mapper.keys()]
     now_active = {b.label: b.active for b in UI["box_column"].children}
     print(UI["vstate"].types)
     print(now_active)
@@ -643,6 +644,9 @@ class ViewerState:
             self.__dict__["colors"] = list(self.mapper.values())
             if self.cprop == "type":
                 update_mapper()
+            # we will standardise the types to strings, keep dict of originals
+            self.__dict__["orig_types"] = {str(x): x for x in __value}
+            __value = [str(x) for x in __value]
 
         if __name == "wsi":
             z = ZoomifyGenerator(__value, tile_size=256)
@@ -760,7 +764,6 @@ def layer_folder_input_cb(attr, old, new):
 
 def filter_input_cb(attr, old, new):
     """Change predicate to be used to filter annotations"""
-    # UI["s"].get(f"http://{host2}:5000/tileserver/change_predicate/{new}")
     build_predicate()
     UI["vstate"].update_state = 1
     UI["vstate"].to_update.update(["overlay"])
@@ -1076,6 +1079,7 @@ def layer_drop_cb(attr):
                 len(UI["cprop_input"].value) == 0
                 or UI["cprop_input"].value[0] not in UI["vstate"].props
             ):
+                UI["cprop_input"].value = ["type"]
                 update_mapper()
             UI["vstate"].props_old = UI["vstate"].props
         initialise_overlay()
@@ -1137,7 +1141,7 @@ def layer_slider_cb(obj, attr, old, new):
 
 def color_input_cb(obj, attr, old, new):
     print(new)
-    UI["vstate"].mapper[name2type_key(obj.name)] = (*hex2rgb(new), 1)
+    UI["vstate"].mapper[UI["vstate"].orig_types[obj.name]] = (*hex2rgb(new), 1)
     if UI["vstate"].cprop == "type":
         update_renderer("mapper", UI["vstate"].mapper)
     # change_tiles('overlay')
@@ -1223,7 +1227,7 @@ def type_cmap_cb(attr, old, new):
             return
         cmap = get_mapper_for_prop(new[1])  # separate cmap select ?
         UI["s"].put(
-            f"http://{host2}:5000/tileserver/change_secondary_cmap/{new[0]}/{new[1]}/{cmap}"
+            f"http://{host2}:5000/tileserver/change_secondary_cmap/{json.dumps(UI['vstate'].orig_types[new[0]])}/{new[1]}/{cmap}"
         )
 
         UI["color_bar"].color_mapper.palette = make_color_seq_from_cmap(
