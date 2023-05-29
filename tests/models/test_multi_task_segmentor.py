@@ -15,8 +15,8 @@ import pytest
 
 from tiatoolbox.models import IOSegmentorConfig, MultiTaskSegmentor, SemanticSegmentor
 from tiatoolbox.utils import env_detection as toolbox_env
+from tiatoolbox.utils import imwrite
 from tiatoolbox.utils.metrics import f1_detection
-from tiatoolbox.utils.misc import imwrite
 
 ON_GPU = toolbox_env.has_gpu()
 BATCH_SIZE = 1 if not ON_GPU else 8  # 16
@@ -72,7 +72,6 @@ def test_functionality_local(remote_sample, tmp_path):
         crash_on_exception=True,
         save_dir=save_dir,
     )
-
     inst_dict_a = joblib.load(f"{output[0][1]}.0.dat")
 
     # * then test run when using workers, will then compare results

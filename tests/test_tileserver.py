@@ -16,7 +16,7 @@ from tests.test_annotation_stores import cell_polygon
 from tests.test_utils import make_simple_dat
 from tiatoolbox.annotation.storage import Annotation, AnnotationStore, SQLiteStore
 from tiatoolbox.cli.common import cli_name
-from tiatoolbox.utils.misc import imread, imwrite
+from tiatoolbox.utils import imread, imwrite
 from tiatoolbox.visualization.tileserver import TileServer
 from tiatoolbox.wsicore.wsireader import WSIReader
 
@@ -472,12 +472,14 @@ def test_update_renderer(app):
 def test_secondary_cmap(app):
     """Test secondary cmap."""
     with app.test_client() as client:
-        response = client.put("/tileserver/change_secondary_cmap/0/prob/Reds")
+        response = client.put(
+            f"/tileserver/change_secondary_cmap/{json.dumps(0)}/prob/Reds"
+        )
         assert response.status_code == 200
         assert response.content_type == "text/html; charset=utf-8"
         # check that the renderer has been correctly updated
         layer = app.tia_pyramids["default"]["overlay"]
-        assert layer.renderer.secondary_cmap["type"] == "0"
+        assert layer.renderer.secondary_cmap["type"] == 0
         assert layer.renderer.secondary_cmap["score_prop"] == "prob"
         assert layer.renderer.secondary_cmap["mapper"](0.5) == colormaps["Reds"](0.5)
 
@@ -513,7 +515,8 @@ def test_get_property_values(app):
 def test_reset(app_alt):
     """Test resetting tileserver."""
     with app_alt.test_client() as client:
-        response = client.get("/tileserver/reset")
+        session_id = setup_app(client)
+        response = client.get(f"/tileserver/reset/{session_id}")
         assert response.status_code == 200
         assert response.content_type == "text/html; charset=utf-8"
         # check that the tileserver has been correctly reset

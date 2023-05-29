@@ -198,3 +198,19 @@ def test_hovernet_on_box(doc, data_path):
     # check there are multiple cells being detected
     assert len(main.UI["color_column"].children) > 3
     assert num > 10
+
+
+def test_alpha_sliders(doc):
+    slide_alpha = doc.get_model_by_name("slide_alpha0")
+    overlay_alpha = doc.get_model_by_name("overlay_alpha0")
+
+    # set alpha to 0.5
+    slide_alpha.value = 0.5
+    overlay_alpha.value = 0.5
+    # check that the alpha values have been set correctly
+    assert main.UI["p"].renderers[0].alpha == 0.5
+    assert main.UI["p"].renderers[main.UI["vstate"].layer_dict["overlay"]].alpha == 0.5
+
+
+def test_alpha_buttons(doc):
+    pass
