@@ -16,7 +16,7 @@ from tests.test_annotation_stores import cell_polygon
 from tests.test_utils import make_simple_dat
 from tiatoolbox.annotation.storage import Annotation, AnnotationStore, SQLiteStore
 from tiatoolbox.cli.common import cli_name
-from tiatoolbox.utils.misc import imread, imwrite
+from tiatoolbox.utils import imread, imwrite
 from tiatoolbox.visualization.tileserver import TileServer
 from tiatoolbox.wsicore.wsireader import WSIReader
 
