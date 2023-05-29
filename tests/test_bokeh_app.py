@@ -11,11 +11,22 @@ from bokeh.client.session import pull_session
 from bokeh.events import ButtonClick, MenuItemClick
 from matplotlib import colormaps
 from PIL import Image
+from scipy.ndimage import label
 
 from tiatoolbox.data import _fetch_remote_sample
 from tiatoolbox.visualization.bokeh_app import main
 
 BOKEH_PATH = pkg_resources.resource_filename("tiatoolbox", "visualization/bokeh_app")
+
+
+def get_tile(layer, x, y, z):
+    source = main.UI["p"].renderers[main.UI["vstate"].layer_dict[layer]].tile_source
+    url = source.url
+    # replace {x}, {y}, {z} with tile coordinates
+    url = url.replace("{x}", str(x)).replace("{y}", str(y)).replace("{z}", str(z))
+    im = io.BytesIO(requests.get(url).content)
+    # import pdb; pdb.set_trace()
+    return np.array(Image.open(im))
 
 
 @pytest.fixture(scope="module")
@@ -138,13 +149,7 @@ def test_type_cmap_select(doc):
     # set edge thicknes to 0 so the edges don't add an extra colour
     spinner = doc.get_model_by_name("edge_size0")
     spinner.value = 0
-    source = main.UI["p"].renderers[main.UI["vstate"].layer_dict["overlay"]].tile_source
-    url = source.url
-    # replace {x}, {y}, {z} with 0, 0, 0
-    url = url.replace("{x}", "1").replace("{y}", "2").replace("{z}", "2")
-    im = io.BytesIO(requests.get(url).content)
-    # import pdb; pdb.set_trace()
-    im = np.array(Image.open(im))
+    im = get_tile("overlay", 1, 2, 2)
     plt.imshow(im)
     plt.show()
     # check there are more than just num_types unique colors in the image,
@@ -159,3 +164,37 @@ def test_load_graph(doc, data_path):
     layer_drop._trigger_event(click)
     # we should have 2144 nodes in the node_source now
     assert len(main.UI["node_source"].data["x_"]) == 2144
+
+
+def test_hovernet_on_box(doc, data_path):
+    slide_select = doc.get_model_by_name("slide_select0")
+    slide_select.value = [data_path["slide2"].name]
+    go_button = doc.get_model_by_name("to_model0")
+    assert len(main.UI["color_column"].children) == 0
+    slide_select.value = [data_path["slide1"].name]
+    # set up a box selection
+    main.UI["box_source"].data = {
+        "x": [850],
+        "y": [1850],
+        "width": [500],
+        "height": [500],
+    }
+
+    # select hovernet model and run it on box
+    model_select = doc.get_model_by_name("model_drop0")
+    # import pdb; pdb.set_trace()
+    click = MenuItemClick(model_select, model_select.menu[0])
+    model_select._trigger_event(click)
+
+    click = ButtonClick(go_button)
+    go_button._trigger_event(click)
+    im = get_tile("overlay", 2, 2, 3)
+    plt.imshow(im)
+    plt.show()
+    im2 = get_tile("slide", 1, 2, 3)
+    plt.imshow(im2)
+    plt.show()
+    lab, num = label(im)
+    # check there are multiple cells being detected
+    assert len(main.UI["color_column"].children) > 3
+    assert num > 10

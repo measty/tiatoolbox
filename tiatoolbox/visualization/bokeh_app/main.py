@@ -1346,8 +1346,8 @@ def segment_on_box(attr):
 
     inst_segmentor = NucleusInstanceSegmentor(
         pretrained_model="hovernet_fast-pannuke",
-        num_loader_workers=6,
-        num_postproc_workers=12,
+        num_loader_workers=4,
+        num_postproc_workers=8,
         batch_size=24,
     )
 
