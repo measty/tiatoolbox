@@ -176,6 +176,7 @@ def name2type(name):
     name = UI["vstate"].orig_types[name]
     if isinstance(name, str):
         return f'"{name}"'
+    return name
 
 
 def name2type_key(name):
@@ -280,10 +281,10 @@ def build_predicate():
     """
     preds = [
         f'props["type"]=={name2type(l.label)}'
-        for l in UI["box_column"].children
+        for l in UI["type_column"].children
         if l.active and l.label in UI["vstate"].types
     ]
-    if len(preds) == len(UI["box_column"].children):
+    if len(preds) == len(UI["type_column"].children):
         preds = []
     combo = "None"
     if len(preds) > 0:
@@ -303,10 +304,10 @@ def build_predicate_callable():
     # do we need this ?
     get_types = [
         name2type_key(l.label)
-        for l in UI["box_column"].children
+        for l in UI["type_column"].children
         if l.active and l.label in UI["vstate"].types
     ]
-    if len(get_types) == len(UI["box_column"].children) or len(get_types) == 0:
+    if len(get_types) == len(UI["type_column"].children) or len(get_types) == 0:
         if UI["filter_input"].value == "None" or UI["filter_input"].value == "":
             update_renderer("where", "None")
             return None
@@ -413,12 +414,12 @@ def initialise_overlay():
     # UI["vstate"].types = [
     #     t for t in UI["vstate"].types
     # ]  # UI["vstate"].mapper.keys()]
-    now_active = {b.label: b.active for b in UI["box_column"].children}
+    now_active = {b.label: b.active for b in UI["type_column"].children}
     print(UI["vstate"].types)
     print(now_active)
     for t in UI["vstate"].types:
         if str(t) not in now_active.keys():
-            UI["box_column"].children.append(
+            UI["type_column"].children.append(
                 Toggle(
                     label=str(t),
                     active=True,
@@ -428,7 +429,7 @@ def initialise_overlay():
                     sizing_mode="stretch_width",
                 )
             )
-            UI["box_column"].children[-1].on_click(layer_select_cb)
+            UI["type_column"].children[-1].on_click(layer_select_cb)
             try:
                 UI["color_column"].children.append(
                     ColorPicker(
@@ -457,13 +458,13 @@ def initialise_overlay():
                 "color", bind_cb_obj(UI["color_column"].children[-1], color_input_cb)
             )
 
-    for b in UI["box_column"].children.copy():
+    for b in UI["type_column"].children.copy():
         if (
             b.label not in UI["vstate"].types
             and b.label not in UI["vstate"].layer_dict.keys()
         ):
             print(f"removing {b.label}")
-            UI["box_column"].children.remove(b)
+            UI["type_column"].children.remove(b)
     for c in UI["color_column"].children.copy():
         if c.name not in UI["vstate"].types and "slider" not in c.name:
             UI["color_column"].children.remove(c)
@@ -472,7 +473,7 @@ def initialise_overlay():
 
 
 def add_layer(lname):
-    UI["box_column"].children.append(
+    UI["type_column"].children.append(
         Toggle(
             label=lname,
             active=True,
@@ -483,15 +484,15 @@ def add_layer(lname):
         )
     )
     if lname == "nodes":
-        UI["box_column"].children[-1].active = (
+        UI["type_column"].children[-1].active = (
             UI["p"].renderers[UI["vstate"].layer_dict[lname]].glyph.line_alpha > 0
         )
     if lname == "edges":
-        UI["box_column"].children[-1].active = (
+        UI["type_column"].children[-1].active = (
             UI["p"].renderers[UI["vstate"].layer_dict[lname]].visible
         )
-    UI["box_column"].children[-1].on_click(
-        bind_cb_obj_tog(UI["box_column"].children[-1], fixed_layer_select_cb)
+    UI["type_column"].children[-1].on_click(
+        bind_cb_obj_tog(UI["type_column"].children[-1], fixed_layer_select_cb)
     )
     UI["color_column"].children.append(
         Slider(
@@ -931,12 +932,12 @@ def slide_select_cb(attr, old, new):
     for c in UI["color_column"].children.copy():
         if "_slider" in c.name:
             UI["color_column"].children.remove(c)
-    for b in UI["box_column"].children.copy():
+    for b in UI["type_column"].children.copy():
         if "layer" in b.label or "graph" in b.label:
-            UI["box_column"].children.remove(b)
+            UI["type_column"].children.remove(b)
     """
     UI["color_column"].children = []
-    UI["box_column"].children = []
+    UI["type_column"].children = []
     print(UI["p"].renderers)
     print(slide_path)
     populate_layer_list(slide_path.stem, config["overlay_folder"])
@@ -1644,6 +1645,7 @@ def make_window(vstate):
 
     slide_toggle = Toggle(
         label="Slide",
+        active=True,
         button_type="success",
         width=90,
         # max_width=90,
@@ -1652,6 +1654,7 @@ def make_window(vstate):
     )
     overlay_toggle = Toggle(
         label="Overlay",
+        active=True,
         button_type="success",
         width=90,
         # max_width=90,
@@ -1854,8 +1857,10 @@ def make_window(vstate):
 
     vstate.cprop = config["default_cprop"]
 
-    box_column = column(children=layer_boxes)
-    color_column = column(children=lcolors, sizing_mode="stretch_width")
+    type_column = column(children=layer_boxes, name=f"type_column{win_num}")
+    color_column = column(
+        children=lcolors, sizing_mode="stretch_width", name=f"color_column{win_num}"
+    )
 
     # create the layout
     slide_row = row([slide_toggle, slide_alpha], sizing_mode="stretch_width")
@@ -1868,7 +1873,7 @@ def make_window(vstate):
         [to_model_button, model_drop, save_button], sizing_mode="stretch_width"
     )
     type_select_row = row(
-        children=[box_column, color_column], sizing_mode="stretch_width"
+        children=[type_column, color_column], sizing_mode="stretch_width"
     )
 
     # make element dictionaries
@@ -1994,7 +1999,7 @@ def make_window(vstate):
         "hover": hover,
         "user": user,
         "color_column": color_column,
-        "box_column": box_column,
+        "type_column": type_column,
         "overlay_alpha": overlay_alpha,
         "cmap_select": cmap_select,
         "color_bar": color_bar,

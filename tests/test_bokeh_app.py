@@ -1,4 +1,5 @@
 import io
+import time
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -213,4 +214,34 @@ def test_alpha_sliders(doc):
 
 
 def test_alpha_buttons(doc):
-    pass
+    slide_toggle = doc.get_model_by_name("slide_toggle0")
+    overlay_toggle = doc.get_model_by_name("overlay_toggle0")
+    # clicking the button should set alpha to 0
+    slide_toggle.active = False
+    assert main.UI["p"].renderers[0].alpha == 0
+    overlay_toggle.active = False
+    assert main.UI["p"].renderers[main.UI["vstate"].layer_dict["overlay"]].alpha == 0
+
+    # clicking again should set alpha back to previous value
+    slide_toggle.active = True
+    assert main.UI["p"].renderers[0].alpha == 0.5
+    overlay_toggle.active = True
+    assert main.UI["p"].renderers[main.UI["vstate"].layer_dict["overlay"]].alpha == 0.5
+
+
+def test_type_select(doc):
+    # load annotation layer
+    layer_drop = doc.get_model_by_name("layer_drop0")
+    click = MenuItemClick(layer_drop, layer_drop.menu[0][0])
+    layer_drop._trigger_event(click)
+    time.sleep(1)
+    im = get_tile("overlay", 1, 2, 2)
+    _, num_before = label(im)
+    type_column_list = doc.get_model_by_name("type_column0").children
+    # click on the first and last to deselect them
+    type_column_list[0].active = False
+    type_column_list[-1].active = False
+    # check that the number of cells has decreased
+    im = get_tile("overlay", 1, 2, 2)
+    _, num_after = label(im)
+    assert num_after < num_before
