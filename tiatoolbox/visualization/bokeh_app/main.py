@@ -1360,7 +1360,7 @@ def segment_on_box(attr):
         mode="wsi",
         # resolution=UI["vstate"].mpp,
         # units='mpp',
-        on_gpu=True,
+        on_gpu=torch.cuda.is_available(),
         crash_on_exception=True,
     )
 
