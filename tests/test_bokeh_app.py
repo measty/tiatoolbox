@@ -241,6 +241,13 @@ def test_type_select(doc):
     im = get_tile("overlay", 4, 8, 4)
     _, num_after = label(np.any(im[:, :, :3], axis=2))
     assert num_after < num_before
+    # reselect them
+    type_column_list[0].active = True
+    type_column_list[-1].active = True
+    # check we are back to original number of cells
+    im = get_tile("overlay", 4, 8, 4)
+    _, num_after = label(np.any(im[:, :, :3], axis=2))
+    assert num_after == num_before
 
 
 def test_color_boxes(doc):
@@ -292,3 +299,27 @@ def test_node_and_edge_alpha(doc, data_path):
 def test_hover_tool(doc):
     # how to test this?
     pass
+
+
+def test_filter_box(doc):
+    filter_input = doc.get_model_by_name("filter0")
+    im = get_tile("overlay", 4, 8, 4)
+    _, num_before = label(np.any(im[:, :, :3], axis=2))
+    # filter for cells of type 0
+    filter_input.value = "props['type'] == 0"
+    im = get_tile("overlay", 4, 8, 4)
+    _, num_after = label(np.any(im[:, :, :3], axis=2))
+    # should be less than without the filter
+    assert num_after < num_before
+    # set no filter
+    filter_input.value = ""
+    im = get_tile("overlay", 4, 8, 4)
+    _, num_after = label(np.any(im[:, :, :3], axis=2))
+    # should be back to original number
+    assert num_after == num_before
+    # set an impossible filter
+    filter_input.value = "props['prob'] < 0"
+    im = get_tile("overlay", 4, 8, 4)
+    _, num_after = label(np.any(im[:, :, :3], axis=2))
+    # should be no cells
+    assert num_after == 0

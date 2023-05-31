@@ -305,7 +305,7 @@ class TileServer(Flask):
     def update_types(sq: SQLiteStore):
         """Get the available types from the store."""
         types = sq.pquery("props['type']")
-        types = [t for t in types if t is not None]
+        types = sorted([t for t in types if t is not None])
         return tuple(types)
 
     @staticmethod
