@@ -252,3 +252,43 @@ def test_color_boxes(doc):
     # check the mapper matches the new colors
     assert main.UI["vstate"].mapper[0] == (1, 0, 0, 1)
     assert main.UI["vstate"].mapper[1] == (0, 0, 1, 1)
+
+
+def test_node_and_edge_alpha(doc, data_path):
+    layer_drop = doc.get_model_by_name("layer_drop0")
+    # trigger an event to select the graph .db file
+    click = MenuItemClick(layer_drop, layer_drop.menu[1][1])
+    layer_drop._trigger_event(click)
+
+    type_column_list = doc.get_model_by_name("type_column0").children
+    color_column_list = doc.get_model_by_name("color_column0").children
+    # the last 2 will be edge and node controls
+    # by default nodes are visible, edges are not
+    assert not type_column_list[-2].active
+    assert type_column_list[-1].active
+    type_column_list[-1].active = False
+    type_column_list[-2].active = True
+    # check that the alpha values have been set correctly
+    assert (
+        main.UI["p"].renderers[main.UI["vstate"].layer_dict["nodes"]].glyph.fill_alpha
+        == 0
+    )
+    assert main.UI["p"].renderers[main.UI["vstate"].layer_dict["edges"]].visible is True
+    type_column_list[-1].active = True
+    color_column_list[-2].value = 0.3
+    color_column_list[-1].value = 0.4
+    # check that the alpha values have been set correctly
+    assert (
+        main.UI["p"].renderers[main.UI["vstate"].layer_dict["nodes"]].glyph.fill_alpha
+        == 0.4
+    )
+    assert main.UI["p"].renderers[main.UI["vstate"].layer_dict["edges"]].visible is True
+    assert (
+        main.UI["p"].renderers[main.UI["vstate"].layer_dict["edges"]].glyph.line_alpha
+        == 0.3
+    )
+
+
+def test_hover_tool(doc):
+    # how to test this?
+    pass
