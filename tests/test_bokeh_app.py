@@ -20,13 +20,16 @@ from tiatoolbox.visualization.bokeh_app import main
 BOKEH_PATH = pkg_resources.resource_filename("tiatoolbox", "visualization/bokeh_app")
 
 
-def get_tile(layer, x, y, z):
+def get_tile(layer, x, y, z, show=False):
     source = main.UI["p"].renderers[main.UI["vstate"].layer_dict[layer]].tile_source
     url = source.url
     # replace {x}, {y}, {z} with tile coordinates
     url = url.replace("{x}", str(x)).replace("{y}", str(y)).replace("{z}", str(z))
     im = io.BytesIO(requests.get(url).content)
     # import pdb; pdb.set_trace()
+    if show:
+        plt.imshow(np.array(Image.open(im)))
+        plt.show()
     return np.array(Image.open(im))
 
 
@@ -151,8 +154,6 @@ def test_type_cmap_select(doc):
     spinner = doc.get_model_by_name("edge_size0")
     spinner.value = 0
     im = get_tile("overlay", 1, 2, 2)
-    plt.imshow(im)
-    plt.show()
     # check there are more than just num_types unique colors in the image,
     # as we have mapped type 0 to a continuous cmap on prob
     assert len(np.unique(im.sum(axis=2))) > 10
@@ -175,10 +176,10 @@ def test_hovernet_on_box(doc, data_path):
     slide_select.value = [data_path["slide1"].name]
     # set up a box selection
     main.UI["box_source"].data = {
-        "x": [850],
-        "y": [1850],
-        "width": [500],
-        "height": [500],
+        "x": [1200],
+        "y": [-2000],
+        "width": [800],
+        "height": [800],
     }
 
     # select hovernet model and run it on box
@@ -189,13 +190,8 @@ def test_hovernet_on_box(doc, data_path):
 
     click = ButtonClick(go_button)
     go_button._trigger_event(click)
-    im = get_tile("overlay", 2, 2, 3)
-    plt.imshow(im)
-    plt.show()
-    im2 = get_tile("slide", 1, 2, 3)
-    plt.imshow(im2)
-    plt.show()
-    lab, num = label(im)
+    im = get_tile("overlay", 4, 8, 4)
+    lab, num = label(np.any(im[:, :, :3], axis=2))
     # check there are multiple cells being detected
     assert len(main.UI["color_column"].children) > 3
     assert num > 10
@@ -235,13 +231,24 @@ def test_type_select(doc):
     click = MenuItemClick(layer_drop, layer_drop.menu[0][0])
     layer_drop._trigger_event(click)
     time.sleep(1)
-    im = get_tile("overlay", 1, 2, 2)
-    _, num_before = label(im)
+    im = get_tile("overlay", 4, 8, 4)
+    _, num_before = label(np.any(im[:, :, :3], axis=2))
     type_column_list = doc.get_model_by_name("type_column0").children
     # click on the first and last to deselect them
     type_column_list[0].active = False
     type_column_list[-1].active = False
     # check that the number of cells has decreased
-    im = get_tile("overlay", 1, 2, 2)
-    _, num_after = label(im)
+    im = get_tile("overlay", 4, 8, 4)
+    _, num_after = label(np.any(im[:, :, :3], axis=2))
     assert num_after < num_before
+
+
+def test_color_boxes(doc):
+    color_column_list = doc.get_model_by_name("color_column0").children
+    # set type 0 to red
+    color_column_list[0].color = "#ff0000"
+    # set type 1 to blue
+    color_column_list[1].color = "#0000ff"
+    # check the mapper matches the new colors
+    assert main.UI["vstate"].mapper[0] == (1, 0, 0, 1)
+    assert main.UI["vstate"].mapper[1] == (0, 0, 1, 1)
