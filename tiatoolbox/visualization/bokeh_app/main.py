@@ -624,6 +624,7 @@ class ViewerState:
         self.types = list(self.mapper.keys())
         self.layer_dict = {"slide": 0, "rect": 1, "pts": 2}
         self.update_state = 0
+        self.thickness = -1
         self.model_mpp = 0
         self.init = True
         self.micron_formatter = FuncTickFormatter(
@@ -2066,6 +2067,7 @@ def control_tabs_cb(attr, old, new):
     if new == 1 and len(slide_wins.children) == 1:
         # make new window
         win_dicts.append(make_window(ViewerState(win_dicts[0]["vstate"].slide_path)))
+        win_dicts[1]["vstate"].thickness = win_dicts[0]["vstate"].thickness
         bounds = get_view_bounds(
             UI["vstate"].dims, np.array([UI["p"].width, UI["p"].height])
         )
