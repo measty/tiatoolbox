@@ -217,8 +217,8 @@ def make_color_dict(types):
     # grab colors out of config["colour_dict"] if possible, otherwise use random
     type_colours = {}
     for i, t in enumerate(types):
-        if t in config["colour_dict"]:
-            type_colours[t] = to_float_rgb(config["colour_dict"][t])
+        if str(t) in config["colour_dict"]:
+            type_colours[t] = to_float_rgb(config["colour_dict"][str(t)])
         else:
             type_colours[t] = (*colors[i], 1)
     return type_colours
