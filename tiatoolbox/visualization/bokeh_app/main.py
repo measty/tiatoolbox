@@ -2144,7 +2144,7 @@ class DocConfig:
             slide_folder = Path(sys_args[1])
             overlay_folder = Path(sys_args[2])
         # load a color_dict and/or slide initial view windows from a json file
-        config_file = list(overlay_folder.glob("*_config.json"))
+        config_file = list(overlay_folder.glob("*config.json"))
         config = self.config
         if len(config_file) > 0:
             config_file = config_file[0]
