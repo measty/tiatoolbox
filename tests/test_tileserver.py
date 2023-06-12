@@ -520,8 +520,11 @@ def test_reset(app_alt):
         assert response.status_code == 200
         assert response.content_type == "text/html; charset=utf-8"
         # check that the tileserver has been correctly reset
-        assert len(app_alt.tia_pyramids["default"]) == 0
-        assert app_alt.tia_layers["default"] == {}
+        # pyramids etc for this session should have been deleted
+        with pytest.raises(KeyError):
+            app_alt.tia_pyramids[session_id]
+        with pytest.raises(KeyError):
+            app_alt.tia_layers[session_id]
 
 
 def test_no_ann_layer(empty_app, remote_sample):
