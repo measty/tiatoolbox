@@ -298,7 +298,7 @@ class TilePyramidGenerator:
                 """Write the tile to the output directory."""
                 full_path = path / tile_path
                 full_path.parent.mkdir(parents=True, exist_ok=True)
-                tile.save(full_path)
+                tile.convert("RGB").save(full_path)
 
         elif container == "zip":
             compression2enum = {
@@ -317,7 +317,7 @@ class TilePyramidGenerator:
             def save_tile(tile_path: Path, tile: Image.Image) -> None:
                 """Write the tile to the output tar."""
                 bio = BytesIO()
-                tile.save(bio, format="jpeg")
+                tile.convert("RGB").save(bio, format="jpeg")
                 bio.seek(0)
                 data = bio.read()
                 archive.writestr(
@@ -341,7 +341,7 @@ class TilePyramidGenerator:
             def save_tile(tile_path: Path, tile: Image.Image) -> None:
                 """Write the tile to the output zip."""
                 bio = BytesIO()
-                tile.save(bio, format="jpeg")
+                tile.convert("RGB").save(bio, format="jpeg")
                 bio.seek(0)
                 tar_info = tarfile.TarInfo(name=str(tile_path))
                 tar_info.mtime = time.time()
