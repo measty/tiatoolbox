@@ -247,9 +247,6 @@ def get_mapper_for_prop(prop, enforce_dict=False):
 
 def update_mapper():
     if UI["vstate"].types is not None:
-        UI["type_cmap_select"].options = [t for t in UI["vstate"].types]
-        if len(UI["node_source"].data["x_"]) > 0:
-            UI["type_cmap_select"].options.append("graph_overlay")
         # UI["vstate"].mapper = make_color_dict(UI["vstate"].types)
         update_renderer("mapper", UI["vstate"].mapper)
 
@@ -1069,6 +1066,10 @@ def layer_drop_cb(attr):
         props = UI["s"].get(f"http://{host2}:5000/tileserver/get_prop_names/all")
         UI["vstate"].props = json.loads(props.text)
         # UI["type_cmap_select"].options = UI["vstate"].props
+        # update the color type by prop menu
+        UI["type_cmap_select"].options = [t for t in UI["vstate"].types]
+        if len(UI["node_source"].data["x_"]) > 0:
+            UI["type_cmap_select"].options.append("graph_overlay")
         UI["cprop_input"].options = UI["vstate"].props
         # subcat_select.options = ["All"] + list(
         #     set([UI["p"].split("_")[0] for p in UI["vstate"].props])
