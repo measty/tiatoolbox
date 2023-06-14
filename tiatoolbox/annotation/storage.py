@@ -31,6 +31,7 @@ import pickle
 import sqlite3
 import sys
 import tempfile
+import threading
 import uuid
 import zlib
 from abc import ABC, abstractmethod
@@ -1796,8 +1797,7 @@ class SQLiteStore(AnnotationStore):
             self.path.is_file()
             and self.path.stat().st_size > 0
         )
-        self.con = sqlite3.connect(str(self.path), isolation_level="DEFERRED")
-        self.con.execute("BEGIN")
+        self.cons = {}
 
         # Set up metadata
         self.metadata = SQLiteMetadata(self.con)
@@ -1809,66 +1809,6 @@ class SQLiteStore(AnnotationStore):
         # store locally as constantly fetching from db in (de)serialization is slow
         self.compression = self.metadata["compression"]
         self.compression_level = self.metadata["compression_level"]
-
-        # Register predicate functions as custom SQLite functions
-        def wkb_predicate(
-            name: str, wkb_a: bytes, b: bytes, cx: float, cy: float
-        ) -> bool:
-            """Wrapper function to allow WKB as inputs to binary predicates."""
-            a = wkb.loads(wkb_a)
-            b = self._unpack_geometry(b, cx, cy)
-            return self._geometry_predicate(name, a, b)
-
-        def pickle_expression(pickle_bytes: bytes, properties: str) -> bool:
-            """Function to load and execute pickle bytes with a "properties" dict."""
-            fn = pickle.loads(pickle_bytes)  # skipcq: BAN-B301
-            properties = json.loads(properties)
-            return fn(properties)
-
-        def get_area(wkb_bytes: bytes, cx: float, cy: float) -> float:
-            """Function to get the area of a geometry."""
-            return self._unpack_geometry(
-                wkb_bytes,
-                cx,
-                cy,
-            ).area
-
-        # Register custom functions
-        def register_custom_function(
-            name: str, nargs: int, fn: Callable, deterministic: bool = False
-        ) -> None:
-            """Register a custom SQLite function.
-
-            Only Python >= 3.8 supports deterministic functions,
-            fallback to without this argument if not available.
-
-            Args:
-                name:
-                    The name of the function.
-                nargs:
-                    The number of arguments the function takes.
-                fn:
-                    The function to register.
-                deterministic:
-                    Whether the function is deterministic.
-
-            """
-            try:
-                self.con.create_function(name, nargs, fn, deterministic=deterministic)
-            except TypeError:
-                self.con.create_function(name, nargs, fn)
-
-        register_custom_function(
-            "geometry_predicate", 5, wkb_predicate, deterministic=True
-        )
-        register_custom_function(
-            "pickle_expression", 2, pickle_expression, deterministic=True
-        )
-        register_custom_function("REGEXP", 2, py_regexp)
-        register_custom_function("REGEXP", 3, py_regexp)
-        register_custom_function("LISTSUM", 1, json_list_sum)
-        register_custom_function("CONTAINS", 1, json_contains)
-        register_custom_function("get_area", 3, get_area)
 
         if exists:
             self.table_columns = self._get_table_columns()
@@ -1902,6 +1842,81 @@ class SQLiteStore(AnnotationStore):
         if self.auto_commit:
             self.con.commit()
         self.table_columns = self._get_table_columns()
+
+    def __getattribute__(self, name: str) -> Any:
+        """if attr is con, return thread-local connection."""
+        if name == "con":
+            return self.get_connection(threading.get_ident())
+        return super().__getattribute__(name)
+
+    def get_connection(self, thread_id) -> sqlite3.Connection:
+        """Get a connection to the database."""
+        if thread_id not in self.cons:
+            con = sqlite3.connect(str(self.path), isolation_level="DEFERRED")
+            con.execute("BEGIN")
+
+            # Register predicate functions as custom SQLite functions
+            def wkb_predicate(
+                name: str, wkb_a: bytes, b: bytes, cx: float, cy: float
+            ) -> bool:
+                """Wrapper function to allow WKB as inputs to binary predicates."""
+                a = wkb.loads(wkb_a)
+                b = self._unpack_geometry(b, cx, cy)
+                return self._geometry_predicate(name, a, b)
+
+            def pickle_expression(pickle_bytes: bytes, properties: str) -> bool:
+                """Function to load and execute pickle bytes with a "properties" dict."""
+                fn = pickle.loads(pickle_bytes)  # skipcq: BAN-B301
+                properties = json.loads(properties)
+                return fn(properties)
+
+            def get_area(wkb_bytes: bytes, cx: float, cy: float) -> float:
+                """Function to get the area of a geometry."""
+                return self._unpack_geometry(
+                    wkb_bytes,
+                    cx,
+                    cy,
+                ).area
+
+            # Register custom functions
+            def register_custom_function(
+                name: str, nargs: int, fn: Callable, deterministic: bool = False
+            ) -> None:
+                """Register a custom SQLite function.
+
+                Only Python >= 3.8 supports deterministic functions,
+                fallback to without this argument if not available.
+
+                Args:
+                    name:
+                        The name of the function.
+                    nargs:
+                        The number of arguments the function takes.
+                    fn:
+                        The function to register.
+                    deterministic:
+                        Whether the function is deterministic.
+
+                """
+                try:
+                    con.create_function(name, nargs, fn, deterministic=deterministic)
+                except TypeError:
+                    con.create_function(name, nargs, fn)
+
+            register_custom_function(
+                "geometry_predicate", 5, wkb_predicate, deterministic=True
+            )
+            register_custom_function(
+                "pickle_expression", 2, pickle_expression, deterministic=True
+            )
+            register_custom_function("REGEXP", 2, py_regexp)
+            register_custom_function("REGEXP", 3, py_regexp)
+            register_custom_function("LISTSUM", 1, json_list_sum)
+            register_custom_function("CONTAINS", 1, json_contains)
+            register_custom_function("get_area", 3, get_area)
+            self.cons[thread_id] = con
+            return con
+        return self.cons[thread_id]
 
     def serialise_geometry(  # skipcq: PYL-W0221
         self, geometry: Geometry
@@ -2204,6 +2219,7 @@ class SQLiteStore(AnnotationStore):
         index_warning: bool = False,
         min_area=None,
         distance: float = 0,
+        con: Optional[str] = None,
     ) -> sqlite3.Cursor:
         """Common query construction logic for `query` and `iquery`.
 
@@ -2249,6 +2265,7 @@ class SQLiteStore(AnnotationStore):
                 "Invalid geometry predicate."
                 f"Allowed values are: {', '.join(self._geometry_predicate_names)}."
             )
+
         cur = self.con.cursor()
 
         # Normalise query geometry and determine if it is a rectangle

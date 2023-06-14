@@ -599,7 +599,7 @@ def run_app():
         },
     )
     CORS(app, send_wildcard=True)
-    app.run(host="127.0.0.1", threaded=False)
+    app.run(host="127.0.0.1", threaded=True)
 
 
 class ViewerState:
@@ -2176,8 +2176,8 @@ class DocConfig:
                 config["initial_views"][Path(config["first_slide"]).stem] = [
                     int(s) for s in str(req_args["window"][0], "utf-8")[1:-1].split(",")
                 ]
-
-        self.config["auto_load"] = get_from_config(["auto_load"], 0) == 1
+        self.config = config
+        # self.config["auto_load"] = get_from_config(["auto_load"], 0) == 1
         # UI["vstate"].slide_path = r"E:\\TTB_vis_folder\\slides\\TCGA-SC-A6LN-01Z-00-DX1.svs"
         # UI["vstate"].slide_path=Path(r'/tiatoolbox/app_data/slides/TCGA-SC-A6LN-01Z-00-DX1.svs')
 
@@ -2215,7 +2215,6 @@ class DocConfig:
             Path(UI["vstate"].slide_path).stem, config["overlay_folder"]
         )
         UI["vstate"].init = False
-        self.config = config
 
         # # set up main window
         # slide_wins = row(
