@@ -1,4 +1,4 @@
-This visualization tool is in the process of being added to tiatoolbox, but for the moment is not usable there. This tiatoolbox fork makes it available, but it is a work in progress and will probably have a few issues. If you find one let me know! also, if there is any sort of visualization task you'd like to do which seems like it might fit in this tool but which can't be easily done with it at the moment, please suggest it.
+This visualization tool is in the process of being added to tiatoolbox and should be included in the main repository soon, but for the moment is not available there. This tiatoolbox fork makes it available. It is still a work in progress and may have a few issues. If you find one let me know! also, if there is any sort of visualization task you'd like to do which seems like it might fit in this tool but which can't be easily done with it at the moment, please suggest it.
 
 An example of the visualization tool used to display results of work on colon screening reported in: https://www.medrxiv.org/content/10.1101/2022.10.17.22279804v1
 
@@ -8,36 +8,48 @@ can be seen at: https://iguana.dcs.warwick.ac.uk/
 
 ## If you already have a 'develop' tiatoolbox install
 
-If you already have tiatoolbox set up for development, with paths set up to your local tiatoolbox repository, it should be sufficient to crete a new branch for your local tiatoolbox git from this repository, and switch to that when you want to do some visualization stuff.
-
-git remote add tiavis https://github.com/measty/tiatoolbox\
-git fetch tiavis\
+If you already have tiatoolbox set up for development, with paths set up to your local tiatoolbox repository, it should be sufficient to crete a new branch for your local tiatoolbox git from this repository, and switch to that when you want to do some visualization stuff. For other cases see next subsection.
+```
+git remote add tiavis https://github.com/measty/tiatoolbox  
+git fetch tiavis  
 git checkout -b feature-add-gui tiavis/feature-add-gui
-
+```
 You will also need to add a couple of extra packages to your environment:
-
-conda install bokeh -c bokeh\
+```
+conda install bokeh -c bokeh  
 conda install flask-cors
-
+```
 ## For most other cases
 
 Install tiatoolbox into a new conda environment as normal from this fork. The easiest way to do this would be using pip:
-
-conda create -n tiatoolbox-vis python=3.9\
+```
+conda create -n tiatoolbox-vis python=3.9  
 pip install git+https://github.com/measty/tiatoolbox.git@feature-add-gui
-
+```
 Though you could use any of the methods described in the tiatoolbox docs at the bottom of the readme.
+
+## Note for windows users
+
+On windows, there is sometimes an issue with openslide where it will not correctly find dll paths. It is a known issue with openslide,
+and a workaround if this ocurs is to add:
+```
+import os
+os.add_dll_directory(r'Path\to\your\openslide\bin')
+```
+to openslide\lowlevel.py (if you are using conda this will be in `\Anaconda3\envs\your-env-name\Lib\site-packages\openslide`)
+to explicitly specify the path to your openslide bin.
 
 # Usage
 
 start the interface using:
-
+```
 `tiatoolbox visualize --img-input path\to\slides --img-input path\to\overlays`
-
-alternatively just one path can be provided; in this case it is assumed that slides and overlays are in subdirectories of that provided directory called 'slides' and 'overlays' respectively.\
-Another option to start the interface is:\
+```
+alternatively just one path can be provided; in this case it is assumed that slides and overlays are in subdirectories of that provided directory called 'slides' and 'overlays' respectively.  
+Another option to start the interface is:  
+```
 `bokeh serve --show ./tiatoolbox/visualization/bokeh_app --args path\to\slides path\to\overlays`
-
+```
 In the folder(s) that your command pointed to, should be the things that you want to visualize, following the conventions in the next section.
 
 ## Data format conventions/filestructure
