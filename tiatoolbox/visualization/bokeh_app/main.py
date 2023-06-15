@@ -414,7 +414,7 @@ def initialise_overlay():
     now_active = {b.label: b.active for b in UI["type_column"].children}
     print(UI["vstate"].types)
     print(now_active)
-    for t in UI["vstate"].types:
+    for t in sorted(UI["vstate"].types):
         if str(t) not in now_active.keys():
             UI["type_column"].children.append(
                 Toggle(
