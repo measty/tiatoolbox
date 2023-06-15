@@ -5,6 +5,7 @@ import io
 import json
 import os
 import secrets
+import tempfile
 import urllib
 from functools import partial
 from pathlib import Path
@@ -529,6 +530,9 @@ class TileServer(Flask):
         sq = store_from_dat(
             file_path, np.array(model_mpp) / np.array(self.slide_mpps[user])
         )
+        tmp_path = Path(tempfile.gettempdir()) / "temp.db"
+        sq.dump(tmp_path)
+        sq = SQLiteStore(tmp_path)
         self.tia_pyramids[user]["overlay"] = AnnotationTileGenerator(
             self.tia_layers[user]["slide"].info,
             sq,
@@ -653,7 +657,7 @@ class TileServer(Flask):
         save_path = self.decode_safe_name(save_path)
         for layer in self.tia_pyramids[user].values():
             if isinstance(layer, AnnotationTileGenerator):
-                if layer.store.path.suffix == ".db":
+                if layer.store.path.suffix == ".db" and layer.store.path.stem != "temp":
                     print("db committed")
                     layer.store.commit()
                 else:

@@ -596,7 +596,7 @@ def run_app():
         },
     )
     CORS(app, send_wildcard=True)
-    app.run(host="127.0.0.1", threaded=False)
+    app.run(host="127.0.0.1", threaded=True)
 
 
 class ViewerState:
@@ -1065,6 +1065,10 @@ def layer_drop_cb(attr):
         UI["vstate"].types = resp
         props = UI["s"].get(f"http://{host2}:5000/tileserver/get_prop_names/all")
         UI["vstate"].props = json.loads(props.text)
+        # update the color type by prop menu
+        UI["type_cmap_select"].options = [t for t in UI["vstate"].types]
+        if len(UI["node_source"].data["x_"]) > 0:
+            UI["type_cmap_select"].options.append("graph_overlay")
         # UI["type_cmap_select"].options = UI["vstate"].props
         # update the color type by prop menu
         UI["type_cmap_select"].options = [t for t in UI["vstate"].types]
@@ -1123,8 +1127,9 @@ def fixed_layer_select_cb(obj, attr):
             UI["p"].renderers[key].glyph.line_alpha = 0.0
     else:
         if UI["p"].renderers[key].alpha == 0:
-            UI["p"].renderers[key].alpha = UI["overlay_alpha"].value
+            UI["p"].renderers[key].alpha = float(obj.name)
         else:
+            obj.name = str(UI["p"].renderers[key].alpha)  # save old alpha
             UI["p"].renderers[key].alpha = 0.0
 
 
@@ -2177,7 +2182,7 @@ class DocConfig:
                 config["initial_views"][Path(config["first_slide"]).stem] = [
                     int(s) for s in str(req_args["window"][0], "utf-8")[1:-1].split(",")
                 ]
-
+        self.config = config
         self.config["auto_load"] = get_from_config(["auto_load"], 0) == 1
         # UI["vstate"].slide_path = r"E:\\TTB_vis_folder\\slides\\TCGA-SC-A6LN-01Z-00-DX1.svs"
         # UI["vstate"].slide_path=Path(r'/tiatoolbox/app_data/slides/TCGA-SC-A6LN-01Z-00-DX1.svs')
@@ -2216,7 +2221,6 @@ class DocConfig:
             Path(UI["vstate"].slide_path).stem, config["overlay_folder"]
         )
         UI["vstate"].init = False
-        self.config = config
 
         # # set up main window
         # slide_wins = row(
