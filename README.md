@@ -6,6 +6,31 @@ can be seen at: https://iguana.dcs.warwick.ac.uk/
 
 # Setup
 
+## Prerequisites
+The prerequisites for tiatoolbox installation are OpenSlide binaries and OpenJpeg version 2.3.0 or above. Please follow the instructions below to install prerequisite software according to the platform you are using if they arent already installed.
+
+Linux (Ubuntu)  
+
+On Linux the prerequisite software can be installed using the command
+
+`apt-get -y install libopenjp2-7-dev libopenjp2-tools openslide-tools`
+
+Windows (10+)  
+
+1. Download OpenSlide binaries from this page. Extract the folder and add bin and lib subdirectories to Windows system path. If you are using a conda environment you can also copy bin and lib subdirectories to [Anaconda Installation Path]/envs/[tiatoolbox-environment]/Library/.
+
+2. Install OpenJPEG. The easiest way to install OpenJpeg is through conda using
+
+`C:\> conda install -c conda-forge openjpeg`  
+
+macOS  
+On macOS there are two popular package managers, homebrew and macports.
+```
+Homebrew
+brew install openjpeg openslide
+MacPorts
+port install openjpeg openslide
+```
 ## If you already have a 'develop' tiatoolbox install
 
 If you already have tiatoolbox set up for development, with paths set up to your local tiatoolbox repository, it should be sufficient to crete a new branch for your local tiatoolbox git from this repository, and switch to that when you want to do some visualization stuff. For other cases see next subsection.
