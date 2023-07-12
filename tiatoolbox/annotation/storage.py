@@ -1795,6 +1795,7 @@ class SQLiteStore(AnnotationStore):
             and self.path.stat().st_size > 0
         )
         self.cons = {}
+        self.con.execute("BEGIN")
 
         # Set up metadata
         self.metadata = SQLiteMetadata(self.con)
@@ -1849,8 +1850,7 @@ class SQLiteStore(AnnotationStore):
     def get_connection(self, thread_id) -> sqlite3.Connection:
         """Get a connection to the database."""
         if thread_id not in self.cons:
-            con = sqlite3.connect(str(self.path), isolation_level="DEFERRED")
-            con.execute("BEGIN")
+            con = sqlite3.connect(str(self.path), isolation_level="DEFERRED", uri=True)
 
             # Register predicate functions as custom SQLite functions
             def wkb_predicate(
@@ -2041,7 +2041,11 @@ class SQLiteStore(AnnotationStore):
         if self.auto_commit:
             self.con.commit()
         self.optimize(vacuum=False, limit=1000)
-        self.con.close()
+        for con in self.cons.values():
+            con.close()
+        self.metadata.con.close()
+        self.metadata = None
+        self.cons = {}
 
     def _make_token(self, annotation: Annotation, key: Optional[str]) -> Dict:
         """Create token data dict for tokenized SQL transaction."""

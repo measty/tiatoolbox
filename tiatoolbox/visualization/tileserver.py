@@ -1,11 +1,14 @@
 """Simple Flask WSGI apps to display tiles as slippery maps."""
 import ast
 import copy
+import gc
 import io
 import json
 import os
 import secrets
 import tempfile
+import threading
+import time
 import urllib
 from functools import partial
 from pathlib import Path
@@ -387,6 +390,7 @@ class TileServer(Flask):
         slide_path = self.decode_safe_name(slide_path)
 
         self.tia_layers[user] = {"slide": WSIReader.open(Path(slide_path))}
+        self.tia_pyramids.pop(user, None)
         self.tia_pyramids[user] = {
             "slide": ZoomifyGenerator(self.tia_layers[user]["slide"], tile_size=256)
         }
@@ -539,7 +543,7 @@ class TileServer(Flask):
             self.renderers[user],
             overlap=self.overlaps[user],
         )
-        self.tia_layers[user]["overlay"] = self.tia_pyramids[user]["overlay"]
+        self.tia_layers[user]["overlay"] = sq
         types = self.update_types(sq)
         return json.dumps(types)
 
@@ -571,9 +575,12 @@ class TileServer(Flask):
             )
             return json.dumps(layer)
         if overlay_path.suffix == ".geojson":
-            sq = SQLiteStore.from_geojson(overlay_path)
+            sq = SQLiteStore(f"file:{overlay_path.stem}?mode=memory&cache=shared")
+            sq.add_from_geojson(overlay_path)
         elif overlay_path.suffix == ".dat":
-            sq = store_from_dat(overlay_path)
+            sq = SQLiteStore(f"file:{overlay_path.stem}?mode=memory&cache=shared")
+            add_from_dat(sq, overlay_path)
+            sq.create_index("area", '"area"')
         else:
             sq = SQLiteStore(overlay_path, auto_commit=False)
 
@@ -582,6 +589,7 @@ class TileServer(Flask):
                 layer.store = sq
                 print(f"loaded {len(sq)} annotations")
                 types = self.update_types(sq)
+                sq = None
                 return json.dumps(types)
         self.tia_pyramids[user]["overlay"] = AnnotationTileGenerator(
             self.tia_layers[user]["slide"].info,
@@ -590,8 +598,9 @@ class TileServer(Flask):
             overlap=self.overlaps[user],
         )
         print(f'loaded {len(self.tia_pyramids[user]["overlay"].store)} annotations')
-        self.tia_layers[user]["overlay"] = self.tia_pyramids[user]["overlay"]
+        self.tia_layers[user]["overlay"] = sq
         types = self.update_types(sq)
+        sq = None
         return json.dumps(types)
 
     def get_properties(self, ann_type):

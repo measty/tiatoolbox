@@ -1056,5 +1056,5 @@ def add_from_dat(
         anns = anns_from_hoverdict(data, props, typedict, origin, scale_factor)
     if crop_inside is not None:
         anns = [ann for ann in anns if ann.geometry.intersects(crop_inside)]
-    print(f"added {len(anns)} annotations")
+    print(f"adding {len(anns)} annotations")
     store.append_many(anns)
