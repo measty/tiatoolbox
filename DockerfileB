@@ -6,7 +6,7 @@ RUN apt-get update && apt-get -y install gcc
 RUN apt-get install -y python3-opencv curl
 RUN apt-get -y install libopenjp2-7-dev libopenjp2-tools openslide-tools
 
-COPY requirements.txt requirements.txt
+COPY requirements/requirements.txt requirements.txt
 
 RUN pip3 install -r requirements.txt
 RUN pip3 install bokeh

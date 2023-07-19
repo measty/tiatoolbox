@@ -2140,7 +2140,7 @@ class DocConfig:
             base_folder = Path(sys_args[1])
             if len(req_args) > 0:
                 print(req_args)
-                config["demo_name"] = str(req_args["demo"][0], "utf-8")
+                self.config["demo_name"] = str(req_args["demo"][0], "utf-8")
                 base_folder = base_folder.joinpath(str(req_args["demo"][0], "utf-8"))
             slide_folder = base_folder.joinpath("slides")
             overlay_folder = base_folder.joinpath("overlays")

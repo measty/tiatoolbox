@@ -351,11 +351,7 @@ class TileServer(Flask):
     def change_prop(self, prop):
         """Change the property to colour annotations by."""
         user = self._get_user()
-        for layer in self.tia_pyramids[user].values():
-            if isinstance(layer, AnnotationTileGenerator):
-                if prop == "None":
-                    prop = None
-                layer.renderer.score_prop = prop
+        self.renderers[user].score_prop = prop
 
         return "done"
 
