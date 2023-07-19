@@ -3,9 +3,9 @@ version: '3'
 services:
 
   # Proxies requests to internal services
-  reverse-proxy:
+  reverse-proxy-demo:
     image: nginx:1.23.0
-    container_name: reverse_proxy
+    container_name: reverse-proxy-demo
     depends_on:
         - demo-app
         - tile-service-demo
