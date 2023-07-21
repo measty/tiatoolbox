@@ -2171,7 +2171,7 @@ class DocConfig:
         config["base_folder"] = base_folder
         config["slide_folder"] = slide_folder
         config["overlay_folder"] = overlay_folder
-        config["demo_name"] = "demo_name"
+        config["demo_name"] = self.config["demo_name"]
 
         # get any extra info from query url
         if "slide" in req_args:
