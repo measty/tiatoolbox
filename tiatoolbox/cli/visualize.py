@@ -2,9 +2,10 @@
 import pathlib
 import subprocess
 
+import click
+
 import tiatoolbox.visualization as vis
 from tiatoolbox.cli.common import cli_img_input, tiatoolbox_cli
-import click
 
 
 @tiatoolbox_cli.command()
@@ -15,7 +16,7 @@ import click
     respectively. It is also possible to provide a slide and overlay path separately""",
     multiple=True,
 )
-@click.option('--port', type=int)
+@click.option("--port", type=int)
 def visualize(img_input, port):
     """Launches the visualization tool for the given directory(s).
     If only one path is given, Slides and overlays to be visualized are expected in
@@ -34,7 +35,7 @@ def visualize(img_input, port):
     cmd = [
         "bokeh",
         "serve",
-        "--show",
+        # "--show",
         str(vis_path.joinpath("bokeh_app")),
         "--port",
         str(port),
@@ -42,6 +43,8 @@ def visualize(img_input, port):
         "1000",
         "--check-unused-sessions",
         "1000",
+        "--enable-xsrf-cookies",
+        f"--auth-module={str(vis_path.joinpath('bokeh_app', 'auth.py'))}",
         "--args",
         *img_input,
     ]

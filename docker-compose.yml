@@ -37,7 +37,7 @@ services:
     networks:
       - tia-demos
     command: >
-      sh -c "bokeh serve ./tiatoolbox/visualization/bokeh_app --log-level=debug --allow-websocket-origin="*" --port 5100 --use-xheaders --unused-session-lifetime 10000 --check-unused-sessions 5000 --keep-alive 0 --args /app_data"
+      sh -c "bokeh serve ./tiatoolbox/visualization/bokeh_app --enable-xsrf-cookies --auth-module=./tiatoolbox/visualization/bokeh_app/auth.py --log-level=debug --allow-websocket-origin="*" --port 5100 --use-xheaders --unused-session-lifetime 10000 --check-unused-sessions 5000 --keep-alive 0 --args /app_data"
 
   # serves the tiles
   tile-service:

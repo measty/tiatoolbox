@@ -2037,7 +2037,7 @@ if curdoc().session_context is not None:
     do_doc = True
 print(f"req args are: {req_args}")
 
-is_deployed = False
+is_deployed = True
 rand_id = token.generate_session_id()
 print(f"rand id is: {rand_id}")
 first_z = [1]
@@ -2136,6 +2136,7 @@ class DocConfig:
 
     def setup_doc(self, doc):
         sys_args = self.sys_args
+        print(f"sys args are: {sys_args}")
         if len(sys_args) > 1 and sys_args[1] != "None":
             base_folder = Path(sys_args[1])
             if len(req_args) > 0:
