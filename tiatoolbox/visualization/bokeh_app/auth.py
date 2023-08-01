@@ -10,7 +10,10 @@ consider a higher level tool, such as Panel:
     https://panel.holoviz.org/user_guide/Authentication.html
 
 """
+import json
+import secrets
 import time
+from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 import tornado
@@ -41,7 +44,17 @@ class LoginHandler(RequestHandler):
         query = parse_qs(parsed.query)
         demo = query.get("demo", [None])[0]
 
-        if demo == "htex":
+        needs_auth = False
+        demo_path = Path(f"/app_data/{demo}/overlays")
+        config_file = list(demo_path.glob("*config.json"))
+        print(config_file)
+        if len(config_file) > 0:
+            with open(config_file[0]) as f:
+                config = json.load(f)
+                if "password" in config:
+                    needs_auth = True
+
+        if not needs_auth:
             # skip login
             self.set_current_user("default", expires=20)
             self.redirect(next_url)
@@ -51,22 +64,35 @@ class LoginHandler(RequestHandler):
             "login.html", errormessage=errormessage, action=f"/login?next={next_url}"
         )
 
-    def check_permission(self, username, password):
+    def check_permission(self, username, password, config):
         # !!!
         # !!! This code below is a toy demonstration of the API, and not
         # !!! intended for "real" use. A real app should use these APIs
         # !!! to connect Oauth or some other established auth workflow.
         # !!!
-        # import pdb; pdb.set_trace()
-        if username == "bokeh" and password == "bokeh":
+        if password == config["password"]:
             return True
         return False
 
     def post(self):
         # import pdb; pdb.set_trace()
-        username = self.get_argument("username", "")
+        username = self.get_argument("username", secrets.token_urlsafe(16))
         password = self.get_argument("password", "")
-        auth = self.check_permission(username, password)
+
+        next_url = self.get_argument("next", "/bokeh_app")
+        self.next_url = next_url
+        # parse text in next_url to get the 'demo' query parameter
+        parsed = urlparse(next_url)
+        query = parse_qs(parsed.query)
+        demo = query.get("demo", [None])[0]
+
+        demo_path = Path(f"/app_data/{demo}/overlays")
+        config_file = list(demo_path.glob("*config.json"))
+        if len(config_file) > 0:
+            with open(config_file[0]) as f:
+                config = json.load(f)
+
+        auth = self.check_permission(username, password, config)
         if auth:
             self.set_current_user(username, 20)
             next_url = self.get_argument("next", "/bokeh_app")

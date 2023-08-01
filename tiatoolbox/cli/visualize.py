@@ -35,7 +35,7 @@ def visualize(img_input, port):
     cmd = [
         "bokeh",
         "serve",
-        # "--show",
+        "--show",
         str(vis_path.joinpath("bokeh_app")),
         "--port",
         str(port),
@@ -43,8 +43,6 @@ def visualize(img_input, port):
         "1000",
         "--check-unused-sessions",
         "1000",
-        "--enable-xsrf-cookies",
-        f"--auth-module={str(vis_path.joinpath('bokeh_app', 'auth.py'))}",
         "--args",
         *img_input,
     ]
