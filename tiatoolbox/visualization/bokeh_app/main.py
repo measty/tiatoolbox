@@ -2194,7 +2194,7 @@ class DocConfig:
 
         # set initial slide to first one in base folder
         slide_list = []
-        for ext in ["*.svs", "*ndpi", "*.tiff", "*.mrxs", "*.png", "*.jpg"]:
+        for ext in ["*.svs", "*ndpi", "*.tiff", "*.mrxs", "*.png", "*.jpg", "*.tif"]:
             slide_list.extend(list(config["slide_folder"].glob(ext)))
             slide_list.extend(list(config["slide_folder"].glob(str(Path("*") / ext))))
         first_slide_path = slide_list[0]
