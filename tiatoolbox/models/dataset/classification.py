@@ -283,7 +283,7 @@ class WSIPatchDataset(dataset_abc.PatchDatasetABC):
             image_shape=wsi_shape,
             patch_input_shape=patch_input_shape[::-1],
             stride_shape=stride_shape[::-1],
-            input_within_bound=False,
+            input_within_bound=True,
         )
 
         mask_reader = None
@@ -325,6 +325,8 @@ class WSIPatchDataset(dataset_abc.PatchDatasetABC):
     def __getitem__(self, idx):
         coords = self.inputs[idx]
         # Read image patch from the whole-slide image
+        if not isinstance(self.reader, WSIReader):
+            self.reader = WSIReader.open(self.reader)
         patch = self.reader.read_bounds(
             coords,
             resolution=self.resolution,
@@ -336,4 +338,4 @@ class WSIPatchDataset(dataset_abc.PatchDatasetABC):
         # Apply preprocessing to selected patch
         patch = self._preproc(patch)
 
-        return {"image": patch, "coords": np.array(coords)}
+        return {"image": patch.copy(), "coords": np.array(coords)}
