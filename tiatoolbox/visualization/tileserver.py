@@ -20,6 +20,7 @@ from flask import Flask, Response, make_response, request, send_file
 from flask.templating import render_template
 from matplotlib import colormaps
 from PIL import Image
+from shapely.geometry import Point
 
 import tiatoolbox.visualization.bokeh_app.postproc_defs as postproc
 from tiatoolbox import data
@@ -167,6 +168,7 @@ class TileServer(Flask):
         self.route("/tileserver/get_prop_values/<prop>/<ann_type>")(
             self.get_property_values
         )
+        self.route("/tileserver/tap_query/<x>/<y>")(self.tap_query)
 
     def _get_user(self):
         """Get the user from the request.
@@ -671,3 +673,15 @@ class TileServer(Flask):
                     print(f"db saved to {save_path}")
                 return "done"
         return "nothing to save"
+
+    def tap_query(self, x, y):
+        """Query annotations at a point."""
+        user = self._get_user()
+        x = float(x)
+        y = float(y)
+        anns = self.get_ann_layer(user).store.query(
+            Point(x, y),
+        )
+        if len(anns) == 0:
+            return json.dumps({})
+        return json.dumps(list(anns.values())[-1].properties)

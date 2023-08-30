@@ -28,6 +28,8 @@ from bokeh.models import (
     ColorBar,
     ColorPicker,
     ColumnDataSource,
+    CustomJS,
+    DataTable,
     Div,
     Dropdown,
     FuncTickFormatter,
@@ -36,6 +38,7 @@ from bokeh.models import (
     Line,
     LinearColorMapper,
     MultiChoice,
+    NumberFormatter,
     PointDrawTool,
     RadioButtonGroup,
     Segment,
@@ -43,6 +46,7 @@ from bokeh.models import (
     Slider,
     Spinner,
     StaticLayoutProvider,
+    TableColumn,
     TabPanel,
     Tabs,
     TapTool,
@@ -55,6 +59,7 @@ from bokeh.util import token
 from flask_cors import CORS
 from requests.adapters import HTTPAdapter, Retry
 
+from bokeh import events
 from tiatoolbox.annotation.dsl import SQL_GLOBALS, SQLTriplet
 from tiatoolbox.models.architecture import fetch_pretrained_weights
 from tiatoolbox.models.architecture.nuclick import NuClick
@@ -1328,6 +1333,18 @@ def add_postproc_cb(attr):
     UI["vstate"].to_update.update(["slide"])
 
 
+def tap_event_cb(event):
+    resp = UI["s"].get(f"http://{host2}:5000/tileserver/tap_query/{event.x}/{-event.y}")
+    # UI["popup_div"].visible = True
+    # popup_div.text = str(event.x) + ", " + str(-event.y) + "<br>" + str(json.loads(resp.text))
+    data_dict = json.loads(resp.text)
+
+    popup_table.source.data = {
+        "property": list(data_dict.keys()),
+        "value": list(data_dict.values()),
+    }
+
+
 # run NucleusInstanceSegmentor on a region of wsi defined by the box in box_source
 def segment_on_box(attr):
     print(UI["vstate"].types)
@@ -1835,6 +1852,13 @@ def make_window(vstate):
         name=f"postproc_button{win_num}",
     )
 
+    js_popup_code = """
+        var popupContent = document.querySelector('.popup-content');
+        if (popupContent.classList.contains('hidden')) {
+            popupContent.classList.remove('hidden');
+            }
+    """
+
     # associate callback functions to the widgets
     slide_alpha.on_change("value", slide_alpha_cb)
     overlay_alpha.on_change("value", overlay_alpha_cb)
@@ -1861,6 +1885,8 @@ def make_window(vstate):
     cmap_builder_button.on_click(cmap_builder_button_cb)
     subcat_select.on_change("value", subcat_select_cb)
     add_postproc_button.on_click(add_postproc_cb)
+    p.on_event(events.DoubleTap, tap_event_cb)  # CustomJS(code=js_popup_code))
+    p.js_on_event(events.DoubleTap, CustomJS(code=js_popup_code))
 
     vstate.cprop = config["default_cprop"]
 
@@ -2019,6 +2045,25 @@ UI = UIWrapper()
 windows = []
 controls = []
 win_dicts = []
+popup_div = Div(
+    width=300,
+    height=300,
+    name="popup_div",
+    text="test popup",
+)
+popup_table = DataTable(
+    source=ColumnDataSource({"property": [], "value": []}),
+    columns=[
+        TableColumn(field="property", title="Property"),
+        TableColumn(
+            field="value", title="Value", formatter=NumberFormatter(format="0.000")
+        ),
+    ],
+    index_position=None,
+    width=300,
+    height=300,
+    name="popup_window",
+)
 
 color_cycler = ColorCycler()
 tg = TileGroup()
@@ -2246,6 +2291,7 @@ class DocConfig:
         doc.add_root(slide_wins)
         # curdoc().add_root(ui_layout)
         doc.add_root(control_tabs)
+        doc.add_root(popup_table)  # popup_div)
         # curdoc().add_root(opts_column)
         doc.title = "Tiatoolbox Visualization Tool"
         # if "template" in config:
