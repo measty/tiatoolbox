@@ -283,7 +283,7 @@ class WSIPatchDataset(dataset_abc.PatchDatasetABC):
             image_shape=wsi_shape,
             patch_input_shape=patch_input_shape[::-1],
             stride_shape=stride_shape[::-1],
-            input_within_bound=True,
+            input_within_bound=False,
         )
 
         mask_reader = None
