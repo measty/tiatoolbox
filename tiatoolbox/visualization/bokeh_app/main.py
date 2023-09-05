@@ -14,6 +14,7 @@ import matplotlib.cm as cm
 import numpy as np
 import requests
 import torch
+from bokeh import events
 
 # Bokeh basics
 from bokeh.io import curdoc
@@ -35,6 +36,7 @@ from bokeh.models import (
     FuncTickFormatter,
     GraphRenderer,
     HoverTool,
+    HTMLTemplateFormatter,
     Line,
     LinearColorMapper,
     MultiChoice,
@@ -59,7 +61,6 @@ from bokeh.util import token
 from flask_cors import CORS
 from requests.adapters import HTTPAdapter, Retry
 
-from bokeh import events
 from tiatoolbox.annotation.dsl import SQL_GLOBALS, SQLTriplet
 from tiatoolbox.models.architecture import fetch_pretrained_weights
 from tiatoolbox.models.architecture.nuclick import NuClick
@@ -2051,12 +2052,18 @@ popup_div = Div(
     name="popup_div",
     text="test popup",
 )
+templateStr = r"<% if (typeof value === 'number' || !isNaN(parseFloat(value))) { %> <%= parseFloat(value).toFixed(3) %> <% } else { %> <%= value %> <% } %>"
+formatter = HTMLTemplateFormatter(
+    template=templateStr
+)  # formatter = NumberFormatter(format="0.000")
 popup_table = DataTable(
     source=ColumnDataSource({"property": [], "value": []}),
     columns=[
         TableColumn(field="property", title="Property"),
         TableColumn(
-            field="value", title="Value", formatter=NumberFormatter(format="0.000")
+            field="value",
+            title="Value",
+            formatter=formatter,
         ),
     ],
     index_position=None,
