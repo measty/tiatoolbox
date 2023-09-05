@@ -137,13 +137,29 @@ class PatchExtractor(PatchExtractorABC):
 
         if input_mask is None:
             self.mask = None
-        elif isinstance(input_mask, str) and input_mask in {"otsu", "morphological"}:
+        elif isinstance(input_mask, str) and input_mask in {
+            "otsu",
+            "morphological",
+            "extended",
+        }:
             if isinstance(self.wsi, wsireader.VirtualWSIReader):
                 self.mask = None
             else:
-                self.mask = self.wsi.tissue_mask(
-                    method=input_mask, resolution=1.25, units="power"
-                )
+                kernel_size = None
+                if input_mask == "extended":
+                    kernel_size = 15
+                    self.mask = self.wsi.tissue_mask(
+                        method=input_mask,
+                        resolution=1.25,
+                        units="power",
+                        kernel_size=kernel_size,
+                    )
+                else:
+                    self.mask = self.wsi.tissue_mask(
+                        method=input_mask,
+                        resolution=1.25,
+                        units="power",
+                    )
         elif isinstance(input_mask, wsireader.VirtualWSIReader):
             self.mask = input_mask
         else:
