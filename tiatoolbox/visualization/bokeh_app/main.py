@@ -14,7 +14,6 @@ import matplotlib.cm as cm
 import numpy as np
 import requests
 import torch
-from bokeh import events
 
 # Bokeh basics
 from bokeh.io import curdoc
@@ -61,6 +60,7 @@ from bokeh.util import token
 from flask_cors import CORS
 from requests.adapters import HTTPAdapter, Retry
 
+from bokeh import events
 from tiatoolbox.annotation.dsl import SQL_GLOBALS, SQLTriplet
 from tiatoolbox.models.architecture import fetch_pretrained_weights
 from tiatoolbox.models.architecture.nuclick import NuClick
@@ -739,7 +739,7 @@ def populate_layer_list(slide_name, overlay_path: Path):
 def populate_slide_list(slide_folder, search_txt=None):
     file_list = []
     len_slidepath = len(slide_folder.parts)
-    for ext in ["*.svs", "*ndpi", "*.tiff", "*.mrxs", "*.jpg", "*.png"]:
+    for ext in ["*.svs", "*ndpi", "*.tiff", "*.mrxs", "*.jpg", "*.png", "*.tif"]:
         file_list.extend(list(Path(slide_folder).glob(str(Path("*") / ext))))
         file_list.extend(list(Path(slide_folder).glob(ext)))
     if search_txt is None:
