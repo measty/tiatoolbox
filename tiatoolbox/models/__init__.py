@@ -8,6 +8,10 @@ from .architecture.mapde import MapDe
 from .architecture.micronet import MicroNet
 from .architecture.nuclick import NuClick
 from .architecture.sccnn import SCCNN
+from .engine.interactive_segmentor import (
+    InteractiveSegmentor,
+    IOInteractiveSegmentorConfig,
+)
 from .engine.multi_task_segmentor import MultiTaskSegmentor
 from .engine.nucleus_instance_segmentor import NucleusInstanceSegmentor
 from .engine.patch_predictor import (

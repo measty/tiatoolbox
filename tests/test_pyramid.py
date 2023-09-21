@@ -25,7 +25,7 @@ def test_zoomify_tile_path() -> None:
     assert len(path.parts) == 2
     assert "TileGroup" in path.parts[0]
     assert re.match(pattern=r"TileGroup\d+", string=path.parts[0]) is not None
-    assert re.match(pattern=r"\d+-\d+-\d+\.jpg", string=path.parts[1]) is not None
+    assert re.match(pattern=r"\d+-\d+-\d+\@1x.jpg", string=path.parts[1]) is not None
 
 
 def test_zoomify_len() -> None:
@@ -153,7 +153,7 @@ def test_zoomify_dump(tmp_path: Path) -> None:
     dz.dump(out_path)
     assert out_path.exists()
     assert len(list((out_path / "TileGroup0").glob("0-*"))) == 1
-    assert Image.open(out_path / "TileGroup0" / "0-0-0.jpg").size == (64, 64)
+    assert Image.open(out_path / "TileGroup0" / "0-0-0@1x.jpg").size == (64, 64)
 
 
 def test_get_thumb_tile() -> None:

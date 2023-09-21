@@ -347,6 +347,8 @@ class WSIPatchDataset(dataset_abc.PatchDatasetABC):
         """Get an item from the dataset."""
         coords = self.inputs[idx]
         # Read image patch from the whole-slide image
+        if not isinstance(self.reader, WSIReader):
+            self.reader = WSIReader.open(self.reader)
         patch = self.reader.read_bounds(
             coords,
             resolution=self.resolution,
@@ -358,4 +360,4 @@ class WSIPatchDataset(dataset_abc.PatchDatasetABC):
         # Apply preprocessing to selected patch
         patch = self._preproc(patch)
 
-        return {"image": patch, "coords": np.array(coords)}
+        return {"image": patch.copy(), "coords": np.array(coords)}

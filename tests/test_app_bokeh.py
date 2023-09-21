@@ -164,7 +164,7 @@ def test_get_level_by_extent():
 def test_roots(doc):
     """Test that the document has the correct number of roots."""
     # should be 2 roots, main window and controls
-    assert len(doc.roots) == 2
+    assert len(doc.roots) == 3
 
 
 def test_config_loaded(data_path):

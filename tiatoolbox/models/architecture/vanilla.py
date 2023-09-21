@@ -73,6 +73,7 @@ def _get_architecture(
     if "alexnet" in arch_name:
         return model.features
     if "inception_v3" in arch_name or "googlenet" in arch_name:
+        model.AuxLogits = None
         return nn.Sequential(*list(model.children())[:-3])
 
     return model.features
@@ -232,7 +233,9 @@ class CNNBackbone(ModelABC):
         """
         feat = self.feat_extract(imgs)
         gap_feat = self.pool(feat)
-        return torch.flatten(gap_feat, 1)
+        if self.pool.output_size == (1, 1):
+            return torch.flatten(gap_feat, 1)
+        return gap_feat  # torch.flatten(gap_feat, 1)
 
     @staticmethod
     def infer_batch(
@@ -266,4 +269,7 @@ class CNNBackbone(ModelABC):
         with torch.inference_mode():
             output = model(img_patches_device)
         # Output should be a single tensor or scalar
+        if len(output.shape) == 2:
+            return [output.cpu().numpy()]
+        output = output.permute(0, 2, 3, 1).contiguous()
         return [output.cpu().numpy()]

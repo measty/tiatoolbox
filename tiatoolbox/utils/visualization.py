@@ -22,6 +22,16 @@ if TYPE_CHECKING:  # pragma: no cover
 
     from tiatoolbox.annotation import Annotation, AnnotationStore
 
+GEOMTYPES = {
+    1: "Point",
+    2: "LineString",
+    3: "Polygon",
+    4: "MultiPoint",
+    5: "MultiLineString",
+    6: "MultiPolygon",
+    7: "GeometryCollection",
+}
+
 
 def random_colors(num_colors: int, *, bright: bool) -> list:
     """Generate a number of random colors.
@@ -535,6 +545,11 @@ def plot_graph(
     return canvas
 
 
+def to_int_rgb(rgb):
+    """Helper to convert from float to int rgb(a) tuple."""
+    return tuple([int(255 * v) for v in rgb])
+
+
 class AnnotationRenderer:
     """Renders AnnotationStore to a tile.
 
@@ -925,7 +940,7 @@ class AnnotationRenderer:
             if self.info["mpp"] is not None
             else 1
         )
-        min_area = 0.0005 * (output_size[0] * output_size[1]) * (scale * mpp_sf) ** 2
+        min_area = 0.0003 * (output_size[0] * output_size[1]) * (scale * mpp_sf) ** 2
 
         tile = np.zeros((output_size[0] * res, output_size[1] * res, 4), dtype=np.uint8)
 
@@ -952,7 +967,7 @@ class AnnotationRenderer:
             for i, (key, box) in enumerate(bounding_boxes.items()):
                 area = (box[0] - box[2]) * (box[1] - box[3])
                 if area > min_area or i % decimate == 0:
-                    ann = store[key]
+                    ann = store.__getitem__(key, as_raw=True)
                     self.render_by_type(tile, ann, top_left, scale / res)
         else:
             # Get only annotations > min_area. Plot them all

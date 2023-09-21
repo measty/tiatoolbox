@@ -435,7 +435,6 @@ def test_find_optimal_level_and_downsample_openslide_interpolation_warning(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     """Test finding optimal level for mpp read with scale > 1.
-
     This tests the case where the scale is found to be > 1 and interpolation
     will be applied to the output. A UserWarning should be raised in this case.
 
@@ -453,7 +452,6 @@ def test_find_optimal_level_and_downsample_jp2_interpolation_warning(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     """Test finding optimal level for mpp read with scale > 1.
-
     This tests the case where the scale is found to be > 1 and interpolation
     will be applied to the output. A UserWarning should be raised in this case.
 
@@ -506,7 +504,6 @@ def test_find_optimal_level_and_downsample_power(sample_ndpi: Path) -> None:
 
 def test_find_optimal_level_and_downsample_level(sample_ndpi: Path) -> None:
     """Test finding optimal level for level read.
-
     For integer levels, the returned level should always be the same as
     the input level.
 
@@ -633,7 +630,6 @@ def test_find_read_rect_params_mpp(sample_ndpi: Path) -> None:
 
 def test_read_rect_openslide_baseline(sample_ndpi: Path) -> None:
     """Test openslide read rect at baseline.
-
     Location coordinate is in baseline (level 0) reference frame.
 
     """
@@ -649,7 +645,6 @@ def test_read_rect_openslide_baseline(sample_ndpi: Path) -> None:
 
 def test_read_rect_jp2_baseline(sample_jp2: Path) -> None:
     """Test jp2 read rect at baseline.
-
     Location coordinate is in baseline (level 0) reference frame.
 
     """
@@ -696,7 +691,6 @@ def test_is_tiled_tiff(source_image: Path) -> None:
 
 def test_read_rect_openslide_levels(sample_ndpi: Path) -> None:
     """Test openslide read rect with resolution in levels.
-
     Location coordinate is in baseline (level 0) reference frame.
 
     """
@@ -713,7 +707,6 @@ def test_read_rect_openslide_levels(sample_ndpi: Path) -> None:
 
 def test_read_rect_jp2_levels(sample_jp2: Path) -> None:
     """Test jp2 read rect with resolution in levels.
-
     Location coordinate is in baseline (level 0) reference frame.
 
     """
@@ -756,7 +749,6 @@ def read_rect_mpp(wsi: WSIReader, location: IntPair, size: IntPair) -> None:
 
 def test_read_rect_openslide_mpp(sample_ndpi: Path) -> None:
     """Test openslide read rect with resolution in microns per pixel.
-
     Location coordinate is in baseline (level 0) reference frame.
 
     """
@@ -768,7 +760,6 @@ def test_read_rect_openslide_mpp(sample_ndpi: Path) -> None:
 
 def test_read_rect_jp2_mpp(sample_jp2: Path) -> None:
     """Test jp2 read rect with resolution in microns per pixel.
-
     Location coordinate is in baseline (level 0) reference frame.
 
     """
@@ -780,7 +771,6 @@ def test_read_rect_jp2_mpp(sample_jp2: Path) -> None:
 
 def test_read_rect_openslide_objective_power(sample_ndpi: Path) -> None:
     """Test openslide read rect with resolution in objective power.
-
     Location coordinate is in baseline (level 0) reference frame.
 
     """
@@ -793,7 +783,6 @@ def test_read_rect_openslide_objective_power(sample_ndpi: Path) -> None:
 
 def test_read_rect_jp2_objective_power(sample_jp2: Path) -> None:
     """Test jp2 read rect with resolution in objective power.
-
     Location coordinate is in baseline (level 0) reference frame.
 
     """
@@ -806,7 +795,6 @@ def test_read_rect_jp2_objective_power(sample_jp2: Path) -> None:
 
 def test_read_bounds_openslide_baseline(sample_ndpi: Path) -> None:
     """Test openslide read bounds at baseline.
-
     Coordinates in baseline (level 0) reference frame.
 
     """
@@ -838,7 +826,6 @@ def test_read_bounds_jp2_baseline(sample_jp2: Path) -> None:
 
 def test_read_bounds_openslide_levels(sample_ndpi: Path) -> None:
     """Test openslide read bounds with resolution in levels.
-
     Coordinates in baseline (level 0) reference frame.
 
     """
@@ -858,7 +845,6 @@ def test_read_bounds_openslide_levels(sample_ndpi: Path) -> None:
 
 def test_read_bounds_jp2_levels(sample_jp2: Path) -> None:
     """Test jp2 read bounds with resolution in levels.
-
     Coordinates in baseline (level 0) reference frame.
 
     """
@@ -879,7 +865,6 @@ def test_read_bounds_jp2_levels(sample_jp2: Path) -> None:
 
 def test_read_bounds_openslide_mpp(sample_ndpi: Path) -> None:
     """Test openslide read bounds with resolution in microns per pixel.
-
     Coordinates in baseline (level 0) reference frame.
 
     """
@@ -892,7 +877,6 @@ def test_read_bounds_openslide_mpp(sample_ndpi: Path) -> None:
 
 def test_read_bounds_jp2_mpp(sample_jp2: Path) -> None:
     """Test jp2 read bounds with resolution in microns per pixel.
-
     Coordinates in baseline (level 0) reference frame.
 
     """
@@ -905,7 +889,6 @@ def test_read_bounds_jp2_mpp(sample_jp2: Path) -> None:
 
 def test_read_bounds_openslide_objective_power(sample_ndpi: Path) -> None:
     """Test openslide read bounds with resolution in objective power.
-
     Coordinates in baseline (level 0) reference frame.
 
     """
@@ -919,7 +902,6 @@ def test_read_bounds_openslide_objective_power(sample_ndpi: Path) -> None:
 
 def test_read_bounds_jp2_objective_power(sample_jp2: Path) -> None:
     """Test jp2 read bounds with resolution in objective power.
-
     Coordinates in baseline (level 0) reference frame.
 
     """
@@ -933,7 +915,6 @@ def test_read_bounds_jp2_objective_power(sample_jp2: Path) -> None:
 
 def test_read_bounds_interpolated(sample_svs: Path) -> None:
     """Test openslide read bounds with interpolated output.
-
     Coordinates in baseline (level 0) reference frame.
 
     """
@@ -1212,10 +1193,8 @@ def test_virtual_wsi_reader_read_bounds_virtual_baseline(source_image: Path) -> 
 
 def test_virtual_wsi_reader_read_rect_virtual_baseline(source_image: Path) -> None:
     """Test VirtualWSIReader read rect with virtual baseline.
-
     Creates a virtual slide with a virtualbaseline size which is twice
     as large as the input image.
-
     """
     img_array = utils.misc.imread(Path(source_image))
     img_size = np.array(img_array.shape[:2][::-1])
@@ -1234,11 +1213,9 @@ def test_virtual_wsi_reader_read_rect_virtual_baseline(source_image: Path) -> No
 
 def test_virtual_wsi_reader_read_rect_virtual_levels(source_image: Path) -> None:
     """Test VirtualWSIReader read rect with vritual levels.
-
     Creates a virtual slide with a virtualbaseline size which is twice
     as large as the input image and the pyramid/resolution levels.
     Checks that the regions read at each level line up with expected values.
-
     """
     img_array = utils.misc.imread(Path(source_image))
     img_size = np.array(img_array.shape[:2][::-1])
@@ -1262,11 +1239,9 @@ def test_virtual_wsi_reader_read_rect_virtual_levels(source_image: Path) -> None
 
 def test_virtual_wsi_reader_read_bounds_virtual_levels(source_image: Path) -> None:
     """Test VirtualWSIReader read bounds with vritual levels.
-
     Creates a virtual slide with a virtualbaseline size which is twice
     as large as the input image and the pyramid/resolution levels.
     Checks that the regions read at each level line up with expected values.
-
     """
     img_array = utils.misc.imread(Path(source_image))
     img_size = np.array(img_array.shape[:2][::-1])
@@ -1302,7 +1277,6 @@ def test_virtual_wsi_reader_read_bounds_virtual_levels(source_image: Path) -> No
 
 def test_virtual_wsi_reader_read_rect_virtual_levels_mpp(source_image: Path) -> None:
     """Test VirtualWSIReader read rect with vritual levels and MPP.
-
     Creates a virtual slide with a virtualbaseline size which is twice
     as large as the input image and the pyramid/resolution levels and
     a baseline MPP specified.
@@ -1339,11 +1313,9 @@ def test_virtual_wsi_reader_read_rect_virtual_levels_mpp(source_image: Path) -> 
 
 def test_virtual_wsi_reader_read_bounds_virtual_levels_mpp(source_image: Path) -> None:
     """Test VirtualWSIReader read bounds with vritual levels and MPP.
-
     Creates a virtual slide with a virtualbaseline size which is twice
     as large as the input image and the pyramid/resolution levels.
     Checks that the regions read at each level line up with expected values.
-
     """
     img_array = utils.misc.imread(Path(source_image))
     img_size = np.array(img_array.shape[:2][::-1])
@@ -1935,7 +1907,6 @@ def test_arrayview_incomplete_index() -> None:
 
 def test_arrayview_single_number_index() -> None:
     """Test reading a column from ArrayView.
-
     I'm not sure why you would want to do this but it is implemented for
     consistency with other __getitem__ objects.
 
@@ -1989,9 +1960,7 @@ def test_tiled_tiff_openslide(remote_sample: Callable) -> None:
 
 def test_tiled_tiff_tifffile(remote_sample: Callable) -> None:
     """Test fallback to tifffile for files which openslide cannot read.
-
     E.G. tiled tiffs with JPEG XL compression.
-
     """
     sample_path = remote_sample("tiled-tiff-1-small-jp2k")
     wsi = wsireader.WSIReader.open(sample_path)

@@ -16,6 +16,7 @@ from flask import Flask, Response, jsonify, make_response, request, send_file
 from flask.templating import render_template
 from matplotlib import colormaps
 from PIL import Image
+from shapely.geometry import Point
 
 from tiatoolbox import data, logger
 from tiatoolbox.annotation import AnnotationStore, SQLiteStore
@@ -216,6 +217,7 @@ class TileServer(Flask):
                     SQLiteStore(layer_path),
                     self.renderers["default"],
                     overlap=self.overlap,
+                    tile_size=512,
                 )
             elif layer_path.suffix == ".geojson":
                 # Assume annotations in geojson format
@@ -224,6 +226,7 @@ class TileServer(Flask):
                     SQLiteStore.from_geojson(layer_path),
                     self.renderers["default"],
                     overlap=self.overlap,
+                    tile_size=512,
                 )
             else:
                 # Assume it's a WSI.
@@ -240,6 +243,7 @@ class TileServer(Flask):
                 layer,
                 self.renderers["default"],
                 overlap=self.overlap,
+                tile_size=512,
             )
 
         return layer
@@ -394,7 +398,7 @@ class TileServer(Flask):
 
         self.layers[session_id] = {"slide": WSIReader.open(Path(slide_path))}
         self.pyramids[session_id] = {
-            "slide": ZoomifyGenerator(self.layers[session_id]["slide"], tile_size=256),
+            "slide": ZoomifyGenerator(self.layers[session_id]["slide"], tile_size=512),
         }
         if self.layers[session_id]["slide"].info.mpp is None:
             self.layers[session_id]["slide"].info.mpp = [1, 1]
@@ -471,6 +475,7 @@ class TileServer(Flask):
             sq,
             self.renderers[session_id],
             overlap=self.overlaps[session_id],
+            tile_size=512,
         )
         self.layers[session_id]["overlay"] = self.pyramids[session_id]["overlay"]
         types = self.update_types(sq)
@@ -524,6 +529,7 @@ class TileServer(Flask):
             sq,
             self.renderers[session_id],
             overlap=self.overlaps[session_id],
+            tile_size=512,
         )
         logger.info(
             "Loaded %d annotations.",
@@ -640,3 +646,15 @@ class TileServer(Flask):
     def shutdown() -> None:
         """Shutdown the tileserver."""
         sys.exit()
+
+    def tap_query(self, x, y):
+        """Query annotations at a point."""
+        user = self._get_user()
+        x = float(x)
+        y = float(y)
+        anns = self.get_ann_layer(user).store.query(
+            Point(x, y),
+        )
+        if len(anns) == 0:
+            return json.dumps({})
+        return json.dumps(list(anns.values())[-1].properties)

@@ -1459,7 +1459,7 @@ class WSIReader:
         """
         from tiatoolbox.tools import tissuemask
 
-        thumbnail = self.slide_thumbnail(resolution, units)
+        thumbnail = self.slide_thumbnail(resolution, units).copy()
         if method not in ["otsu", "morphological"]:
             msg = f"Invalid tissue masking method: {method}."
             raise ValueError(msg)
@@ -1477,6 +1477,8 @@ class WSIReader:
             )
         elif method == "otsu":
             masker = tissuemask.OtsuTissueMasker(**masker_kwargs)
+        # replace 'pure white' pixels with 'off white' to avoid bad masks
+        thumbnail[np.all(thumbnail == 255, axis=2)] = 238
         mask_img = masker.fit_transform([thumbnail])[0]
         return VirtualWSIReader(mask_img.astype(np.uint8), info=self.info, mode="bool")
 

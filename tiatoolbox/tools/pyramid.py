@@ -16,7 +16,7 @@ import time
 import zipfile
 from io import BytesIO
 from pathlib import Path
-from typing import TYPE_CHECKING, Iterator
+from typing import TYPE_CHECKING, Callable, Iterator
 
 import defusedxml
 import numpy as np
@@ -58,12 +58,14 @@ class TilePyramidGenerator:
         tile_size: int = 256,
         downsample: int = 2,
         overlap: int = 0,
+        post_proc: Callable | None = None,
     ) -> None:
         """Initialize :class:`TilePyramidGenerator`."""
         self.wsi = wsi
         self.tile_size = tile_size
         self.overlap = overlap
         self.downsample = downsample
+        self.post_proc = post_proc
 
     @property
     def output_tile_size(self: TilePyramidGenerator) -> int:
@@ -145,6 +147,8 @@ class TilePyramidGenerator:
             units="level",
         )
         thumb = imresize(thumb, output_size=out_dims)
+        if self.post_proc:
+            thumb = self.post_proc(thumb)
         return Image.fromarray(thumb)
 
     def get_tile(
@@ -236,6 +240,11 @@ class TilePyramidGenerator:
             interpolation=interpolation,
         )
         logger.removeFilter(duplicate_filter)
+        # is this needed? get rid of it or do a better way
+        alph = 255 - np.all(tile == 0, axis=2).astype("uint8") * 255
+        tile = np.dstack((tile, alph))
+        if self.post_proc:
+            tile = self.post_proc(tile)
         return Image.fromarray(tile)
 
     def tile_path(self: TilePyramidGenerator, level: int, x: int, y: int) -> Path:
@@ -307,7 +316,7 @@ class TilePyramidGenerator:
                 """Write the tile to the output directory."""
                 full_path = path / tile_path
                 full_path.parent.mkdir(parents=True, exist_ok=True)
-                tile.save(full_path)
+                tile.convert("RGB").save(full_path)
 
         elif container == "zip":
             compression2enum = {
@@ -329,7 +338,7 @@ class TilePyramidGenerator:
             def save_tile(tile_path: Path, tile: Image.Image) -> None:
                 """Write the tile to the output tar."""
                 bio = BytesIO()
-                tile.save(bio, format="jpeg")
+                tile.convert("RGB").save(bio, format="jpeg")
                 bio.seek(0)
                 data = bio.read()
                 archive.writestr(
@@ -354,7 +363,7 @@ class TilePyramidGenerator:
             def save_tile(tile_path: Path, tile: Image.Image) -> None:
                 """Write the tile to the output zip."""
                 bio = BytesIO()
-                tile.save(bio, format="jpeg")
+                tile.convert("RGB").save(bio, format="jpeg")
                 bio.seek(0)
                 tar_info = tarfile.TarInfo(name=str(tile_path))
                 tar_info.mtime = time.time()
@@ -462,7 +471,7 @@ class ZoomifyGenerator(TilePyramidGenerator):
         """
         g = self.tile_group(level, x, y)
         z = level
-        return Path(f"TileGroup{g}") / f"{z}-{x}-{y}.jpg"
+        return Path(f"TileGroup{g}") / f"{z}-{x}-{y}@1x.jpg"
 
 
 class AnnotationTileGenerator(ZoomifyGenerator):
@@ -501,6 +510,7 @@ class AnnotationTileGenerator(ZoomifyGenerator):
         tile_size: int = 256,
         downsample: int = 2,
         overlap: int = 0,
+        post_proc: Callable | None = None,
     ) -> None:
         """Initialize :class:`AnnotationTileGenerator`."""
         super().__init__(None, tile_size, downsample, overlap)
@@ -513,6 +523,7 @@ class AnnotationTileGenerator(ZoomifyGenerator):
         # factor of 1.5 below chosen empirically as a good balance between
         # empirical visual quality and added rendering time.
         self.overlap = int(1.5 * renderer.blur_radius)
+        self.post_proc = post_proc
 
         output_size = [self.output_tile_size] * 2
         self.empty_img = Image.fromarray(
@@ -653,5 +664,6 @@ class AnnotationTileGenerator(ZoomifyGenerator):
             res,
             self.overlap,
         )
-
+        if self.post_proc is not None:
+            tile = self.post_proc(tile)
         return Image.fromarray(tile)

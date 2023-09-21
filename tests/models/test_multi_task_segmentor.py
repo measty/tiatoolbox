@@ -68,7 +68,6 @@ def test_functionality_local(remote_sample: Callable, tmp_path: Path) -> None:
         crash_on_exception=True,
         save_dir=save_dir,
     )
-
     inst_dict_a = joblib.load(f"{output[0][1]}.0.dat")
 
     # * then test run when using workers, will then compare results

@@ -13,6 +13,11 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 import requests
 import torch
+from matplotlib import colormaps
+from PIL import Image
+from requests.adapters import HTTPAdapter, Retry
+
+from bokeh import events
 from bokeh.io import curdoc
 from bokeh.layouts import column, row
 from bokeh.models import (
@@ -24,11 +29,14 @@ from bokeh.models import (
     ColorBar,
     ColorPicker,
     ColumnDataSource,
+    CustomJS,
+    DataTable,
     Div,
     Dropdown,
     FuncTickFormatter,
     Glyph,
     HoverTool,
+    HTMLTemplateFormatter,
     LinearColorMapper,
     MultiChoice,
     PointDrawTool,
@@ -37,6 +45,7 @@ from bokeh.models import (
     Select,
     Slider,
     Spinner,
+    TableColumn,
     TabPanel,
     Tabs,
     TapTool,
@@ -46,12 +55,15 @@ from bokeh.models import (
 from bokeh.models.tiles import WMTSTileSource
 from bokeh.plotting import figure
 from bokeh.util import token
-from matplotlib import colormaps
-from PIL import Image
-from requests.adapters import HTTPAdapter, Retry
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 from tiatoolbox import logger  # noqa: E402
+from tiatoolbox.models.architecture import fetch_pretrained_weights
+from tiatoolbox.models.architecture.nuclick import NuClick
+from tiatoolbox.models.engine.interactive_segmentor import (
+    InteractiveSegmentor,
+    IOInteractiveSegmentorConfig,
+)
 from tiatoolbox.models.engine.nucleus_instance_segmentor import (  # noqa: E402
     NucleusInstanceSegmentor,
 )
@@ -175,10 +187,10 @@ def make_ts(route: str, z_levels: int, init_z: int = 4):
         min_zoom=0,
         max_zoom=z_levels - 1,
     )
-    ts.tile_size = 256
+    ts.tile_size = 512
     ts.initial_resolution = 40211.5 * sf * (2 / (100 * pi))
     ts.x_origin_offset = 0
-    ts.y_origin_offset = sf * 10294144.78 * (2 / (100 * pi))
+    ts.y_origin_offset = sf * 10294144.78 * (4 / (100 * pi))
     ts.wrap_around = False
     return ts
 
@@ -600,7 +612,7 @@ class ViewerState:
             __value = [str(x) for x in __value]
 
         if __name == "wsi":
-            z = ZoomifyGenerator(__value, tile_size=256)
+            z = ZoomifyGenerator(__value, tile_size=512)
             self.__dict__["num_zoom_levels"] = z.level_count
 
         self.__dict__[__name] = __value
@@ -700,6 +712,54 @@ def cprop_input_cb(attr, old, new: list[str]):  # noqa: ARG001
     UI["s"].put(
         f"http://{host2}:5000/tileserver/color_prop",
         data={"prop": json.dumps(new[0])},
+    )
+    UI["vstate"].update_state = 1
+    UI["vstate"].to_update.update(["overlay"])
+
+
+def cmap_builder_cb(attr, old, new):
+    """Add a property to the colormap and make a ColorPicker for it,
+    then add it to the UI["cmap_picker_column"]. if new < old, remove the
+    ColorPicker wit the deselected property from the cmap_picker_column.
+    """
+    if len(new) > len(old):
+        new_prop = set(new).difference(set(old))
+        new_prop = new_prop.pop()
+
+        color_picker = ColorPicker(
+            title=new_prop,
+            color=color_cycler.get_next(),
+            width=100,
+            height=50,
+        )
+        color_picker.on_change("color", cmap_picker_cb)
+        UI["cmap_picker_column"].children.append(color_picker)
+    else:
+        old_prop = set(old).difference(set(new))
+        old_prop = old_prop.pop()
+        for i, cp in enumerate(UI["cmap_picker_column"].children):
+            if cp.title == old_prop:
+                UI["cmap_picker_column"].children.pop(i)
+                break
+
+
+def cmap_picker_cb(attr, old, new):
+    """Update the colormap with the new color."""
+    # anything needed here?
+
+
+def cmap_builder_button_cb():
+    """Submit the dict of properties and colors to the server."""
+    cmap = {}
+    for cp in UI["cmap_picker_column"].children:
+        cmap[cp.title] = hex2rgb(cp.color)
+    if len(cmap) == 0:
+        return
+    if len(cmap) == 1:
+        cprop_input_cb(None, None, list(cmap.keys()))
+        return
+    UI["s"].put(
+        f"http://{host2}:5000/tileserver/build_cmap/{UI['mixing_type_select'].labels[UI['mixing_type_select'].active]}/{UI['cmap_select'].value}/{json.dumps(cmap)}",
     )
     UI["vstate"].update_state = 1
     UI["vstate"].to_update.update(["overlay"])
@@ -1108,6 +1168,43 @@ def save_cb(attr):  # noqa: ARG001
     )
 
 
+def add_postproc_cb(attr):
+    UI["s"].post(
+        f"http://{host2}:5000/tileserver/add_post_proc",
+        data={
+            "name": json.dumps("VirtualRestainer"),
+            "layer": json.dumps("slide"),
+            "kwargs": json.dumps(
+                {
+                    "stains": UI["stain_select"].labels[UI["stain_select"].active],
+                    "coupling_coeffs": {
+                        "wed": UI["wed_slider"].value,
+                        "weh": UI["weh_slider"].value,
+                        "wdh": UI["wdh_slider"].value,
+                        "wde": UI["wde_slider"].value,
+                    },
+                    "load_path": str(
+                        doc_config["slide_folder"]
+                        / f"{UI['vstate'].slide_path.stem}_info.pkl",
+                    ),
+                },
+            ),
+        },
+    )
+    UI["vstate"].update_state = 1
+    UI["vstate"].to_update.update(["slide"])
+
+
+def tap_event_cb(event):
+    resp = UI["s"].get(f"http://{host2}:5000/tileserver/tap_query/{event.x}/{-event.y}")
+    data_dict = json.loads(resp.text)
+
+    popup_table.source.data = {
+        "property": list(data_dict.keys()),
+        "value": list(data_dict.values()),
+    }
+
+
 # run NucleusInstanceSegmentor on a region of wsi defined by the box in box_source
 def segment_on_box():
     """Callback to run hovernet on a region of the slide."""
@@ -1162,6 +1259,55 @@ def segment_on_box():
     rmtree(tmp_mask_dir)
 
     return tile_output
+
+
+# run nuclick on user selected points in pt_source
+def nuclick_on_pts(attr):
+    x = np.round(np.array(UI["pt_source"].data["x"]))
+    y = -np.round(np.array(UI["pt_source"].data["y"]))
+
+    model = NuClick(5, 1)
+    fetch_pretrained_weights(
+        "nuclick_original-pannuke",
+        r"./nuclick_weights.pth",
+        overwrite=False,
+    )
+    saved_state_dict = torch.load(r"./nuclick_weights.pth", map_location="cpu")
+    model.load_state_dict(saved_state_dict, strict=True)
+    UI["vstate"].model_mpp = 0.25
+    ioconf = IOInteractiveSegmentorConfig(
+        input_resolutions=[{"resolution": 0.25, "units": "mpp"}],
+        patch_size=(128, 128),
+    )
+    inst_segmentor = InteractiveSegmentor(
+        num_loader_workers=0,
+        batch_size=16,
+        model=model,
+    )
+
+    points = np.vstack([x, y]).T
+    points = points / (ioconf.input_resolutions[0]["resolution"] / UI["vstate"].mpp[0])
+    inst_segmentor.predict(
+        [UI["vstate"].slide_path],
+        [points],
+        ioconfig=ioconf,
+        save_dir="/app_data/sample_tile_results/",
+        patch_size=(128, 128),
+        resolution=0.25,
+        units="mpp",
+        on_gpu=False,
+        save_output=True,
+    )
+
+    fname = make_safe_name("\\app_data\\sample_tile_results\\0.dat")
+    resp = UI["s"].put(
+        f"http://{host2}:5000/tileserver/load_annotations/{fname}/{UI['vstate'].model_mpp}",
+    )
+    UI["vstate"].types = json.loads(resp.text)
+    update_mapper()
+    rmtree(Path(r"/app_data/sample_tile_results"))
+    initialise_overlay()
+    change_tiles("overlay")
 
 
 # endregion
@@ -1367,6 +1513,34 @@ def gather_ui_elements(vstate, win_num):  # noqa: PLR0915
         sizing_mode="stretch_width",
         name=f"save_button{win_num}",
     )
+    cmap_builder_input = MultiChoice(
+        title="Choose props and colors:",
+        max_items=10,
+        options=["*"],
+        search_option_limit=5000,
+        sizing_mode="stretch_width",
+        name=f"cmap_builder_input{win_num}",
+    )
+    cmap_builder_button = Button(
+        label="Build Cmap",
+        button_type="success",
+        max_width=90,
+        sizing_mode="stretch_width",
+        name=f"cmap_builder_button{win_num}",
+    )
+    cmap_picker_column = column(children=[], name=f"cmap_picker_column{win_num}")
+    mixing_type_select = RadioButtonGroup(
+        labels=["lin", "max", "avg", "prod", "pow", "softm"],
+        active=4,
+        name=f"mixing_type_select{win_num}",
+    )
+    add_postproc_button = Button(
+        label="Add Postproc",
+        button_type="success",
+        max_width=90,
+        sizing_mode="stretch_width",
+        name=f"postproc_button{win_num}",
+    )
 
     # associate callback functions to the widgets
     slide_alpha.on_change("value", slide_alpha_cb)
@@ -1388,6 +1562,9 @@ def gather_ui_elements(vstate, win_num):  # noqa: PLR0915
     filter_input.on_change("value", filter_input_cb)
     cprop_input.on_change("value", cprop_input_cb)
     type_cmap_select.on_change("value", type_cmap_cb)
+    cmap_builder_input.on_change("value", cmap_builder_cb)
+    cmap_builder_button.on_click(cmap_builder_button_cb)
+    add_postproc_button.on_click(add_postproc_cb)
 
     vstate.cprop = get_from_config(["default_cprop"], "type")
 
@@ -1465,21 +1642,31 @@ def gather_ui_elements(vstate, win_num):  # noqa: PLR0915
                 "pt_size_spinner",
                 "edge_size_spinner",
                 "res_switch",
+                "mixing_type_select",
+                "cmap_builder_input",
+                "cmap_picker_column",
+                "cmap_builder_button",
+                "add_postproc_button",
             ],
             [
                 opt_buttons,
                 pt_size_spinner,
                 edge_size_spinner,
                 res_switch,
+                mixing_type_select,
+                cmap_builder_input,
+                cmap_picker_column,
+                cmap_builder_button,
+                add_postproc_button,
             ],
         ),
     )
-    if "ui_elements_2" in doc_config:
+    if "UI_elements_2" in doc_config:
         extra_options = column(
             [
                 ui_elements_2[el]
-                for el in doc_config["ui_elements_2"]
-                if doc_config["ui_elements_2"][el] == 1
+                for el in doc_config["UI_elements_2"]
+                if doc_config["UI_elements_2"][el] == 1
             ],
         )
     else:
@@ -1543,6 +1730,16 @@ def make_window(vstate):  # noqa: PLR0915
         first_z[0] = init_z
     p.axis.visible = False
     p.toolbar.tools[1].zoom_on_axis = False
+
+    # tap query popup callbacks
+    js_popup_code = """
+        var popupContent = document.querySelector('.popup-content');
+        if (popupContent.classList.contains('hidden')) {
+            popupContent.classList.remove('hidden');
+            }
+    """
+    p.on_event(events.DoubleTap, tap_event_cb)  # CustomJS(code=js_popup_code))
+    p.js_on_event(events.DoubleTap, CustomJS(code=js_popup_code))
 
     s = requests.Session()
 
@@ -1655,12 +1852,35 @@ UI = UIWrapper()
 windows = []
 controls = []
 win_dicts = []
+popup_div = Div(
+    width=300,
+    height=300,
+    name="popup_div",
+    text="test popup",
+)
+templateStr = r"<% if (typeof value === 'number' || !isNaN(parseFloat(value))) { %> <%= parseFloat(value).toFixed(3) %> <% } else { %> <%= value %> <% } %>"
+formatter = HTMLTemplateFormatter(
+    template=templateStr,
+)  # formatter = NumberFormatter(format="0.000")
+popup_table = DataTable(
+    source=ColumnDataSource({"property": [], "value": []}),
+    columns=[
+        TableColumn(field="property", title="Property"),
+        TableColumn(
+            field="value",
+            title="Value",
+            formatter=formatter,
+        ),
+    ],
+    index_position=None,
+    width=300,
+    height=300,
+    name="popup_window",
+)
 
 color_cycler = ColorCycler()
 tg = TileGroup()
 tool_str = "pan,wheel_zoom,reset,save"
-
-# some setup
 
 req_args = []
 do_doc = False
@@ -1848,6 +2068,7 @@ class DocConfig:
         base_doc.add_periodic_callback(update, 220)
         base_doc.add_root(slide_wins)
         base_doc.add_root(control_tabs)
+        base_doc.add_root(popup_table)
         base_doc.title = "Tiatoolbox Visualization Tool"
         return slide_wins, control_tabs
 
