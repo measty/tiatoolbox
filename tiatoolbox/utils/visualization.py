@@ -623,6 +623,7 @@ class AnnotationRenderer:
         self.edge_thickness = edge_thickness
         self.zoomed_out_strat = zoomed_out_strat
         self.secondary_cmap = secondary_cmap
+        self.sec_score_fn = score_fn
         self.blur_radius = blur_radius
         self.function_mapper = function_mapper
         if blur_radius > 0:
@@ -686,7 +687,7 @@ class AnnotationRenderer:
                 return tuple(
                     int(c * 255)
                     for c in self.secondary_cmap["mapper"](
-                        self.score_fn(
+                        self.sec_score_fn(
                             annotation.properties[self.secondary_cmap["score_prop"]],
                         ),
                     )

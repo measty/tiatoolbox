@@ -154,13 +154,14 @@ class TileServer(Flask):
         self.route("/tileserver/color_prop", methods=["GET"])(self.get_color_prop)
         self.route("/tileserver/slide", methods=["GET"])(self.get_slide)
         self.route("/tileserver/cmap", methods=["GET"])(self.get_mapper)
-        self.route("/tileserver/annotations/", methods=["GET"])(self.get_annotations)
+        self.route("/tileserver/annotations", methods=["GET"])(self.get_annotations)
         self.route("/tileserver/overlay", methods=["GET"])(self.get_overlay)
         self.route("/tileserver/renderer/<prop>", methods=["GET"])(self.get_renderer)
         self.route("/tileserver/secondary_cmap", methods=["GET"])(
             self.get_secondary_cmap,
         )
         self.route("/tileserver/tap_query/<x>/<y>")(self.tap_query)
+        self.route("/tileserver/prop_range", methods=["PUT"])(self.prop_range)
         self.route("/tileserver/shutdown", methods=["POST"])(self.shutdown)
 
     def _get_session_id(self: TileServer) -> str:
@@ -410,6 +411,7 @@ class TileServer(Flask):
         cmap = json.loads(request.form["cmap"])
         if isinstance(cmap, dict):
             cmap = dict(zip(cmap["keys"], cmap["values"]))
+            self.renderers[session_id].score_fn = lambda x: x
         self.renderers[session_id].mapper = cmap
         self.renderers[session_id].function_mapper = None
 
@@ -649,6 +651,22 @@ class TileServer(Flask):
         if len(anns) == 0:
             return json.dumps({})
         return json.dumps(list(anns.values())[-1].properties)
+
+    def prop_range(self):
+        """Set the range which the color mapper will map to.
+
+        It will create an appropriate function to map the range to the
+        range [0, 1], and set the renderers score_fn to this function.
+
+        """
+        session_id = self._get_session_id()
+        prop_range = json.loads(request.form["range"])
+        if prop_range is None:
+            self.renderers[session_id].score_fn = lambda x: x
+            return "done"
+        minv, maxv = prop_range
+        self.renderers[session_id].score_fn = lambda x: (x - minv) / (maxv - minv)
+        return "done"
 
     @staticmethod
     def shutdown() -> None:

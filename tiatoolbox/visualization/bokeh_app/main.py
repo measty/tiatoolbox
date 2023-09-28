@@ -13,6 +13,10 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 import requests
 import torch
+from matplotlib import colormaps
+from PIL import Image
+from requests.adapters import HTTPAdapter, Retry
+
 from bokeh import events
 from bokeh.io import curdoc
 from bokeh.layouts import column, row
@@ -37,6 +41,7 @@ from bokeh.models import (
     MultiChoice,
     PointDrawTool,
     RadioButtonGroup,
+    RangeSlider,
     Segment,
     Select,
     Slider,
@@ -51,9 +56,6 @@ from bokeh.models import (
 from bokeh.models.tiles import WMTSTileSource
 from bokeh.plotting import figure
 from bokeh.util import token
-from matplotlib import colormaps
-from PIL import Image
-from requests.adapters import HTTPAdapter, Retry
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 from tiatoolbox import logger  # noqa: E402
@@ -256,7 +258,7 @@ def set_alpha_glyph(glyph: Glyph, alpha: float):
     glyph.line_alpha = alpha
 
 
-def get_mapper_for_prop(prop: str, mapper_type: str = "auto"):
+def get_mapper_for_prop(prop: str, mapper_type: str = "auto", slider=None):
     """Helper to get appropriate mapper for a property."""
     # find out the unique values of the chosen property
     resp = UI["s"].get(f"http://{host2}:5000/tileserver/prop_values/{prop}/all")
@@ -267,9 +269,22 @@ def get_mapper_for_prop(prop: str, mapper_type: str = "auto"):
         and mapper_type == "auto"
         or mapper_type == "continuous"
     ):
+        # use a continuous mapper
         cmap = (
-            "viridis" if UI["cmap_select"].value == "Dict" else UI["cmap_select"].value
+            "viridis" if UI["cmap_select"].value == "dict" else UI["cmap_select"].value
         )
+        if slider is not None:
+            # update passed sliders min and max values
+            max_val = max(prop_vals)
+            min_val = min(prop_vals)
+            slider.start = min_val
+            slider.end = max_val
+            if slider.value == (min_val, max_val):
+                # need to explicitly trigger the callback
+                range_slider_cb(None, None, (min_val, max_val))
+            else:
+                # set the new val and the cb will trigger on change
+                slider.value = (min_val, max_val)
     else:
         cmap = make_color_dict(prop_vals)
     return cmap
@@ -699,8 +714,12 @@ def cprop_input_cb(attr, old, new: list[str]):  # noqa: ARG001
     """Change property to colour by."""
     if len(new) == 0:
         return
-    cmap = UI["vstate"].mapper if new[0] == "type" else get_mapper_for_prop(new[0])
     UI["vstate"].cprop = new[0]
+    cmap = (
+        UI["vstate"].mapper
+        if new[0] == "type"
+        else get_mapper_for_prop(new[0], slider=UI["range_slider"])
+    )
     update_renderer("mapper", cmap)
     UI["s"].put(
         f"http://{host2}:5000/tileserver/color_prop",
@@ -820,6 +839,19 @@ def slide_select_cb(attr, old, new):  # noqa: ARG001
             layer_drop_cb(dummy_attr)
 
 
+def range_slider_cb(attr, old, new):  # noqa: ARG001
+    """Callback to change the range of the color mapper."""
+    if UI["vstate"].cprop != "type" and UI["cmap_select"].value != "dict":
+        UI["s"].put(
+            f"http://{host2}:5000/tileserver/prop_range",
+            data={"range": json.dumps(new)},
+        )
+        UI["vstate"].update_state = 1
+        UI["vstate"].to_update.update(["overlay"])
+    UI["color_bar"].color_mapper.low = new[0]
+    UI["color_bar"].color_mapper.high = new[1]
+
+
 def handle_graph_layer(attr):  # skipcq: PY-R1000
     """Handle adding a graph layer."""
     do_feats = False
@@ -922,6 +954,11 @@ def update_ui_on_new_annotations(resp):
             UI["cprop_input"].value = ["type"]
             update_mapper()
         UI["vstate"].props_old = UI["vstate"].props
+    else:
+        # trigger the color by callbacks to update the mapper
+        # based on updated property values
+        cprop_input_cb(None, None, UI["cprop_input"].value)
+        type_cmap_cb(None, None, UI["type_cmap_select"].value)
     initialise_overlay()
     change_tiles("overlay")
 
@@ -1383,6 +1420,16 @@ def gather_ui_elements(vstate, win_num):  # noqa: PLR0915
         sizing_mode="stretch_width",
         name=f"save_button{win_num}",
     )
+    range_slider = RangeSlider(
+        start=0,
+        end=1,
+        value=(0, 1),
+        step=0.05,
+        title="prop range",
+        width=200,
+        sizing_mode="stretch_width",
+        name=f"range_slider{win_num}",
+    )
 
     # associate callback functions to the widgets
     slide_alpha.on_change("value", slide_alpha_cb)
@@ -1404,6 +1451,7 @@ def gather_ui_elements(vstate, win_num):  # noqa: PLR0915
     filter_input.on_change("value", filter_input_cb)
     cprop_input.on_change("value", cprop_input_cb)
     type_cmap_select.on_change("value", type_cmap_cb)
+    range_slider.on_change("value", range_slider_cb)
 
     vstate.cprop = get_from_config(["default_cprop"], "type")
 
@@ -1481,12 +1529,14 @@ def gather_ui_elements(vstate, win_num):  # noqa: PLR0915
                 "pt_size_spinner",
                 "edge_size_spinner",
                 "res_switch",
+                "range_slider",
             ],
             [
                 opt_buttons,
                 pt_size_spinner,
                 edge_size_spinner,
                 res_switch,
+                range_slider,
             ],
         ),
     )
@@ -1628,6 +1678,8 @@ def make_window(vstate):  # noqa: PLR0915
         ),
         label_standoff=12,
     )
+    color_bar.color_mapper.low = 0
+    color_bar.color_mapper.high = 1
     if get_from_config(["opts", "colorbar_on"], 1) == 1:
         p.add_layout(color_bar, "below")
 
