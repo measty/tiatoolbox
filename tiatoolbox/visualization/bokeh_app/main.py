@@ -915,7 +915,9 @@ def handle_graph_layer(attr):  # skipcq: PY-R1000
     if do_feats:
         for i in range(min(graph_dict["feats"].shape[1], MAX_FEATS)):
             # more than 10 wont really fit in hover, ignore rest
-            UI["node_source"].data[graph_feat_names[i]] = graph_dict["feats"][:, i]
+            UI["node_source"].data[graph_feat_names[i].replace(" ", "_")] = graph_dict[
+                "feats"
+            ][:, i]
 
         tooltips = [
             ("Index", "$index"),
@@ -923,7 +925,7 @@ def handle_graph_layer(attr):  # skipcq: PY-R1000
         ]
         tooltips.extend(
             [
-                (graph_feat_names[i], f"@{graph_feat_names[i]}")
+                (graph_feat_names[i], f"@{graph_feat_names[i].replace(' ', '_')}")
                 for i in range(np.minimum(graph_dict["feats"].shape[1], 9))
             ],
         )
@@ -1114,6 +1116,8 @@ def type_cmap_cb(attr, old, new):  # noqa: ARG001
             # adjust the node color in source if prop exists
             if new[1] in UI["node_source"].data:
                 node_cm = colormaps["viridis"]
+                # UI["node_source"].data["node_color_"] = [
+                #     rgb2hex(node_cm((to_num(v) - minv) / (maxv - minv))) for v in UI["node_source"].data[new[1]]
                 UI["node_source"].data["node_color_"] = [
                     rgb2hex(node_cm(to_num(v))) for v in UI["node_source"].data[new[1]]
                 ]
