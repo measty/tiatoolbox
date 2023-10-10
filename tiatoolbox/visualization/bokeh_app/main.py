@@ -8,7 +8,7 @@ import urllib
 from cmath import pi
 from pathlib import Path, PureWindowsPath
 from shutil import rmtree
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Callable
 
 import numpy as np
 import requests
@@ -17,7 +17,7 @@ from matplotlib import colormaps
 from PIL import Image
 from requests.adapters import HTTPAdapter, Retry
 
-from bokeh import events
+from bokeh.events import ButtonClick, DoubleTap, MenuItemClick
 from bokeh.io import curdoc
 from bokeh.layouts import column, row
 from bokeh.models import (
@@ -28,6 +28,7 @@ from bokeh.models import (
     Circle,
     ColorBar,
     ColorPicker,
+    Column,
     ColumnDataSource,
     CustomJS,
     DataTable,
@@ -38,10 +39,12 @@ from bokeh.models import (
     HoverTool,
     HTMLTemplateFormatter,
     LinearColorMapper,
+    Model,
     MultiChoice,
     PointDrawTool,
     RadioButtonGroup,
     RangeSlider,
+    Row,
     Segment,
     Select,
     Slider,
@@ -89,7 +92,7 @@ DO_UPDATE = 2
 class DummyAttr:
     """Dummy class to enable triggering a callback independently of a widget."""
 
-    def __init__(self, val: Any) -> None:
+    def __init__(self: DummyAttr, val: Any) -> None:  # noqa: ANN401
         """Initialize the class."""
         self.item = val
 
@@ -97,11 +100,11 @@ class DummyAttr:
 class UIWrapper:
     """Wrapper class to access ui elements."""
 
-    def __init__(self) -> None:
+    def __init__(self: UIWrapper) -> None:
         """Initialize the class."""
         self.active = 0
 
-    def __getitem__(self, key: str) -> Any:
+    def __getitem__(self: UIWrapper, key: str) -> Any:  # noqa: ANN401
         """Gets ui element for the active window."""
         return win_dicts[self.active][key]
 
@@ -155,7 +158,7 @@ def to_num(x: str) -> int | float | None:
         return float(x)
 
 
-def get_from_config(keys: dict, default: Any = None):
+def get_from_config(keys: dict, default: Any = None) -> Any:  # noqa: ANN401
     """Helper to get a value from a config dict.
 
     Looks recursively in the dict values for keys.
@@ -171,7 +174,7 @@ def get_from_config(keys: dict, default: Any = None):
     return c_dict
 
 
-def make_ts(route: str, z_levels: int, init_z: int = 4):
+def make_ts(route: str, z_levels: int, init_z: int = 4) -> WMTSTileSource:
     """Helper to make a tile source."""
     sf = 2 ** (z_levels - init_z - 5)
     ts = WMTSTileSource(
@@ -200,7 +203,7 @@ def to_int_rgb(rgb: tuple[float, float, float]) -> tuple[int, int, int]:
     return tuple(int(v * 255) for v in rgb)
 
 
-def name2type(name: str) -> Any:
+def name2type(name: str) -> Any:  # noqa: ANN401
     """Helper to get original type from stringified version."""
     name = UI["vstate"].orig_types[name]
     if isinstance(name, str):
@@ -252,13 +255,17 @@ def make_color_dict(types: list[str]) -> dict[str, tuple[float, float, float]]:
     return type_colours
 
 
-def set_alpha_glyph(glyph: Glyph, alpha: float):
+def set_alpha_glyph(glyph: Glyph, alpha: float) -> None:
     """Sets both fill and line alpha for a glyph."""
     glyph.fill_alpha = alpha
     glyph.line_alpha = alpha
 
 
-def get_mapper_for_prop(prop: str, mapper_type: str = "auto", slider=None):
+def get_mapper_for_prop(
+    prop: str,
+    mapper_type: str = "auto",
+    slider=None,
+) -> str | dict[str, str]:
     """Helper to get appropriate mapper for a property."""
     # find out the unique values of the chosen property
     resp = UI["s"].get(f"http://{host2}:5000/tileserver/prop_values/{prop}/all")
@@ -290,12 +297,12 @@ def get_mapper_for_prop(prop: str, mapper_type: str = "auto", slider=None):
     return cmap
 
 
-def update_mapper():
+def update_mapper() -> None:
     """Helper to update the color mapper."""
     update_renderer("mapper", UI["vstate"].mapper)
 
 
-def update_renderer(prop: str, value: Any):
+def update_renderer(prop: str, value: Any) -> None:  # noqa: ANN401
     """Helper to update a renderer property."""
     if prop == "mapper":
         if value == "dict":
@@ -315,17 +322,18 @@ def update_renderer(prop: str, value: Any):
         if isinstance(value, dict):
             # send keys and values separately so types are preserved
             value = {"keys": list(value.keys()), "values": list(value.values())}
-        return UI["s"].put(
+        UI["s"].put(
             f"http://{host2}:5000/tileserver/cmap",
             data={"cmap": json.dumps(value)},
         )
-    return UI["s"].put(
+        return
+    UI["s"].put(
         f"http://{host2}:5000/tileserver/renderer/{prop}",
         data={"val": json.dumps(value)},
     )
 
 
-def build_predicate():
+def build_predicate() -> str:
     """Builds a predicate string.
 
     Builds the appropriate predicate string from the currently selected types,
@@ -352,7 +360,7 @@ def build_predicate():
     return combo
 
 
-def initialise_slide():
+def initialise_slide() -> None:
     """Initialise the newly selected slide."""
     UI["vstate"].mpp = UI["vstate"].wsi.info.mpp
     if UI["vstate"].mpp is None:
@@ -391,7 +399,7 @@ def initialise_slide():
     logger.warning("slide info: %s", UI["vstate"].wsi.info.as_dict(), stacklevel=2)
 
 
-def initialise_overlay():
+def initialise_overlay() -> None:
     """Initialise the newly selected overlay."""
     UI["vstate"].colors = list(UI["vstate"].mapper.values())
     now_active = {b.label: b.active for b in UI["type_column"].children}
@@ -447,7 +455,7 @@ def initialise_overlay():
     build_predicate()
 
 
-def add_layer(lname: str):
+def add_layer(lname: str) -> None:
     """Add a new layer to the visualization."""
     UI["type_column"].children.append(
         Toggle(
@@ -493,11 +501,11 @@ def add_layer(lname: str):
 class TileGroup:
     """Class to keep track of the current tile group."""
 
-    def __init__(self) -> None:
+    def __init__(self: TileGroup) -> None:
         """Initialise the tile group."""
         self.group = 1
 
-    def get_grp(self):
+    def get_grp(self: TileGroup) -> int:
         """Get the current tile group."""
         self.group = self.group + 1
         return self.group
@@ -506,29 +514,29 @@ class TileGroup:
 class ColorCycler:
     """Class to cycle through a list of colors."""
 
-    def __init__(self, colors=None) -> None:
+    def __init__(self: ColorCycler, colors: list[str] | None = None) -> None:
         """Initialise the color cycler."""
         if colors is None:
             colors = ["red", "blue", "lime", "yellow", "cyan", "magenta", "orange"]
         self.colors = colors
         self.index = -1
 
-    def get_next(self):
+    def get_next(self: ColorCycler) -> str:
         """Get the next color in the list."""
         self.index = (self.index + 1) % len(self.colors)
         return self.colors[self.index]
 
-    def get_random(self):
+    def get_random(self: ColorCycler) -> str:
         """Get a random color from the list."""
         return str(rng.choice(self.colors))
 
     @staticmethod
-    def generate_random():
+    def generate_random() -> str:
         """Generate a new random color."""
         return rgb2hex(rng.choice(256, 3) / 255)
 
 
-def change_tiles(layer_name: str = "overlay"):
+def change_tiles(layer_name: str = "overlay") -> None:
     """Update tilesources.
 
     If a layer is updated/added, will update the tilesource to ensure
@@ -577,7 +585,7 @@ def change_tiles(layer_name: str = "overlay"):
 class ViewerState:
     """Class to keep track of the current state of the viewer."""
 
-    def __init__(self, slide_path: str | Path) -> None:
+    def __init__(self: ViewerState, slide_path: str | Path) -> None:
         """Initialise the viewer state."""
         self.wsi = WSIReader.open(slide_path)
         self.slide_path = slide_path
@@ -608,7 +616,11 @@ class ViewerState:
         self.graph = []
         self.res = 2
 
-    def __setattr__(self, __name: str, __value) -> None:
+    def __setattr__(
+        self: ViewerState,
+        __name: str,
+        __value: Any,  # noqa: ANN401
+    ) -> None:
         """Set an attribute of the viewer state."""
         if __name == "types":
             self.__dict__["mapper"] = make_color_dict(__value)
@@ -631,7 +643,7 @@ class ViewerState:
 
 # Define UI callbacks
 # region
-def res_switch_cb(attr: str, old: int, new: int):  # noqa: ARG001
+def res_switch_cb(attr: str, old: int, new: int) -> None:  # noqa: ARG001
     """Callback to switch between resolutions."""
     if new == 0:
         UI["vstate"].res = 1
@@ -641,7 +653,7 @@ def res_switch_cb(attr: str, old: int, new: int):  # noqa: ARG001
     UI["vstate"].to_update.update(["overlay", "slide"])
 
 
-def slide_toggle_cb(attr):  # noqa: ARG001
+def slide_toggle_cb(attr: str) -> None:  # noqa: ARG001
     """Callback to toggle the slide on/off."""
     if UI["p"].renderers[0].alpha == 0:
         UI["p"].renderers[0].alpha = UI["slide_alpha"].value
@@ -649,12 +661,12 @@ def slide_toggle_cb(attr):  # noqa: ARG001
         UI["p"].renderers[0].alpha = 0.0
 
 
-def node_select_cb(attr, old, new):  # noqa: ARG001
+def node_select_cb(attr: str, old: int, new: int) -> None:  # noqa: ARG001
     """Placeholder callback to do something on node selection."""
     # do something on node select if desired
 
 
-def overlay_toggle_cb(attr):  # noqa: ARG001
+def overlay_toggle_cb(attr: str) -> None:  # noqa: ARG001
     """Callback to toggle the overlay on/off."""
     for i in range(5, len(UI["p"].renderers)):
         if UI["p"].renderers[i].alpha == 0:
@@ -663,7 +675,7 @@ def overlay_toggle_cb(attr):  # noqa: ARG001
             UI["p"].renderers[i].alpha = 0.0
 
 
-def populate_layer_list(slide_name, overlay_path: Path):
+def populate_layer_list(slide_name: str, overlay_path: Path) -> None:
     """Populate the layer list with the available overlays."""
     file_list = []
     for ext in [
@@ -681,7 +693,7 @@ def populate_layer_list(slide_name, overlay_path: Path):
     UI["layer_drop"].menu = file_list
 
 
-def populate_slide_list(slide_folder, search_txt=None):
+def populate_slide_list(slide_folder: Path, search_txt: str | None = None) -> None:
     """Populate the slide list with the available slides."""
     file_list = []
     len_slidepath = len(slide_folder.parts)
@@ -703,14 +715,14 @@ def populate_slide_list(slide_folder, search_txt=None):
     UI["slide_select"].options = file_list
 
 
-def filter_input_cb(attr, old, new):  # noqa: ARG001
+def filter_input_cb(attr: str, old: str, new: str) -> None:  # noqa: ARG001
     """Change predicate to be used to filter annotations."""
     build_predicate()
     UI["vstate"].update_state = 1
     UI["vstate"].to_update.update(["overlay"])
 
 
-def cprop_input_cb(attr, old, new: list[str]):  # noqa: ARG001
+def cprop_input_cb(attr: str, old: str, new: list[str]) -> None:  # noqa: ARG001
     """Change property to colour by."""
     if len(new) == 0:
         return
@@ -729,30 +741,30 @@ def cprop_input_cb(attr, old, new: list[str]):  # noqa: ARG001
     UI["vstate"].to_update.update(["overlay"])
 
 
-def slide_alpha_cb(attr, old, new):  # noqa: ARG001
+def slide_alpha_cb(attr: str, old: float, new: float) -> None:  # noqa: ARG001
     """Callback to change the alpha of the slide."""
     UI["p"].renderers[0].alpha = new
 
 
-def overlay_alpha_cb(attr, old, new):  # noqa: ARG001
+def overlay_alpha_cb(attr: str, old: float, new: float) -> None:  # noqa: ARG001
     """Callback to change the alpha of all overlay layers."""
     for i in range(5, len(UI["p"].renderers)):
         UI["p"].renderers[i].alpha = new
 
 
-def pt_size_cb(attr, old, new):  # noqa: ARG001
+def pt_size_cb(attr: str, old: float, new: float) -> None:  # noqa: ARG001
     """Callback to change the size of the points."""
     UI["vstate"].graph_node.size = 2 * new
 
 
-def edge_size_cb(attr, old, new):  # noqa: ARG001
+def edge_size_cb(attr: str, old: float, new: float) -> None:  # noqa: ARG001
     """Callback to change the size of the edges."""
     update_renderer("edge_thickness", new)
     UI["vstate"].update_state = 1
     UI["vstate"].to_update.update(["overlay"])
 
 
-def opt_buttons_cb(attr, old, new):  # noqa: ARG001
+def opt_buttons_cb(attr: str, old: list[int], new: list[int]) -> None:  # noqa: ARG001
     """Callback to handle options changes in the ui widget."""
     old_thickness = UI["vstate"].thickness
     if FILLED in new:
@@ -780,21 +792,21 @@ def opt_buttons_cb(attr, old, new):  # noqa: ARG001
         UI["p"].xgrid.grid_line_alpha = 0
 
 
-def cmap_select_cb(attr, old, new):  # noqa: ARG001
+def cmap_select_cb(attr: str, old: str, new: str) -> None:  # noqa: ARG001
     """Callback to change the colour map."""
     update_renderer("mapper", new)
     UI["vstate"].update_state = 1
     UI["vstate"].to_update.update(["overlay"])
 
 
-def blur_spinner_cb(attr, old, new):  # noqa: ARG001
+def blur_spinner_cb(attr: str, old: float, new: float) -> None:  # noqa: ARG001
     """Callback to change the blur radius."""
     update_renderer("blur_radius", new)
     UI["vstate"].update_state = 1
     UI["vstate"].to_update.update(["overlay"])
 
 
-def scale_spinner_cb(attr, old, new):  # noqa: ARG001
+def scale_spinner_cb(attr: str, old: float, new: float) -> None:  # noqa: ARG001
     """Callback to change the max scale.
 
     This defines a scale above which small annotations are
@@ -806,7 +818,7 @@ def scale_spinner_cb(attr, old, new):  # noqa: ARG001
     UI["vstate"].to_update.update(["overlay"])
 
 
-def slide_select_cb(attr, old, new):  # noqa: ARG001
+def slide_select_cb(attr: str, old: str, new: str) -> None:  # noqa: ARG001
     """Setup the newly chosen slide."""
     if len(new) == 0:
         return
@@ -852,7 +864,7 @@ def range_slider_cb(attr, old, new):  # noqa: ARG001
     UI["color_bar"].color_mapper.high = new[1]
 
 
-def handle_graph_layer(attr):  # skipcq: PY-R1000
+def handle_graph_layer(attr: MenuItemClick) -> None:  # skipcq: PY-R1000
     """Handle adding a graph layer."""
     do_feats = False
     with Path(attr.item).open("rb") as f:
@@ -932,9 +944,9 @@ def handle_graph_layer(attr):  # skipcq: PY-R1000
         UI["hover"].tooltips = tooltips
 
 
-def update_ui_on_new_annotations(resp):
+def update_ui_on_new_annotations(ann_types: list[str]) -> None:
     """Update the UI when new annotations are added."""
-    UI["vstate"].types = resp
+    UI["vstate"].types = ann_types
     props = UI["s"].get(f"http://{host2}:5000/tileserver/prop_names/all")
     UI["vstate"].props = json.loads(props.text)
     # update the color type by prop menu
@@ -965,7 +977,7 @@ def update_ui_on_new_annotations(resp):
     change_tiles("overlay")
 
 
-def layer_drop_cb(attr):
+def layer_drop_cb(attr: MenuItemClick) -> None:
     """Setup the newly chosen overlay."""
     if Path(attr.item).suffix == ".json":
         # its a graph
@@ -987,14 +999,14 @@ def layer_drop_cb(attr):
         change_tiles(resp)
 
 
-def layer_select_cb(attr):  # noqa: ARG001
+def layer_select_cb(attr: ButtonClick) -> None:  # noqa: ARG001
     """Callback to handle toggling specific annotation types on and off."""
     build_predicate()
     UI["vstate"].update_state = 1
     UI["vstate"].to_update.update(["overlay"])
 
 
-def fixed_layer_select_cb(obj, attr):  # noqa: ARG001
+def fixed_layer_select_cb(obj: Button, attr: ButtonClick) -> None:  # noqa: ARG001
     """Callback to handle toggling non-annotation layers on and off."""
     key = UI["vstate"].layer_dict[obj.label]
     if obj.label == "edges":
@@ -1016,7 +1028,12 @@ def fixed_layer_select_cb(obj, attr):  # noqa: ARG001
         UI["p"].renderers[key].alpha = 0.0
 
 
-def layer_slider_cb(obj, attr, old, new):  # noqa: ARG001
+def layer_slider_cb(
+    obj: Slider,
+    attr: str,  # noqa: ARG001
+    old: float,  # noqa: ARG001
+    new: float,
+) -> None:
     """Callback to handle changing the alpha of a layer."""
     if obj.name.split("_")[0] == "nodes":
         set_alpha_glyph(
@@ -1031,7 +1048,12 @@ def layer_slider_cb(obj, attr, old, new):  # noqa: ARG001
         UI["p"].renderers[UI["vstate"].layer_dict[obj.name.split("_")[0]]].alpha = new
 
 
-def color_input_cb(obj, attr, old, new):  # noqa: ARG001
+def color_input_cb(
+    obj: ColorPicker,
+    attr: str,  # noqa: ARG001
+    old: str,  # noqa: ARG001
+    new: str,
+) -> None:
     """Callback to handle changing the color of an annotation type."""
     UI["vstate"].mapper[UI["vstate"].orig_types[obj.name]] = (*hex2rgb(new), 1)
     if UI["vstate"].cprop == "type":
@@ -1040,32 +1062,32 @@ def color_input_cb(obj, attr, old, new):  # noqa: ARG001
     UI["vstate"].to_update.update(["overlay"])
 
 
-def bind_cb_obj(cb_obj, cb):
+def bind_cb_obj(cb_obj: Model, cb: Callable[[Model, str, Any, Any]]) -> Callable:
     """Wrapper to bind a callback to a bokeh object."""
 
-    def wrapped(attr, old, new):
+    def wrapped(attr: str, old: Any, new: Any) -> None:  # noqa: ANN401
         """Wrapper function."""
         cb(cb_obj, attr, old, new)
 
     return wrapped
 
 
-def bind_cb_obj_tog(cb_obj, cb):
+def bind_cb_obj_tog(cb_obj: Model, cb: Callable[[Model, Any]]) -> Callable:
     """Wrapper to bind a callback to a bokeh toggle object."""
 
-    def wrapped(attr):
+    def wrapped(attr: ButtonClick) -> None:
         """Wrapper function."""
         cb(cb_obj, attr)
 
     return wrapped
 
 
-def model_drop_cb(attr):
+def model_drop_cb(attr: MenuItemClick) -> None:
     """Callback to handle model selection."""
     UI["vstate"].current_model = attr.item
 
 
-def to_model_cb(attr):  # noqa: ARG001
+def to_model_cb(attr: ButtonClick) -> None:  # noqa: ARG001
     """Callback to run currently selected model."""
     if UI["vstate"].current_model == "hovernet":
         segment_on_box()
@@ -1074,7 +1096,7 @@ def to_model_cb(attr):  # noqa: ARG001
         logger.warning("unknown model")
 
 
-def type_cmap_cb(attr, old, new):  # noqa: ARG001
+def type_cmap_cb(attr: str, old: list[str], new: list[str]) -> None:  # noqa: ARG001
     """Callback to handle changing a type-specific color property."""
     if len(new) == 0:
         UI["type_cmap_select"].options = [*UI["vstate"].types, "graph_overlay"]
@@ -1140,7 +1162,7 @@ def type_cmap_cb(attr, old, new):  # noqa: ARG001
         UI["vstate"].to_update.update(["overlay"])
 
 
-def save_cb(attr):  # noqa: ARG001
+def save_cb(attr: ButtonClick) -> None:  # noqa: ARG001
     """Callback to handle saving annotations."""
     save_path = make_safe_name(
         str(
@@ -1154,8 +1176,8 @@ def save_cb(attr):  # noqa: ARG001
     )
 
 
-def tap_event_cb(event):
-    """Callback to handle tap events to inspect annotations."""
+def tap_event_cb(event: DoubleTap) -> None:
+    """Callback to handle double tap events to inspect annotations."""
     resp = UI["s"].get(f"http://{host2}:5000/tileserver/tap_query/{event.x}/{-event.y}")
     data_dict = json.loads(resp.text)
 
@@ -1166,7 +1188,7 @@ def tap_event_cb(event):
 
 
 # run NucleusInstanceSegmentor on a region of wsi defined by the box in box_source
-def segment_on_box():
+def segment_on_box() -> None:
     """Callback to run hovernet on a region of the slide."""
     thumb = UI["vstate"].wsi.slide_thumbnail()
     conv_mpp = UI["vstate"].dims[0] / thumb.shape[1]
@@ -1197,7 +1219,7 @@ def segment_on_box():
     Image.fromarray(mask).save(tmp_mask_dir / "mask.png")
 
     UI["vstate"].model_mpp = inst_segmentor.ioconfig.save_resolution["resolution"]
-    tile_output = inst_segmentor.predict(
+    inst_segmentor.predict(
         [UI["vstate"].slide_path],
         [tmp_mask_dir / "mask.png"],
         save_dir=tmp_save_dir / "hover_out",
@@ -1211,14 +1233,12 @@ def segment_on_box():
         f"http://{host2}:5000/tileserver/annotations",
         data={"file_path": fname, "model_mpp": json.dumps(UI["vstate"].model_mpp)},
     )
-    resp = json.loads(resp.text)
-    update_ui_on_new_annotations(resp)
+    ann_types = json.loads(resp.text)
+    update_ui_on_new_annotations(ann_types)
 
     # clean up temp files
     rmtree(tmp_save_dir)
     rmtree(tmp_mask_dir)
-
-    return tile_output
 
 
 # endregion
@@ -1233,13 +1253,17 @@ slide_wins = row(
 control_tabs = Tabs(tabs=[], name="ui_layout")
 
 
-def gather_ui_elements(vstate, win_num):  # noqa: PLR0915
+def gather_ui_elements(  # noqa: PLR0915
+    vstate: ViewerState,
+    win_num: int,
+) -> tuple[Column, Column, dict]:
     """Gather all the ui elements into a dict.
 
     Defines and gathers the main UI elements for a window, excluding any
     elements that have been deactivated in the config file.
 
     """
+    # define all the various widgets
     res_switch = RadioButtonGroup(labels=["1x", "2x"], active=1, name=f"res{win_num}")
 
     slide_alpha = Slider(
@@ -1279,7 +1303,7 @@ def gather_ui_elements(vstate, win_num):  # noqa: PLR0915
     pt_size_spinner = Spinner(
         title="Pt. Size:",
         low=0,
-        high=10,
+        high=20,
         step=1,
         value=4,
         width=60,
@@ -1457,8 +1481,7 @@ def gather_ui_elements(vstate, win_num):  # noqa: PLR0915
     type_cmap_select.on_change("value", type_cmap_cb)
     range_slider.on_change("value", range_slider_cb)
 
-    vstate.cprop = get_from_config(["default_cprop"], "type")
-
+    # create some layouts
     type_column = column(children=layer_boxes, name=f"type_column{win_num}")
     color_column = column(
         children=lcolors,
@@ -1466,7 +1489,6 @@ def gather_ui_elements(vstate, win_num):  # noqa: PLR0915
         name=f"color_column{win_num}",
     )
 
-    # create the layout
     slide_row = row([slide_toggle, slide_alpha], sizing_mode="stretch_width")
     overlay_row = row([overlay_toggle, overlay_alpha], sizing_mode="stretch_width")
     cmap_row = row(
@@ -1512,6 +1534,7 @@ def gather_ui_elements(vstate, win_num):  # noqa: PLR0915
         ),
     )
     if "ui_elements_1" in doc_config:
+        # only add the elements specified in config file
         ui_layout = column(
             [
                 ui_elements_1[el]
@@ -1526,6 +1549,7 @@ def gather_ui_elements(vstate, win_num):  # noqa: PLR0915
             sizing_mode="stretch_width",
         )
 
+    # elements in the secondary controls tab
     ui_elements_2 = dict(
         zip(
             [
@@ -1545,6 +1569,7 @@ def gather_ui_elements(vstate, win_num):  # noqa: PLR0915
         ),
     )
     if "ui_elements_2" in doc_config:
+        # only add the elements specified in config file
         extra_options = column(
             [
                 ui_elements_2[el]
@@ -1556,7 +1581,7 @@ def gather_ui_elements(vstate, win_num):  # noqa: PLR0915
         extra_options = column(
             list(ui_elements_2.values()),
         )
-
+    # put everything together
     elements_dict = {
         **ui_elements_1,
         **ui_elements_2,
@@ -1570,7 +1595,7 @@ def gather_ui_elements(vstate, win_num):  # noqa: PLR0915
     return ui_layout, extra_options, elements_dict
 
 
-def make_window(vstate):  # noqa: PLR0915
+def make_window(vstate: ViewerState) -> dict:  # noqa: PLR0915
     """Make a new window for a slide."""
     win_num = str(len(windows))
     if len(windows) == 1:
@@ -1621,11 +1646,11 @@ def make_window(vstate):  # noqa: PLR0915
             popupContent.classList.remove('hidden');
             }
     """
-    p.on_event(events.DoubleTap, tap_event_cb)
-    p.js_on_event(events.DoubleTap, CustomJS(code=js_popup_code))
+    p.on_event(DoubleTap, tap_event_cb)
+    p.js_on_event(DoubleTap, CustomJS(code=js_popup_code))
 
+    # set up a session for communicating with tile server
     s = requests.Session()
-
     retries = Retry(
         total=5,
         backoff_factor=0.1,
@@ -1636,6 +1661,8 @@ def make_window(vstate):  # noqa: PLR0915
     user = resp.cookies.get("session_id")
     if curdoc().session_context:
         curdoc().session_context.request.arguments["user"] = user
+
+    # set up the main slide window
     vstate.init_z = init_z
     ts1 = make_ts(
         f"http://{host}:{port}/tileserver/layer/slide/{user}/zoomify/TileGroup1"
@@ -1705,6 +1732,7 @@ def make_window(vstate):  # noqa: PLR0915
         controls.append(TabPanel(child=Div(), title="window 2"))
         windows.append(p)
     else:
+        # setting up a dual window
         control_tabs.tabs[1] = TabPanel(
             child=Tabs(
                 tabs=[
@@ -1717,6 +1745,7 @@ def make_window(vstate):  # noqa: PLR0915
         )
         slide_wins.children.append(p)
 
+    # return a dictionary collecting all the things related to window
     return {
         **elements_dict,
         "p": p,
@@ -1767,12 +1796,11 @@ popup_table = DataTable(
     name="popup_window",
 )
 
+# some setup
+
 color_cycler = ColorCycler()
 tg = TileGroup()
 tool_str = "pan,wheel_zoom,reset,save"
-
-# some setup
-
 req_args = []
 do_doc = False
 if curdoc().session_context is not None:
@@ -1789,7 +1817,7 @@ host2 = "127.0.0.1"
 port = "5000"
 
 
-def update():
+def update() -> None:
     """Callback to ensure tiles are updated when needed."""
     if UI["vstate"].update_state == DO_UPDATE:
         for layer in UI["vstate"].to_update:
@@ -1801,7 +1829,7 @@ def update():
         UI["vstate"].update_state = DO_UPDATE
 
 
-def control_tabs_cb(attr: str, old: int, new: int):  # noqa: ARG001
+def control_tabs_cb(attr: str, old: int, new: int) -> None:  # noqa: ARG001
     """Callback to handle selecting active window."""
     if new == 1 and len(slide_wins.children) == 1:
         # make new window
@@ -1821,7 +1849,11 @@ def control_tabs_cb(attr: str, old: int, new: int):  # noqa: ARG001
         UI.active = new
 
 
-def control_tabs_remove_cb(attr, old, new):  # noqa: ARG001
+def control_tabs_remove_cb(
+    attr: str,  # noqa: ARG001
+    old: list[int],  # noqa: ARG001
+    new: list[int],
+) -> None:
     """Callback to handle removing a window."""
     if len(new) == 1:
         # remove the second window
@@ -1832,7 +1864,7 @@ def control_tabs_remove_cb(attr, old, new):  # noqa: ARG001
         UI.active = 0
 
 
-def setup_config_ui_settings(config):
+def setup_config_ui_settings(config: dict) -> None:
     """Set up the UI settings from the config file."""
     if "UI_settings" in config:
         for k in config["UI_settings"]:
@@ -1859,7 +1891,7 @@ def setup_config_ui_settings(config):
 class DocConfig:
     """class to configure and set up a document."""
 
-    def __init__(self) -> None:
+    def __init__(self: DocConfig) -> None:
         """Initialise the class."""
         self.config = {
             "colour_dict": {},
@@ -1872,19 +1904,19 @@ class DocConfig:
         }
         self.sys_args = None
 
-    def __getitem__(self, key):
+    def __getitem__(self: DocConfig, key: str) -> Any:  # noqa: ANN401
         """Get an item from the config."""
         return self.config[key]
 
-    def __contains__(self, key) -> bool:
+    def __contains__(self: DocConfig, key: str) -> bool:
         """Check if a key is in the config."""
         return key in self.config
 
-    def set_sys_args(self, argv):
+    def set_sys_args(self: DocConfig, argv: list[str]) -> None:
         """Set the system arguments."""
         self.sys_args = argv
 
-    def _get_config(self):
+    def _get_config(self: DocConfig) -> None:
         """Get config info from config.json and/or request args."""
         sys_args = self.sys_args
         if len(sys_args) == 2 and sys_args[1] != "None":  # noqa: PLR2004
@@ -1926,7 +1958,7 @@ class DocConfig:
         self.config = config
         self.config["auto_load"] = get_from_config(["auto_load"], 0) == 1
 
-    def setup_doc(self: DocConfig, base_doc: Document):
+    def setup_doc(self: DocConfig, base_doc: Document) -> tuple[Row, Tabs]:
         """Set up the document."""
         self._get_config()
 
@@ -1948,13 +1980,13 @@ class DocConfig:
         UI["vstate"].init = False
 
         # set up main window
-
         slide_wins.children = windows
         control_tabs.tabs = controls
 
         control_tabs.on_change("active", control_tabs_cb)
         control_tabs.on_change("tabs", control_tabs_remove_cb)
 
+        # add the window and controls etc to the document
         base_doc.template_variables["demo_name"] = doc_config["demo_name"]
         base_doc.add_periodic_callback(update, 220)
         base_doc.add_root(slide_wins)
@@ -1966,6 +1998,7 @@ class DocConfig:
 
 doc_config = DocConfig()
 if do_doc:
+    # set up the document
     doc_config.set_sys_args(sys.argv)
     doc = curdoc()
     slide_wins, control_tabs = doc_config.setup_doc(doc)
