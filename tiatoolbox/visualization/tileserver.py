@@ -431,7 +431,12 @@ class TileServer(Flask):
         return "done"
 
     def update_renderer(self: TileServer, prop: str) -> str:
-        """Update a property in the renderer."""
+        """Update a property in the renderer.
+
+        Args:
+            prop (str): The property to update.
+
+        """
         session_id = self._get_session_id()
         val = request.form["val"]
         val = json.loads(val)
@@ -449,6 +454,9 @@ class TileServer(Flask):
 
         Adds to an existing store if one is already present,
         otherwise creates a new store.
+
+        Returns:
+            str: A jsonified list of types.
 
         """
         session_id = self._get_session_id()
@@ -486,6 +494,9 @@ class TileServer(Flask):
         If the path points to some annotations, the current overlay
         is replaced with the new one. If the path points to an image,
         it is added as a new layer.
+
+        Returns:
+            str: A jsonified list of types.
 
         """
         session_id = self._get_session_id()
@@ -538,7 +549,15 @@ class TileServer(Flask):
         return json.dumps(types)
 
     def get_properties(self: TileServer, ann_type: str) -> str:
-        """Get all the properties of the annotations in the store."""
+        """Get all the properties of the annotations in the store.
+
+        Args:
+            ann_type (str): The type of annotations to get the properties for.
+
+        Returns:
+            str: A jsonified list of the properties.
+
+        """
         session_id = self._get_session_id()
         where = None
         if ann_type != "all":
@@ -554,7 +573,15 @@ class TileServer(Flask):
         return json.dumps(list(set(props)))
 
     def get_property_values(self: TileServer, prop: str, ann_type: str) -> str:
-        """Get all the values of a property in the store."""
+        """Get all the values of a property in the store.
+
+        Args:
+            prop (str): The property to get the values of.
+            ann_type (str): The type of annotations to get the values for.
+
+        Returns:
+            str: A jsonified list of the values of the property.
+        """
         session_id = self._get_session_id()
         where = None
         if ann_type != "all":
@@ -641,7 +668,17 @@ class TileServer(Flask):
         return jsonify(mapper)
 
     def tap_query(self: TileServer, x: float, y: float) -> Response:
-        """Query annotations at a point."""
+        """Query for annotations at a point.
+
+        Args:
+            x (float): The x coordinate.
+            y (float): The y coordinate.
+
+        Returns:
+            Response: The jsonified dict of the properties of the
+            smallest annotation returned from the query at the point.
+
+        """
         session_id = self._get_session_id()
         anns = self.get_ann_layer(session_id).store.query(
             Point(x, y),
