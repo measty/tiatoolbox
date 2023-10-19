@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import json
+import os
+import pickle
 import sys
 import tempfile
 import urllib
@@ -41,6 +43,7 @@ from bokeh.models import (
     LinearColorMapper,
     Model,
     MultiChoice,
+    NumericInput,
     PointDrawTool,
     RadioButtonGroup,
     RangeSlider,
@@ -301,14 +304,18 @@ def get_mapper_for_prop(
             # update passed sliders min and max values
             max_val = max(prop_vals)
             min_val = min(prop_vals)
+            UI["vstate"].max_val = max_val
+            UI["vstate"].min_val = min_val
             slider.start = min_val
             slider.end = max_val
-            if slider.value == (min_val, max_val):
-                # need to explicitly trigger the callback
-                range_slider_cb(None, None, (min_val, max_val))
-            else:
-                # set the new val and the cb will trigger on change
-                slider.value = (min_val, max_val)
+            if len(UI["range_checkbox"].active) == 0:
+                # if not using fixed range, adjust to new vals
+                if slider.value == (min_val, max_val):
+                    # need to explicitly trigger the callback
+                    range_slider_cb(None, None, (min_val, max_val))
+                else:
+                    # set the new val and the cb will trigger on change
+                    slider.value = (min_val, max_val)
     else:
         cmap = make_color_dict(prop_vals)
     return cmap
@@ -637,6 +644,8 @@ class ViewerState:
         self.to_update = set()
         self.graph = []
         self.res = 2
+        self.max_val = 1
+        self.min_val = 0
 
     def __setattr__(
         self: ViewerState,
@@ -708,6 +717,7 @@ def populate_layer_list(slide_name: str, overlay_path: Path) -> None:
         "*.jpg",
         "*.json",
         "*.tiff",
+        "*.pkl",
     ]:
         file_list.extend(list(overlay_path.glob(str(Path("*") / ext))))
         file_list.extend(list(overlay_path.glob(ext)))
@@ -886,11 +896,44 @@ def range_slider_cb(attr, old, new):  # noqa: ARG001
     UI["color_bar"].color_mapper.high = new[1]
 
 
+def range_checkbox_cb(attr: str, old: bool, new: bool) -> None:  # noqa: ARG001
+    """Callback to toggle if range sliders endpoints are fixed,
+    or adaptively set to the min/max of the data.
+    """
+    if len(new) == 1:
+        # its on, fix range to user specified values
+        UI["range_slider"].start = UI["range_min"].value
+        UI["range_slider"].end = UI["range_max"].value
+        UI["range_slider"].value = (UI["range_min"].value, UI["range_max"].value)
+    else:
+        # its off, set range to min/max of data
+        UI["range_slider"].start = UI["vstate"].min_val
+        UI["range_slider"].end = UI["vstate"].max_val
+        UI["range_slider"].value = (UI["vstate"].min_val, UI["vstate"].max_val)
+
+
+def range_min_cb(attr: str, old: float, new: float) -> None:  # noqa: ARG001
+    """Callback to change the minimum of the range slider."""
+    UI["range_slider"].start = new
+    if UI["range_slider"].value[0] < new:
+        UI["range_slider"].value = (new, UI["range_slider"].value[1])
+
+
+def range_max_cb(attr: str, old: float, new: float) -> None:  # noqa: ARG001
+    """Callback to change the maximum of the range slider."""
+    UI["range_slider"].end = new
+    if UI["range_slider"].value[1] > new:
+        UI["range_slider"].value = (UI["range_slider"].value[0], new)
+
+
 def handle_graph_layer(attr: MenuItemClick) -> None:  # skipcq: PY-R1000
     """Handle adding a graph layer."""
     do_feats = False
     with Path(attr.item).open("rb") as f:
-        graph_dict = json.load(f)
+        if Path(attr.item).suffix == ".json":
+            graph_dict = json.load(f)
+        else:
+            graph_dict = pickle.load(f)
     # convert the values to numpy arrays
     for k, v in graph_dict.items():
         if isinstance(v, list):
@@ -1002,7 +1045,8 @@ def update_ui_on_new_annotations(ann_types: list[str]) -> None:
 
 def layer_drop_cb(attr: MenuItemClick) -> None:
     """Setup the newly chosen overlay."""
-    if Path(attr.item).suffix == ".json":
+    # eventually depreciate pkl in  favour of json
+    if Path(attr.item).suffix in [".json", ".pkl"]:
         # its a graph
         handle_graph_layer(attr)
         return
@@ -1494,6 +1538,25 @@ def gather_ui_elements(  # noqa: PLR0915
         sizing_mode="stretch_width",
         name=f"save_button{win_num}",
     )
+    range_checkbox = CheckboxButtonGroup(
+        labels=["Fixed Range:"],
+        active=[],
+        max_width=100,
+        sizing_mode="stretch_width",
+        name=f"range_checkbox{win_num}",
+    )
+    range_min = NumericInput(
+        value=0,
+        max_width=60,
+        sizing_mode="stretch_width",
+        name=f"range_min{win_num}",
+    )
+    range_max = NumericInput(
+        value=1,
+        max_width=60,
+        sizing_mode="stretch_width",
+        name=f"range_max{win_num}",
+    )
     range_slider = RangeSlider(
         start=0,
         end=1,
@@ -1526,6 +1589,9 @@ def gather_ui_elements(  # noqa: PLR0915
     cprop_input.on_change("value", cprop_input_cb)
     type_cmap_select.on_change("value", type_cmap_cb)
     range_slider.on_change("value", range_slider_cb)
+    range_checkbox.on_change("active", range_checkbox_cb)
+    range_min.on_change("value", range_min_cb)
+    range_max.on_change("value", range_max_cb)
 
     # create some layouts
     type_column = column(children=layer_boxes, name=f"type_column{win_num}")
@@ -1548,6 +1614,11 @@ def gather_ui_elements(  # noqa: PLR0915
     type_select_row = row(
         children=[type_column, color_column],
         sizing_mode="stretch_width",
+    )
+    range_row = row(
+        [range_checkbox, range_min, range_max],
+        sizing_mode="stretch_width",
+        name=f"range_row{win_num}",
     )
 
     # make element dictionaries
@@ -1603,6 +1674,7 @@ def gather_ui_elements(  # noqa: PLR0915
                 "pt_size_spinner",
                 "edge_size_spinner",
                 "res_switch",
+                "range_row",
                 "range_slider",
             ],
             [
@@ -1610,6 +1682,7 @@ def gather_ui_elements(  # noqa: PLR0915
                 pt_size_spinner,
                 edge_size_spinner,
                 res_switch,
+                range_row,
                 range_slider,
             ],
         ),
@@ -1636,6 +1709,9 @@ def gather_ui_elements(  # noqa: PLR0915
         "overlay_alpha": overlay_alpha,
         "cmap_select": cmap_select,
         "slide_alpha": slide_alpha,
+        "range_min": range_min,
+        "range_max": range_max,
+        "range_checkbox": range_checkbox,
     }
 
     return ui_layout, extra_options, elements_dict
@@ -1870,9 +1946,14 @@ rand_id = token.generate_session_id()
 first_z = [1]
 
 # set hosts and ports
-host = "127.0.0.1"
-host2 = "127.0.0.1"
-port = "5000"
+if is_deployed:
+    host = os.environ.get("HOST")
+    host2 = os.environ.get("HOST2")
+    port = os.environ.get("PORT")
+else:
+    host = "127.0.0.1"
+    host2 = "127.0.0.1"
+    port = "5000"
 
 
 def update() -> None:
