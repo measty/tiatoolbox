@@ -1540,7 +1540,7 @@ def gather_ui_elements(  # noqa: PLR0915
     )
     range_checkbox = CheckboxButtonGroup(
         labels=["Fixed Range:"],
-        active=[],
+        active=[0],
         max_width=100,
         sizing_mode="stretch_width",
         name=f"range_checkbox{win_num}",
