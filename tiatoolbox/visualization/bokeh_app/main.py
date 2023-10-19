@@ -1941,7 +1941,7 @@ if curdoc().session_context is not None:
     req_args = curdoc().session_context.request.arguments
     do_doc = True
 
-is_deployed = False
+is_deployed = True
 rand_id = token.generate_session_id()
 first_z = [1]
 
