@@ -7,6 +7,8 @@ include requirements/requirements.txt
 include make.bat
 include Makefile
 include conf.py
+include tiatoolbox/visualization/bokeh_app/templates/index.html
+include tiatoolbox/visualization/bokeh_app/login.html
 
 recursive-include tests *
 recursive-include docs
