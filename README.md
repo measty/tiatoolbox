@@ -71,7 +71,7 @@ geojson:
 ```
 
 If your data is not in one of these formats, it is usually fairly straightforward to build an annotation store out of your model outputs.\
-A small script of 6-10 lines is usually all that is required. There are example code snippets illustrating how to create an annotation store in a variety of common scenarios in: [example_snippets](https://github.com/measty/tiatoolbox/blob/feature-add-gui/tiatoolbox/visualization/bokeh_app/ann_store_examples.py)
+A small script of 6-10 lines is usually all that is required. There are example code snippets illustrating how to create an annotation store in a variety of common scenarios in: [documentation](https://tia-toolbox.readthedocs.io/en/add-bokeh-app/visualization.html)
 
 Most use-cases should be covered in there, or something close enough that a few tweaks to a snippet will do what is needed.
 
