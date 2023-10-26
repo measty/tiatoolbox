@@ -10,7 +10,7 @@ import urllib
 from cmath import pi
 from pathlib import Path, PureWindowsPath
 from shutil import rmtree
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any, Callable, Optional
 
 import numpy as np
 import requests
@@ -40,6 +40,7 @@ from bokeh.models import (
     Glyph,
     HoverTool,
     HTMLTemplateFormatter,
+    InlineStyleSheet,
     LinearColorMapper,
     Model,
     MultiChoice,
@@ -58,7 +59,9 @@ from bokeh.models import (
     TapTool,
     TextInput,
     Toggle,
+    Tooltip,
 )
+from bokeh.models.dom import HTML
 from bokeh.models.tiles import WMTSTileSource
 from bokeh.plotting import figure
 from bokeh.util import token
@@ -84,11 +87,28 @@ MAX_CAT = 10
 FILLED = 0
 MICRON_FORMATTER = 1
 GRIDLINES = 2
-MAX_FEATS = 10
+MAX_FEATS = 15
 N_PERMANENT_RENDERERS = 5
 NO_UPDATE = 0
 PENDING_UPDATE = 1
 DO_UPDATE = 2
+
+
+# stylesheets to format some things better
+
+# stylesheet for the help tooltips
+help_ss = InlineStyleSheet(
+    css="""
+        :host(.help_tt) {
+            width:200px;
+            white-space: wrap;
+            padding-top: 0px;
+            padding-bottom: 0px;
+            margin-top: 0px;
+            margin-bottom: 0px;
+        }
+        """,
+)
 
 
 # Define helper functions/classes
@@ -284,7 +304,7 @@ def set_alpha_glyph(glyph: Glyph, alpha: float) -> None:
 def get_mapper_for_prop(
     prop: str,
     mapper_type: str = "auto",
-    slider=None,
+    slider: Optional[Slider] = None,
 ) -> str | dict[str, str]:
     """Helper to get appropriate mapper for a property."""
     # find out the unique values of the chosen property
@@ -883,7 +903,7 @@ def slide_select_cb(attr: str, old: str, new: str) -> None:  # noqa: ARG001
             layer_drop_cb(dummy_attr)
 
 
-def range_slider_cb(attr, old, new):  # noqa: ARG001
+def range_slider_cb(attr: str, old: str, new: str) -> None:  # noqa: ARG001
     """Callback to change the range of the color mapper."""
     if UI["vstate"].cprop != "type" and UI["cmap_select"].value != "dict":
         UI["s"].put(
@@ -896,9 +916,12 @@ def range_slider_cb(attr, old, new):  # noqa: ARG001
     UI["color_bar"].color_mapper.high = new[1]
 
 
-def range_checkbox_cb(attr: str, old: bool, new: bool) -> None:  # noqa: ARG001
-    """Callback to toggle if range sliders endpoints are fixed,
-    or adaptively set to the min/max of the data.
+def range_checkbox_cb(attr: str, old: list, new: list) -> None:  # noqa: ARG001
+    """Callback to toggle range slider endpoints behaviour.
+
+    Toggles if range slider endpoints are fixed or adaptively set to
+      the min/max of the data.
+
     """
     if len(new) == 1:
         # its on, fix range to user specified values
@@ -1149,9 +1172,9 @@ def bind_cb_obj_tog(cb_obj: Model, cb: Callable[[Model, Any], None]) -> Callable
     return wrapped
 
 
-def model_drop_cb(attr: MenuItemClick) -> None:
+def model_drop_cb(attr: str, old: str, new: str) -> None:  # noqa: ARG001
     """Callback to handle model selection."""
-    UI["vstate"].current_model = attr.item
+    UI["vstate"].current_model = new
 
 
 def to_model_cb(attr: ButtonClick) -> None:  # noqa: ARG001
@@ -1207,7 +1230,8 @@ def type_cmap_cb(attr: str, old: list[str], new: list[str]) -> None:  # noqa: AR
             if new[1] in UI["node_source"].data:
                 node_cm = colormaps["viridis"]
                 # UI["node_source"].data["node_color_"] = [
-                #     rgb2hex(node_cm((to_num(v) - minv) / (maxv - minv))) for v in UI["node_source"].data[new[1]]
+                #     rgb2hex(node_cm((to_num(v) - minv) / (maxv - minv)))
+                # for v in UI["node_source"].data[new[1]]]
                 UI["node_source"].data["node_color_"] = [
                     rgb2hex(node_cm(to_num(v))) for v in UI["node_source"].data[new[1]]
                 ]
@@ -1418,11 +1442,27 @@ def gather_ui_elements(  # noqa: PLR0915
         sizing_mode="stretch_width",
         name=f"overlay_toggle{win_num}",
     )
+    filter_tooltip = Tooltip(
+        content=HTML(
+            """Enter a filter string that is a valid string for AnnotationStore
+              'where' argument. It will be used to filter the annotations displayed.
+                <br>E.g: props['prob']>0.5
+            """,
+        ),
+        position="right",
+        css_classes=["help_tt"],
+        stylesheets=[help_ss],
+    )
     filter_input = TextInput(
         value="None",
         title="Filter:",
         sizing_mode="stretch_width",
         name=f"filter{win_num}",
+        description=filter_tooltip,
+    )
+    cprop_tooltip = Tooltip(
+        content="Choose a property to color annotations by",
+        position="right",
     )
     cprop_input = MultiChoice(
         title="Colour by:",
@@ -1432,6 +1472,16 @@ def gather_ui_elements(  # noqa: PLR0915
         search_option_limit=5000,
         sizing_mode="stretch_width",
         name=f"cprop{win_num}",
+        description=cprop_tooltip,
+    )
+    slide_tt = Tooltip(
+        content=HTML(
+            """Select a slide. Overlays whose filenames contain the slide stem
+            will be available below.""",
+        ),
+        position="right",
+        css_classes=["help_tt"],
+        stylesheets=[help_ss],
     )
     slide_select = MultiChoice(
         title="Select Slide:",
@@ -1441,6 +1491,7 @@ def gather_ui_elements(  # noqa: PLR0915
         search_option_limit=5000,
         sizing_mode="stretch_width",
         name=f"slide_select{win_num}",
+        description=slide_tt,
     )
     cmmenu = [
         ("jet", "jet"),
@@ -1448,6 +1499,15 @@ def gather_ui_elements(  # noqa: PLR0915
         ("viridis", "viridis"),
         ("dict", "dict"),
     ]
+    cmap_tooltip = Tooltip(
+        content=HTML(
+            """Choose a colourmap. If the property being coloured by is categorical,
+            dict should be used.""",
+        ),
+        position="right",
+        css_classes=["help_tt"],
+        stylesheets=[help_ss],
+    )
     cmap_select = Select(
         title="Cmap",
         options=cmmenu,
@@ -1456,6 +1516,7 @@ def gather_ui_elements(  # noqa: PLR0915
         height=45,
         sizing_mode="stretch_width",
         name=f"cmap{win_num}",
+        description=cmap_tooltip,
     )
     blur_spinner = Spinner(
         title="Blur:",
@@ -1468,6 +1529,15 @@ def gather_ui_elements(  # noqa: PLR0915
         sizing_mode="stretch_width",
         name=f"blur{win_num}",
     )
+    scale_tt = Tooltip(
+        content=HTML(
+            """Controls scale at which small annotations are no longer shown. Smaller
+            values -> small objects will only appear when zoomed in.""",
+        ),
+        position="right",
+        css_classes=["help_tt"],
+        stylesheets=[help_ss],
+    )
     scale_spinner = Spinner(
         title="max scale:",
         low=0,
@@ -1478,23 +1548,51 @@ def gather_ui_elements(  # noqa: PLR0915
         height=50,
         sizing_mode="stretch_width",
         name=f"scale{win_num}",
+        description=scale_tt,
     )
     to_model_button = Button(
-        label="Go",
+        label="Run",
         button_type="success",
-        width=60,
-        max_width=60,
+        width=80,
+        max_width=90,
+        height=35,
         sizing_mode="stretch_width",
         name=f"to_model{win_num}",
     )
-    model_drop = Dropdown(
-        label="Choose Model",
-        button_type="warning",
-        menu=["hovernet", "nuclick"],
+    model_tt = Tooltip(
+        content=HTML("""Must select a region before running model"""),
+        position="right",
+        css_classes=["help_tt"],
+        stylesheets=[help_ss],
+    )
+    model_drop = Select(
+        title="choose model:",
+        options=["hovernet", "nuclick"],
+        height=25,
         width=120,
         max_width=120,
         sizing_mode="stretch_width",
         name=f"model_drop{win_num}",
+        description=model_tt,
+    )
+    save_button = Button(
+        label="Save",
+        button_type="success",
+        max_width=90,
+        width=80,
+        height=35,
+        sizing_mode="stretch_width",
+        name=f"save_button{win_num}",
+    )
+    type_cprop_tt = Tooltip(
+        content=HTML(
+            """Select a type of object, and a property to colour by. Objects of
+            selected type will be coloured by the selected property.
+            This will override the global 'colour by' property for that type.""",
+        ),
+        position="right",
+        css_classes=["help_tt"],
+        stylesheets=[help_ss],
     )
     type_cmap_select = MultiChoice(
         title="Colour type by property:",
@@ -1503,6 +1601,7 @@ def gather_ui_elements(  # noqa: PLR0915
         search_option_limit=5000,
         sizing_mode="stretch_width",
         name=f"type_cmap{win_num}",
+        description=type_cprop_tt,
     )
     layer_boxes = [
         Toggle(
@@ -1530,13 +1629,6 @@ def gather_ui_elements(  # noqa: PLR0915
         active=[0],
         sizing_mode="stretch_width",
         name=f"opt_buttons{win_num}",
-    )
-    save_button = Button(
-        label="Save",
-        button_type="success",
-        max_width=90,
-        sizing_mode="stretch_width",
-        name=f"save_button{win_num}",
     )
     range_checkbox = CheckboxButtonGroup(
         labels=["Fixed Range:"],
@@ -1580,7 +1672,7 @@ def gather_ui_elements(  # noqa: PLR0915
     blur_spinner.on_change("value", blur_spinner_cb)
     scale_spinner.on_change("value", scale_spinner_cb)
     to_model_button.on_click(to_model_cb)
-    model_drop.on_click(model_drop_cb)
+    model_drop.on_change("value", model_drop_cb)
     layer_drop.on_click(layer_drop_cb)
     opt_buttons.on_change("active", opt_buttons_cb)
     slide_toggle.on_click(slide_toggle_cb)
@@ -1608,7 +1700,7 @@ def gather_ui_elements(  # noqa: PLR0915
         sizing_mode="stretch_width",
     )
     model_row = row(
-        [to_model_button, model_drop, save_button],
+        [to_model_button, save_button, model_drop],
         sizing_mode="stretch_width",
     )
     type_select_row = row(
@@ -1934,7 +2026,7 @@ popup_table = DataTable(
 
 color_cycler = ColorCycler()
 tg = TileGroup()
-tool_str = "pan,wheel_zoom,reset,save"
+tool_str = "pan,wheel_zoom,reset,save,fullscreen"
 req_args = []
 do_doc = False
 if curdoc().session_context is not None:
