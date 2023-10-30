@@ -700,11 +700,16 @@ def test_cmap_select(doc: Document) -> None:
         assert np.all(
             np.array(resp.json()[str(key)]) == np.array(main.UI["vstate"].mapper[key]),
         )
-
+    # set to jet
+    cmap_select.value = "jet"
+    resp = main.UI["s"].get(f"http://{main.host2}:5000/tileserver/cmap")
+    assert resp.json() == "jet"
+    # set to dict
     main.UI["cprop_input"].value = ["prob"]
     cmap_select.value = "dict"
     resp = main.UI["s"].get(f"http://{main.host2}:5000/tileserver/cmap")
     assert len(resp.json()) > 10
+    assert isinstance(resp.json(), dict)
 
 
 def test_option_buttons() -> None:
