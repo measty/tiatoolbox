@@ -13,6 +13,7 @@ from shutil import rmtree
 from typing import TYPE_CHECKING, Any, Callable, Optional
 
 import numpy as np
+import pandas as pd
 import requests
 import torch
 from matplotlib import colormaps
@@ -135,9 +136,19 @@ class UIWrapper:
 
 def format_info(info: dict[str, Any]) -> str:
     """Format the slide info for display."""
-    info_str = f"<b>Slide Name: {info.pop('file_path').name}</b><br>"
+    slide_name = info.pop("file_path").name
+    info_str = f"<b>Slide Name: {slide_name}</b><br>"
     for k, v in info.items():
         info_str += f"{k}: {v}<br>"
+    # if there is metadata, add it
+    if metadata is not None:
+        try:
+            row = metadata.loc[slide_name]
+            info_str += "<br><b>Metadata:</b><br>"
+            for k, v in row.items():
+                info_str += f"{k}: {v}<br>"
+        except KeyError:
+            info_str += "<br><b>No metadata found.</b><br>"
     return info_str
 
 
@@ -1913,7 +1924,13 @@ def make_window(vstate: ViewerState) -> dict:  # noqa: PLR0915
     # add graph stuff
     node_source = ColumnDataSource({"x_": [], "y_": [], "node_color_": []})
     edge_source = ColumnDataSource({"x0_": [], "y0_": [], "x1_": [], "y1_": []})
-    vstate.graph_node = Circle(x="x_", y="y_", fill_color="node_color_", size=5)
+    vstate.graph_node = Circle(
+        x="x_",
+        y="y_",
+        fill_color="node_color_",
+        size=5,
+        line_width=0,
+    )
     vstate.graph_edge = Segment(x0="x0_", y0="y0_", x1="x1_", y1="y1_")
     p.add_glyph(node_source, vstate.graph_node)
     node_source.selected.on_change("indices", node_select_cb)
@@ -2153,7 +2170,7 @@ class DocConfig:
         """Set the system arguments."""
         self.sys_args = argv
 
-    def _get_config(self: DocConfig) -> None:
+    def get_config(self: DocConfig) -> None:
         """Get config info from config.json and/or request args."""
         sys_args = self.sys_args
         if len(sys_args) == 2 and sys_args[1] != "None":  # noqa: PLR2004
@@ -2205,8 +2222,6 @@ class DocConfig:
             the controls tab.
 
         """
-        self._get_config()
-
         # set initial slide to first one in base folder
         slide_list = []
         for ext in ["*.svs", "*ndpi", "*.tiff", "*.mrxs", "*.png", "*.jpg"]:
@@ -2246,5 +2261,21 @@ doc_config = DocConfig()
 if do_doc:
     # set up the document
     doc_config.set_sys_args(sys.argv)
+    doc_config.get_config()
+    # see if there's a metadata .csv file in slides folder
+    metadata_file = list(doc_config["slide_folder"].glob("*.csv"))
+    if len(metadata_file) > 0:
+        metadata_file = metadata_file[0]
+        with metadata_file.open() as f:
+            metadata = pd.read_csv(f)
+            # must have an 'Image File' column to associate with slides
+            if "Image File" in metadata.columns:
+                metadata = metadata.set_index("Image File")
+            else:
+                # can't use it so set to None
+                metadata = None
+    else:
+        # no metadata file
+        metadata = None
     doc = curdoc()
     slide_wins, control_tabs = doc_config.setup_doc(doc)
