@@ -94,6 +94,7 @@ NO_UPDATE = 0
 PENDING_UPDATE = 1
 DO_UPDATE = 2
 
+default_cm = "viridis"  # any valid matplotlib colormap string
 
 # stylesheets to format some things better
 
@@ -329,7 +330,7 @@ def get_mapper_for_prop(
     ):
         # use a continuous mapper
         cmap = (
-            "viridis" if UI["cmap_select"].value == "dict" else UI["cmap_select"].value
+            default_cm if UI["cmap_select"].value == "dict" else UI["cmap_select"].value
         )
         if slider is not None:
             # update passed sliders min and max values
@@ -972,7 +973,7 @@ def handle_graph_layer(attr: MenuItemClick) -> None:  # skipcq: PY-R1000
     for k, v in graph_dict.items():
         if isinstance(v, list):
             graph_dict[k] = np.array(v)
-    node_cm = colormaps["viridis"]
+    node_cm = colormaps[default_cm]
     num_nodes = graph_dict["coordinates"].shape[0]
     if "score" in graph_dict:
         UI["node_source"].data = {
@@ -1207,7 +1208,7 @@ def type_cmap_cb(attr: str, old: list[str], new: list[str]) -> None:  # noqa: AR
             data={
                 "type_id": json.dumps("None"),
                 "prop": "None",
-                "cmap": json.dumps("viridis"),
+                "cmap": json.dumps(default_cm),
             },
         )
         UI["vstate"].update_state = 1
@@ -1239,7 +1240,7 @@ def type_cmap_cb(attr: str, old: list[str], new: list[str]) -> None:  # noqa: AR
         if new[0] == "graph_overlay":
             # adjust the node color in source if prop exists
             if new[1] in UI["node_source"].data:
-                node_cm = colormaps["viridis"]
+                node_cm = colormaps[default_cm]
                 # UI["node_source"].data["node_color_"] = [
                 #     rgb2hex(node_cm((to_num(v) - minv) / (maxv - minv)))
                 # for v in UI["node_source"].data[new[1]]]
@@ -1258,7 +1259,7 @@ def type_cmap_cb(attr: str, old: list[str], new: list[str]) -> None:  # noqa: AR
         )
 
         UI["color_bar"].color_mapper.palette = make_color_seq_from_cmap(
-            colormaps["viridis"],
+            colormaps[default_cm],
         )
         UI["color_bar"].visible = True
         UI["vstate"].update_state = 1
@@ -1947,7 +1948,7 @@ def make_window(vstate: ViewerState) -> dict:  # noqa: PLR0915
 
     color_bar = ColorBar(
         color_mapper=LinearColorMapper(
-            make_color_seq_from_cmap(colormaps["viridis"]),
+            make_color_seq_from_cmap(colormaps[default_cm]),
         ),
         label_standoff=12,
     )
