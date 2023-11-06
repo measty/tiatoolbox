@@ -7,6 +7,7 @@ import json
 import os
 import secrets
 import sys
+import tempfile
 import urllib
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -478,6 +479,9 @@ class TileServer(Flask):
             file_path,
             np.array(model_mpp) / np.array(self.slide_mpps[session_id]),
         )
+        tmp_path = Path(tempfile.gettempdir()) / "temp.db"
+        sq.dump(tmp_path)
+        sq = SQLiteStore(tmp_path)
         self.pyramids[session_id]["overlay"] = AnnotationTileGenerator(
             self.layers[session_id]["slide"].info,
             sq,
@@ -687,7 +691,7 @@ class TileServer(Flask):
             return json.dumps({})
         return jsonify(list(anns.values())[-1].properties)
 
-    def prop_range(self):
+    def prop_range(self: TileServer) -> str:
         """Set the range which the color mapper will map to.
 
         It will create an appropriate function to map the range to the
