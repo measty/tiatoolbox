@@ -288,11 +288,12 @@ class TileServer(Flask):
         """
         try:
             pyramid = self.pyramids[session_id][layer]
-            interpolation = (
-                "nearest"
-                if isinstance(self.layers[session_id][layer], VirtualWSIReader)
-                else "optimise"
-            )
+            if isinstance(self.layers[session_id][layer], VirtualWSIReader):
+                interpolation = "nearest"
+                transparent_value = 0
+            else:
+                interpolation = "optimise"
+                transparent_value = None
             if isinstance(pyramid, AnnotationTileGenerator):
                 interpolation = None
         except KeyError:
@@ -304,6 +305,7 @@ class TileServer(Flask):
                 y=y,
                 res=res,
                 interpolation=interpolation,
+                transparent_value=transparent_value,
             )
         except IndexError:
             return Response("Tile not found", status=404)
