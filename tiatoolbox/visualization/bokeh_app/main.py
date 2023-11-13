@@ -1,6 +1,8 @@
 """Main module for the tiatoolbox visualization bokeh app."""
 from __future__ import annotations
 
+import base64
+import io
 import json
 import os
 import pickle
@@ -12,11 +14,13 @@ from pathlib import Path, PureWindowsPath
 from shutil import rmtree
 from typing import TYPE_CHECKING, Any, Callable, Optional
 
+import cv2
 import numpy as np
 import pandas as pd
 import requests
 import torch
 from matplotlib import colormaps
+from openai import OpenAI
 from PIL import Image
 from requests.adapters import HTTPAdapter, Retry
 
@@ -37,11 +41,13 @@ from bokeh.models import (
     DataTable,
     Div,
     Dropdown,
+    FreehandDrawTool,
     FuncTickFormatter,
     Glyph,
     HoverTool,
     HTMLTemplateFormatter,
     InlineStyleSheet,
+    LassoSelectTool,
     LinearColorMapper,
     Model,
     MultiChoice,
@@ -58,6 +64,7 @@ from bokeh.models import (
     TabPanel,
     Tabs,
     TapTool,
+    TextAreaInput,
     TextInput,
     Toggle,
     Tooltip,
@@ -95,6 +102,7 @@ PENDING_UPDATE = 1
 DO_UPDATE = 2
 
 default_cm = "viridis"  # any valid matplotlib colormap string
+gpt_images = []
 
 # stylesheets to format some things better
 
@@ -133,6 +141,14 @@ class UIWrapper:
     def __getitem__(self: UIWrapper, key: str) -> Any:  # noqa: ANN401
         """Gets ui element for the active window."""
         return win_dicts[self.active][key]
+
+
+def encode_image(tile_image: Image.Image) -> str:
+    """Encode an image as a base64 string."""
+    image_io = io.BytesIO()
+    tile_image.save(image_io, format="webp")
+    image_io.seek(0)
+    return base64.b64encode(image_io.read()).decode("utf-8")
 
 
 def format_info(info: dict[str, Any]) -> str:
@@ -1194,6 +1210,8 @@ def to_model_cb(attr: ButtonClick) -> None:  # noqa: ARG001
     if UI["vstate"].current_model == "hovernet":
         segment_on_box()
     # add other models here
+    elif UI["vstate"].current_model == "gpt-vision":
+        gpt_inference()
     else:  # pragma: no cover
         logger.warning("unknown model")
 
@@ -1291,6 +1309,93 @@ def tap_event_cb(event: DoubleTap) -> None:
     }
 
 
+def gpt_inference() -> None:
+    """Callback to send selected region of the slide to gpt-vision.
+
+    Will use openai API to send image ROI to gpt asssistant instucted to provide
+    accurate descriptions of provided histology images, and will display the
+    generated text in a popup window.
+
+    """
+    if len(UI["box_source"].data["x"]) > 0:
+        x = round(
+            UI["box_source"].data["x"][0] - 0.5 * UI["box_source"].data["width"][0],
+        )
+        y = -round(
+            UI["box_source"].data["y"][0] + 0.5 * UI["box_source"].data["height"][0],
+        )
+        width = round(UI["box_source"].data["width"][0])
+        height = round(UI["box_source"].data["height"][0])
+        prompt = "Provide a concise assesment of this image. Include your best judgement on what sort of tissue the sample is from, comment on noteworthy histological features, cells, and structures, and whether the tissue is normal or suspicious of disease."
+    else:
+        # find the box that contains all the lines in ml_source
+        xs = UI["ml_source"].data["xs"]
+        ys = UI["ml_source"].data["ys"]
+        x = round(min([min(x) for x in xs]))
+        y = -round(max([max(y) for y in ys]))
+        width = round(max([max(x) for x in xs]) - x)
+        height = -round(min([min(y) for y in ys]) + y)
+        # pad the box a bit
+        x -= 100
+        y -= 100
+        width += 200
+        height += 200
+        prompt = "Provide a concise assesment of this image. Include your best judgement on what sort of tissue the sample is from, comment on noteworthy histological features (paying particular attention to the regions indicated by black annotations), and whether the tissue is normal or suspicious of disease."
+
+    print(
+        f"preparing region x: {x}, y: {y}, width: {width}, height: {height} to gpt-vision.",
+    )
+
+    if max(width, height) > 1500:
+        # resize the region to 1500px max
+        scale = 1500 / max(width, height)
+        read_res = UI["vstate"].wsi.info.mpp / scale
+
+    region = UI["vstate"].wsi.read_bounds(
+        (x, y, x + width, y + height),
+        read_res,
+        "mpp",
+    )
+    xs = UI["ml_source"].data["xs"]
+    ys = UI["ml_source"].data["ys"]
+    # use opencv to draw the polylines on the region
+    for i in range(len(xs)):
+        cv2.polylines(
+            region,
+            np.array(
+                [np.array([xs[i], -np.array(ys[i])]).T - np.array([x, y])],
+                dtype=np.int32,
+            ),
+            False,
+            (0, 0, 0),
+            3,
+        )
+    # import pdb; pdb.set_trace()
+    # convert image to base64
+    img_array = np.array(Image.fromarray(region).convert("RGBA"), dtype=np.uint8)
+    # import pdb; pdb.set_trace()
+    img_array = img_array.view(dtype=np.uint32).reshape(img_array.shape[:-1])
+    img_array = np.flipud(
+        img_array,
+    )  # Flip the image array vertically because Bokeh origin is at the bottom left
+    # img_array[:, :, [0, 1, 2, 3]] = img_array[:, :, [2, 1, 0, 3]]  # Swap bytes from BGRA to RGBA
+
+    # Display the image in the Bokeh figure
+    print(f"image size to be sent is: {img_array.shape}")
+    aspect_ratio = img_array.shape[1] / img_array.shape[0]
+    if aspect_ratio > 1:
+        im_fig.height = int(350 / aspect_ratio)
+        im_fig.y_range.end = 100 / aspect_ratio
+        im_fig.image_rgba(image=[img_array], x=0, y=0, dw=100, dh=100 / aspect_ratio)
+    else:
+        im_fig.width = int(350 * aspect_ratio)
+        im_fig.x_range.end = 100 * aspect_ratio
+        im_fig.image_rgba(image=[img_array], x=0, y=0, dw=100 / aspect_ratio, dh=100)
+    prompt_input.value = prompt
+    # dialog.visible = True
+    gpt_images.append(Image.fromarray(region))
+
+
 def segment_on_box() -> None:
     """Callback to run hovernet on a region of the slide.
 
@@ -1369,6 +1474,8 @@ slide_info = Div(
     height=200,
     sizing_mode="stretch_width",
 )
+# client for openai reqs
+client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
 
 
 def gather_ui_elements(  # noqa: PLR0915
@@ -1579,7 +1686,7 @@ def gather_ui_elements(  # noqa: PLR0915
     )
     model_drop = Select(
         title="choose model:",
-        options=["hovernet", "nuclick"],
+        options=["hovernet", "nuclick", "gpt-vision"],
         height=25,
         width=120,
         max_width=120,
@@ -1684,6 +1791,11 @@ def gather_ui_elements(  # noqa: PLR0915
     blur_spinner.on_change("value", blur_spinner_cb)
     scale_spinner.on_change("value", scale_spinner_cb)
     to_model_button.on_click(to_model_cb)
+    js_popup_code = """
+        var popupContent = document.querySelector('.dialog');
+        popupContent.classList.remove('hidden');
+    """
+    to_model_button.js_on_click(CustomJS(code=js_popup_code))
     model_drop.on_change("value", model_drop_cb)
     layer_drop.on_click(layer_drop_cb)
     opt_buttons.on_change("active", opt_buttons_cb)
@@ -1912,10 +2024,22 @@ def make_window(vstate: ViewerState) -> dict:  # noqa: PLR0915
     p.grid.grid_line_color = None
     box_source = ColumnDataSource({"x": [], "y": [], "width": [], "height": []})
     pt_source = ColumnDataSource({"x": [], "y": []})
-    r = p.rect("x", "y", "width", "height", source=box_source, fill_alpha=0)
+    ml_source = ColumnDataSource({"xs": [], "ys": []})
+    r = p.rect(
+        "x",
+        "y",
+        "width",
+        "height",
+        source=box_source,
+        fill_alpha=0,
+        line_width=3,
+    )
     c = p.circle("x", "y", source=pt_source, color="red", size=5)
+    ml = p.multi_line("xs", "ys", source=ml_source, color="black", line_width=3)
     p.add_tools(BoxEditTool(renderers=[r], num_objects=1))
     p.add_tools(PointDrawTool(renderers=[c]))
+    p.add_tools(FreehandDrawTool(renderers=[ml], num_objects=5))
+    p.add_tools(LassoSelectTool())
     p.add_tools(TapTool())
     if get_from_config(["opts", "hover_on"], 0) == 0:
         p.toolbar.active_inspect = None
@@ -1997,6 +2121,7 @@ def make_window(vstate: ViewerState) -> dict:  # noqa: PLR0915
         "s": s,
         "box_source": box_source,
         "pt_source": pt_source,
+        "ml_source": ml_source,
         "node_source": node_source,
         "edge_source": edge_source,
         "hover": hover,
@@ -2039,6 +2164,67 @@ popup_table = DataTable(
     height=300,
     name="popup_window",
 )
+
+
+def submit_cb(event: ButtonClick) -> None:
+    """Callback to submit prompt."""
+    prompt = prompt_input.value
+    base64_image = encode_image(gpt_images[-1])
+
+    print("sending image to gpt-vision.")
+    # send a message containing the image
+    completion = client.chat.completions.create(
+        model="gpt-4-vision-preview",
+        messages=[
+            {
+                "role": "system",
+                "content": "You are an expert pathologist tasked with providing clear, concise descriptions of H&E stained histological images to advanced Pathology Students who are learning to accurately assess tissue samples and identify medically relevant features.",
+            },
+            {
+                "role": "user",
+                "content": [
+                    prompt,
+                    {"image": base64_image},
+                ],
+            },
+        ],
+        max_tokens=500,
+    )
+
+    print("response received.")
+    # extract the text from the response
+    print(completion)
+    text = completion.choices[0].message.content
+
+    # update the popup
+    prompt_input.value = text
+
+
+#
+im_fig = figure(
+    x_range=(0, 100),
+    y_range=(0, 100),
+    height=350,
+    width=350,
+    toolbar_location=None,
+    name="im_fig",
+)
+im_fig.axis.visible = False
+prompt_input = TextAreaInput(value=".", rows=6, width=350, height=200)
+submit_button = Button(label="Submit", button_type="success")
+close_button = Button(label="Close", button_type="success")
+js_popup_code = """
+    var popupContent = document.querySelector('.dialog');
+    popupContent.classList.add('hidden');
+"""
+
+close_button.js_on_event(ButtonClick, CustomJS(code=js_popup_code))
+submit_button.on_click(submit_cb)
+dialog_content = Column(
+    children=[im_fig, prompt_input, Row(children=[submit_button, close_button])],
+    name="dialog",
+)
+# dialog = Dialog(visible=True, closable=True, content=im_fig, name="dialog", draggable=True)
 
 # some setup
 
@@ -2253,6 +2439,7 @@ class DocConfig:
         base_doc.add_root(slide_wins)
         base_doc.add_root(control_tabs)
         base_doc.add_root(popup_table)
+        base_doc.add_root(dialog_content)
         base_doc.add_root(slide_info)
         base_doc.title = "Tiatoolbox Visualization Tool"
         return slide_wins, control_tabs

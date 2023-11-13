@@ -45,6 +45,16 @@
       justify-content: center;
       align-items: center;
     }
+    .dialog {
+      position: absolute;
+      background-color: white;
+      top: 10%;
+      left: 20%;
+      width: 25%;
+      height: 70%;
+      z-index: 2;
+    }
+
 
     .popup-content {
       background-color: white;
@@ -84,6 +94,7 @@
     <button class="btn btn-primary" id="close-popup">Close</button>
   </div>
 </div>
+<div class="dialog hidden">{{ embed(roots.dialog) }}</div>
 <div class="slide"> {{ embed(roots.slide_windows) }} </div><div class="ui"> {{ embed(roots.ui_layout) }} </div>
 <div class="description"> {{ embed(roots.description) }} </div>
 <script>
