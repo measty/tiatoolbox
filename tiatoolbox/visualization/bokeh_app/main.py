@@ -1347,15 +1347,20 @@ def gpt_inference() -> None:
     )
 
     if max(width, height) > 1500:
-        # resize the region to 1500px max
+        # resize the region to 1500px max by reading at lower res
         scale = 1500 / max(width, height)
         read_res = UI["vstate"].wsi.info.mpp / scale
 
-    region = UI["vstate"].wsi.read_bounds(
-        (x, y, x + width, y + height),
-        read_res,
-        "mpp",
-    )
+        region = UI["vstate"].wsi.read_bounds(
+            (x, y, x + width, y + height),
+            read_res,
+            "mpp",
+        )
+    else:
+        # just read at baseline
+        region = UI["vstate"].wsi.read_bounds(
+            (x, y, x + width, y + height),
+        )
     xs = UI["ml_source"].data["xs"]
     ys = UI["ml_source"].data["ys"]
     # use opencv to draw the polylines on the region
@@ -1792,10 +1797,14 @@ def gather_ui_elements(  # noqa: PLR0915
     scale_spinner.on_change("value", scale_spinner_cb)
     to_model_button.on_click(to_model_cb)
     js_popup_code = """
-        var popupContent = document.querySelector('.dialog');
-        popupContent.classList.remove('hidden');
+        if (model_drop.value == 'gpt-vision') {
+            var gpt_popup = document.getElementById('gpt-popup');
+            gpt_popup.classList.remove('hidden');
+        }
     """
-    to_model_button.js_on_click(CustomJS(code=js_popup_code))
+    CustomJS(code=js_popup_code)
+    callback = CustomJS(args={"model_drop": model_drop}, code=js_popup_code)
+    to_model_button.js_on_click(callback)
     model_drop.on_change("value", model_drop_cb)
     layer_drop.on_click(layer_drop_cb)
     opt_buttons.on_change("active", opt_buttons_cb)
@@ -1990,7 +1999,7 @@ def make_window(vstate: ViewerState) -> dict:  # noqa: PLR0915
 
     # tap query popup callbacks
     js_popup_code = """
-        var popupContent = document.querySelector('.popup-content');
+        var popupContent = document.getElementById('props-popup');
         if (popupContent.classList.contains('hidden')) {
             popupContent.classList.remove('hidden');
             }
@@ -2214,7 +2223,7 @@ prompt_input = TextAreaInput(value=".", rows=6, width=350, height=200)
 submit_button = Button(label="Submit", button_type="success")
 close_button = Button(label="Close", button_type="success")
 js_popup_code = """
-    var popupContent = document.querySelector('.dialog');
+    var popupContent = document.getElementById('gpt-popup');
     popupContent.classList.add('hidden');
 """
 
