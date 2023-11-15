@@ -906,6 +906,7 @@ def slide_select_cb(attr: str, old: str, new: str) -> None:  # noqa: ARG001
     # reset the data sources for glyph overlays
     UI["pt_source"].data = {"x": [], "y": []}
     UI["box_source"].data = {"x": [], "y": [], "width": [], "height": []}
+    UI["ml_source"].data = {"xs": [], "ys": []}
     UI["node_source"].data = {"x_": [], "y_": [], "node_color_": []}
     UI["edge_source"].data = {"x0_": [], "y0_": [], "x1_": [], "y1_": []}
     UI["hover"].tooltips = None
@@ -1316,14 +1317,6 @@ def tap_event_cb(event: DoubleTap) -> None:
     }
 
 
-def clear_cb(attr: ButtonClick) -> None:  # noqa: ARG001
-    """Callback to handle clearing annotations."""
-    UI["box_source"].clear()
-    UI["pt_source"].clear()
-    UI["ml_source"].clear()
-    print("cleared drawn annotations")
-
-
 def gpt_inference() -> None:
     """Callback to send selected region of the slide to gpt-vision.
 
@@ -1332,6 +1325,14 @@ def gpt_inference() -> None:
     generated text in a popup window.
 
     """
+    # reset image plot size
+    im_fig.height = 350
+    im_fig.width = 350
+    im_fig.x_range.end = 100
+    im_fig.y_range.end = 100
+    # also reset image source
+    im_fig.image_rgba(image=[], x=0, y=0, dw=100, dh=100)
+
     if len(UI["box_source"].data["x"]) > 0:
         x = round(
             UI["box_source"].data["x"][0] - 0.5 * UI["box_source"].data["width"][0],
@@ -1350,20 +1351,30 @@ def gpt_inference() -> None:
         y = -round(max([max(y) for y in ys]))
         width = round(max([max(x) for x in xs]) - x)
         height = -round(min([min(y) for y in ys]) + y)
+
+        if max(width, height) > 1300:
+            # we will resize the region to 1500px max by reading at lower res
+            scale = 1300 / max(width, height)
+        else:
+            scale = 1.0
         # pad the box a bit
-        x -= 100
-        y -= 100
-        width += 200
-        height += 200
+        x -= int(100 / scale)
+        y -= int(100 / scale)
+        width += int(200 / scale)
+        height += int(200 / scale)
         prompt = "Provide a concise assesment of this image. Include your best judgement on what sort of tissue the sample is from, comment on noteworthy histological features (paying particular attention to the regions indicated by black annotations), and whether the tissue is normal or suspicious of disease."
+
+    if max(width, height) > 1500:
+        # we will resize the region to 1500px max by reading at lower res
+        scale = 1500 / max(width, height)
+    else:
+        scale = 1.0
 
     print(
         f"preparing region x: {x}, y: {y}, width: {width}, height: {height} to gpt-vision.",
     )
 
-    if max(width, height) > 1500:
-        # resize the region to 1500px max by reading at lower res
-        scale = 1500 / max(width, height)
+    if scale < 1.0:
         read_res = UI["vstate"].wsi.info.mpp / scale
 
         region = UI["vstate"].wsi.read_bounds(
@@ -1383,7 +1394,7 @@ def gpt_inference() -> None:
         cv2.polylines(
             region,
             np.array(
-                [np.array([xs[i], -np.array(ys[i])]).T - np.array([x, y])],
+                [(np.array([xs[i], -np.array(ys[i])]).T - np.array([x, y])) * scale],
                 dtype=np.int32,
             ),
             False,
@@ -1410,7 +1421,7 @@ def gpt_inference() -> None:
     else:
         im_fig.width = int(350 * aspect_ratio)
         im_fig.x_range.end = 100 * aspect_ratio
-        im_fig.image_rgba(image=[img_array], x=0, y=0, dw=100 / aspect_ratio, dh=100)
+        im_fig.image_rgba(image=[img_array], x=0, y=0, dw=100 * aspect_ratio, dh=100)
     prompt_input.value = prompt
     # dialog.visible = True
     gpt_images.append(Image.fromarray(region))
@@ -2079,6 +2090,7 @@ def make_window(vstate: ViewerState) -> dict:  # noqa: PLR0915
                 },
                 code=clear_code,
             ),
+            description="Clear",
         ),
     )
 
