@@ -37,6 +37,7 @@ from bokeh.models import (
     ColorPicker,
     Column,
     ColumnDataSource,
+    CustomAction,
     CustomJS,
     DataTable,
     Div,
@@ -47,7 +48,6 @@ from bokeh.models import (
     HoverTool,
     HTMLTemplateFormatter,
     InlineStyleSheet,
-    LassoSelectTool,
     LinearColorMapper,
     Model,
     MultiChoice,
@@ -96,7 +96,7 @@ FILLED = 0
 MICRON_FORMATTER = 1
 GRIDLINES = 2
 MAX_FEATS = 15
-N_PERMANENT_RENDERERS = 5
+N_PERMANENT_RENDERERS = 6
 NO_UPDATE = 0
 PENDING_UPDATE = 1
 DO_UPDATE = 2
@@ -643,7 +643,7 @@ def change_tiles(layer_name: str = "overlay") -> None:
             render_parents=False,
         )
         for layer_key in UI["vstate"].layer_dict:
-            if layer_key in ["rect", "pts", "nodes", "edges"]:
+            if layer_key in ["rect", "pts", "line", "nodes", "edges"]:
                 continue
             grp = tg.get_grp()
             ts = make_ts(
@@ -675,7 +675,7 @@ class ViewerState:
         self.cprop = None
         self.init_z = None
         self.types = list(self.mapper.keys())
-        self.layer_dict = {"slide": 0, "rect": 1, "pts": 2}
+        self.layer_dict = {"slide": 0, "rect": 1, "pts": 2, "line": 3}
         self.update_state = 0
         self.thickness = -1
         self.model_mpp = 0
@@ -912,7 +912,14 @@ def slide_select_cb(attr: str, old: str, new: str) -> None:  # noqa: ARG001
     if len(UI["p"].renderers) > N_PERMANENT_RENDERERS:
         for r in UI["p"].renderers[N_PERMANENT_RENDERERS:].copy():
             UI["p"].renderers.remove(r)
-    UI["vstate"].layer_dict = {"slide": 0, "rect": 1, "pts": 2, "nodes": 3, "edges": 4}
+    UI["vstate"].layer_dict = {
+        "slide": 0,
+        "rect": 1,
+        "pts": 2,
+        "line": 3,
+        "nodes": 4,
+        "edges": 5,
+    }
     UI["vstate"].slide_path = slide_path
     UI["color_column"].children = []
     UI["type_column"].children = []
@@ -1307,6 +1314,14 @@ def tap_event_cb(event: DoubleTap) -> None:
         "property": list(data_dict.keys()),
         "value": list(data_dict.values()),
     }
+
+
+def clear_cb(attr: ButtonClick) -> None:  # noqa: ARG001
+    """Callback to handle clearing annotations."""
+    UI["box_source"].clear()
+    UI["pt_source"].clear()
+    UI["ml_source"].clear()
+    print("cleared drawn annotations")
 
 
 def gpt_inference() -> None:
@@ -1802,7 +1817,6 @@ def gather_ui_elements(  # noqa: PLR0915
             gpt_popup.classList.remove('hidden');
         }
     """
-    CustomJS(code=js_popup_code)
     callback = CustomJS(args={"model_drop": model_drop}, code=js_popup_code)
     to_model_button.js_on_click(callback)
     model_drop.on_change("value", model_drop_cb)
@@ -2048,8 +2062,26 @@ def make_window(vstate: ViewerState) -> dict:  # noqa: PLR0915
     p.add_tools(BoxEditTool(renderers=[r], num_objects=1))
     p.add_tools(PointDrawTool(renderers=[c]))
     p.add_tools(FreehandDrawTool(renderers=[ml], num_objects=5))
-    p.add_tools(LassoSelectTool())
+    # p.add_tools(LassoSelectTool())
     p.add_tools(TapTool())
+    clear_code = """
+                box_source.clear()
+                pt_source.clear()
+                ml_source.clear()
+                """
+    p.add_tools(
+        CustomAction(
+            callback=CustomJS(
+                args={
+                    "box_source": box_source,
+                    "pt_source": pt_source,
+                    "ml_source": ml_source,
+                },
+                code=clear_code,
+            ),
+        ),
+    )
+
     if get_from_config(["opts", "hover_on"], 0) == 0:
         p.toolbar.active_inspect = None
 
@@ -2239,7 +2271,7 @@ dialog_content = Column(
 
 color_cycler = ColorCycler()
 tg = TileGroup()
-tool_str = "pan,wheel_zoom,reset,save,fullscreen"
+tool_str = "pan,wheel_zoom,save,copy,fullscreen"
 req_args = []
 do_doc = False
 if curdoc().session_context is not None:
