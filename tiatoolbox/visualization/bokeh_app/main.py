@@ -103,6 +103,8 @@ PENDING_UPDATE = 1
 DO_UPDATE = 2
 
 default_cm = "viridis"  # any valid matplotlib colormap string
+
+# GPT stuff
 gpt_images = []
 
 # some default gpt prompts
@@ -112,6 +114,16 @@ prompt_no_ann = "Provide a concise assesment of this image for the student. Incl
 # promt if a region with a user-drawn annotation is sent
 prompt_ann = "Provide a concise assesment of this image for the student. Include your best judgement on what sort of tissue the sample is from, comment on noteworthy histological features (paying particular attention to the regions indicated by green annotations), and whether the tissue is normal or suspicious of disease."
 
+# client for openai reqs
+api_key = os.environ.get("OPENAI_API_KEY")
+if api_key is None:
+    logger.warning(
+        "OPENAI_API_KEY not set, GPT-Vision will not work. Add as a system environment variable on your machine, or in .env file.",
+    )
+    client = None
+else:
+    # we have an api key, so set up the client
+    client = OpenAI(api_key=api_key)
 
 # stylesheets to format some things better
 
@@ -1438,7 +1450,12 @@ def gpt_inference() -> None:
         im_fig.image_rgba(image=[img_array], x=0, y=0, dw=100 * aspect_ratio, dh=100)
     prompt_input.value = prompt
     # dialog.visible = True
-    gpt_images.append(Image.fromarray(region))
+    if len(gpt_images) < 5:
+        # keep a history of 5 max images
+        gpt_images.append(Image.fromarray(region))
+    else:
+        gpt_images.pop(0)
+        gpt_images.append(Image.fromarray(region))
 
 
 def segment_on_box() -> None:
@@ -1519,13 +1536,6 @@ slide_info = Div(
     height=200,
     sizing_mode="stretch_width",
 )
-# client for openai reqs
-api_key = os.environ.get("OPENAI_API_KEY")
-if api_key is None:
-    logger.warning(
-        "OPENAI_API_KEY not set, GPT-Vision will not work. Add as a system environment variable on your machine, or in .env file.",
-    )
-client = OpenAI(api_key=api_key)
 
 
 def gather_ui_elements(  # noqa: PLR0915
