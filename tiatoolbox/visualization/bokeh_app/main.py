@@ -8,6 +8,7 @@ import os
 import pickle
 import sys
 import tempfile
+import time
 import urllib
 from cmath import pi
 from pathlib import Path, PureWindowsPath
@@ -20,7 +21,7 @@ import pandas as pd
 import requests
 import torch
 from matplotlib import colormaps
-from openai import OpenAI
+from openai import InternalServerError, OpenAI
 from PIL import Image
 from requests.adapters import HTTPAdapter, Retry
 
@@ -103,6 +104,14 @@ DO_UPDATE = 2
 
 default_cm = "viridis"  # any valid matplotlib colormap string
 gpt_images = []
+
+# some default gpt prompts
+sys_prompt = "You are an expert pathologist tasked with providing clear, concise answers to questions about provided H&E stained histological images, from advanced Pathology Students who are learning to accurately assess tissue samples and identify medically relevant features."
+# prompt if just a plain region is sent
+prompt_no_ann = "Provide a concise assesment of this image for the student. Include your best judgement on what sort of tissue the sample is from, comment on noteworthy histological features, cells, and structures, and whether the tissue is normal or suspicious of disease."
+# promt if a region with a user-drawn annotation is sent
+prompt_ann = "Provide a concise assesment of this image for the student. Include your best judgement on what sort of tissue the sample is from, comment on noteworthy histological features (paying particular attention to the regions indicated by green annotations), and whether the tissue is normal or suspicious of disease."
+
 
 # stylesheets to format some things better
 
@@ -1342,7 +1351,7 @@ def gpt_inference() -> None:
         )
         width = round(UI["box_source"].data["width"][0])
         height = round(UI["box_source"].data["height"][0])
-        prompt = "Provide a concise assesment of this image. Include your best judgement on what sort of tissue the sample is from, comment on noteworthy histological features, cells, and structures, and whether the tissue is normal or suspicious of disease."
+
     else:
         # find the box that contains all the lines in ml_source
         xs = UI["ml_source"].data["xs"]
@@ -1362,7 +1371,12 @@ def gpt_inference() -> None:
         y -= int(100 / scale)
         width += int(200 / scale)
         height += int(200 / scale)
-        prompt = "Provide a concise assesment of this image. Include your best judgement on what sort of tissue the sample is from, comment on noteworthy histological features (paying particular attention to the regions indicated by black annotations), and whether the tissue is normal or suspicious of disease."
+
+    if len(UI["ml_source"].data["xs"]) > 0:
+        prompt = prompt_ann
+    else:
+        # we've drawn nothing, so use the no annotation prompt
+        prompt = prompt_no_ann
 
     if max(width, height) > 1500:
         # we will resize the region to 1500px max by reading at lower res
@@ -1398,7 +1412,7 @@ def gpt_inference() -> None:
                 dtype=np.int32,
             ),
             False,
-            (0, 0, 0),
+            (0, 255, 0),
             3,
         )
     # import pdb; pdb.set_trace()
@@ -2069,7 +2083,7 @@ def make_window(vstate: ViewerState) -> dict:  # noqa: PLR0915
         line_width=3,
     )
     c = p.circle("x", "y", source=pt_source, color="red", size=5)
-    ml = p.multi_line("xs", "ys", source=ml_source, color="black", line_width=3)
+    ml = p.multi_line("xs", "ys", source=ml_source, color="green", line_width=3)
     p.add_tools(BoxEditTool(renderers=[r], num_objects=1))
     p.add_tools(PointDrawTool(renderers=[c]))
     p.add_tools(FreehandDrawTool(renderers=[ml], num_objects=5))
@@ -2220,29 +2234,41 @@ popup_table = DataTable(
 
 
 def submit_cb(event: ButtonClick) -> None:
-    """Callback to submit prompt."""
+    """Callback to submit prompt to gpt-vision via api."""
     prompt = prompt_input.value
+    im_size = gpt_images[-1].size
     base64_image = encode_image(gpt_images[-1])
 
-    print("sending image to gpt-vision.")
+    print(f"sending image size: {im_size} to gpt-vision.")
     # send a message containing the image
-    completion = client.chat.completions.create(
-        model="gpt-4-vision-preview",
-        messages=[
-            {
-                "role": "system",
-                "content": "You are an expert pathologist tasked with providing clear, concise descriptions of H&E stained histological images to advanced Pathology Students who are learning to accurately assess tissue samples and identify medically relevant features.",
-            },
-            {
-                "role": "user",
-                "content": [
-                    prompt,
-                    {"image": base64_image},
+    prompt_input.value = "Sent to GPT-Vision. Waiting for response - this typically takes < 10 seconds, but may take longer if openAI server is busy. It may occasionally fail."
+    tries = 0
+    while tries < 3:
+        try:
+            completion = client.chat.completions.create(
+                model="gpt-4-vision-preview",
+                messages=[
+                    {
+                        "role": "system",
+                        "content": sys_prompt,
+                    },
+                    {
+                        "role": "user",
+                        "content": [
+                            prompt,
+                            {"image": base64_image},
+                        ],
+                    },
                 ],
-            },
-        ],
-        max_tokens=500,
-    )
+                max_tokens=500,
+            )
+            break
+        except InternalServerError as e:
+            print(
+                f"error: {e} when sending to gpt-vision. trying again (try {tries} / 3)",
+            )
+            tries += 1
+            time.sleep(1)
 
     print("response received.")
     # extract the text from the response
@@ -2263,7 +2289,7 @@ im_fig = figure(
     name="im_fig",
 )
 im_fig.axis.visible = False
-prompt_input = TextAreaInput(value=".", rows=6, width=350, height=200)
+prompt_input = TextAreaInput(value=".", rows=7, width=350, height=250)
 submit_button = Button(label="Submit", button_type="success")
 close_button = Button(label="Close", button_type="success")
 js_popup_code = """
