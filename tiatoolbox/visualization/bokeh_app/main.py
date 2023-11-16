@@ -1520,7 +1520,12 @@ slide_info = Div(
     sizing_mode="stretch_width",
 )
 # client for openai reqs
-client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
+api_key = os.environ.get("OPENAI_API_KEY")
+if api_key is None:
+    logger.warning(
+        "OPENAI_API_KEY not set, GPT-Vision will not work. Add as a system environment variable on your machine, or in .env file.",
+    )
+client = OpenAI(api_key=api_key)
 
 
 def gather_ui_elements(  # noqa: PLR0915
