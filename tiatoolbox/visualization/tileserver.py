@@ -686,9 +686,13 @@ class TileServer(Flask):
 
         """
         session_id = self._get_session_id()
-        anns = self.get_ann_layer(session_id).store.query(
-            Point(x, y),
-        )
+        try:
+            anns = self.get_ann_layer(session_id).store.query(
+                Point(x, y),
+            )
+        except ValueError:
+            logger.warning("No annotations found at (%f, %f).", x, y)
+            return json.dumps({})
         if len(anns) == 0:
             return json.dumps({})
         return jsonify(list(anns.values())[-1].properties)
