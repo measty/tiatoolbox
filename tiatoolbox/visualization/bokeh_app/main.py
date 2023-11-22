@@ -104,7 +104,7 @@ DO_UPDATE = 2
 
 default_cm = "viridis"  # any valid matplotlib colormap string
 
-# GPT stuff
+# ---- GPT stuff ----
 gpt_images = []
 
 # some default gpt prompts
@@ -124,6 +124,7 @@ if api_key is None:
 else:
     # we have an api key, so set up the client
     client = OpenAI(api_key=api_key)
+# -------------------
 
 # stylesheets to format some things better
 
