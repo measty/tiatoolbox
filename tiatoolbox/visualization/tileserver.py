@@ -613,7 +613,10 @@ class TileServer(Flask):
         save_path = self.decode_safe_name(save_path)
         for layer in self.pyramids[session_id].values():
             if isinstance(layer, AnnotationTileGenerator):
-                if layer.store.path.suffix == ".db":
+                if (
+                    layer.store.path.suffix == ".db"
+                    and layer.store.path.name != "temp.db"
+                ):
                     logger.info("%s*.db committed.", layer.store.path.stem)
                     layer.store.commit()
                 else:

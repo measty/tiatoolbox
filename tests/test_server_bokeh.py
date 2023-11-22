@@ -19,15 +19,6 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 
-@pytest.fixture(scope="module")
-def data_path(tmp_path_factory: pytest.TempPathFactory) -> dict[str, Path]:
-    """Set up a temporary data directory."""
-    tmp_path = tmp_path_factory.mktemp("data")
-    (tmp_path / "slides").mkdir()
-    (tmp_path / "overlays").mkdir()
-    return {"base_path": tmp_path}
-
-
 @pytest.fixture(scope="module", autouse=True)
 def annotation_path(data_path: dict[str, Path]) -> dict[str, Path]:
     """Set up a dictionary defining the paths to the annotation files."""
@@ -113,7 +104,10 @@ def test_cli_errors(data_path: dict[str, Path]) -> None:
         ],
     )
     assert result.exit_code == 1
-    assert result.exc_info[1].args[0] == "No input directory specified."
+    assert (
+        result.exc_info[1].args[0]
+        == "Must specify either base-path or both slide-path and overlay-path."
+    )
 
     # test with non-existent input folder
     result = runner.invoke(
@@ -121,9 +115,9 @@ def test_cli_errors(data_path: dict[str, Path]) -> None:
         [
             "visualize",
             "--noshow",
-            "--img-input",
+            "--slide-path",
             str(data_path["base_path"] / "slides"),
-            "--img-input",
+            "--overlay-path",
             "non_existent_folder",
         ],
     )

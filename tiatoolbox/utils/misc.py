@@ -969,11 +969,11 @@ def ppu2mpp(ppu: int, units: str | int) -> float:
     return 1 / ppu * microns_per_unit[units]
 
 
-def select_cv2_interpolation(scale_factor: float) -> str:
+def select_cv2_interpolation(scale_factor: float | np.ndarray[float, float]) -> str:
     """Return appropriate interpolation method for opencv based image resize.
 
     Args:
-        scale_factor (float):
+        scale_factor (float or np.ndarray[float, float]):
             Image resize scale factor.
 
     Returns:
@@ -1172,7 +1172,12 @@ def add_from_dat(
         # assume cerberus format with objects subdivided into categories
         anns = []
         for subcat in data:
-            if subcat == "resolution":
+            if (
+                subcat == "resolution"
+                or subcat == "proc_dimensions"
+                or subcat == "base_dimensions"
+                or "resolution" in subcat
+            ):
                 continue
             props = next(iter(data[subcat].values()))
             if not isinstance(props, dict):

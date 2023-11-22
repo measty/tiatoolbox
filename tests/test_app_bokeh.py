@@ -5,24 +5,30 @@ import io
 import json
 import multiprocessing
 import re
+import sys
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Generator
 
+import bokeh.models as bkmodels
 import matplotlib.pyplot as plt
 import numpy as np
-import pkg_resources
+
+if sys.version_info >= (3, 9):  # pragma: no cover
+    import importlib.resources as importlib_resources
+else:  # pragma: no cover
+    # To support Python 3.8
+    import importlib_resources  # type: ignore[import-not-found]
 import pytest
 import requests
+from bokeh.application import Application
+from bokeh.application.handlers import FunctionHandler
+from bokeh.events import ButtonClick, DoubleTap, MenuItemClick
 from flask_cors import CORS
 from matplotlib import colormaps
 from PIL import Image
 from scipy.ndimage import label
 
-import bokeh.models as bkmodels
-from bokeh.application import Application
-from bokeh.application.handlers import FunctionHandler
-from bokeh.events import ButtonClick, DoubleTap, MenuItemClick
 from tiatoolbox.data import _fetch_remote_sample
 from tiatoolbox.visualization.bokeh_app import main
 from tiatoolbox.visualization.tileserver import TileServer
@@ -32,7 +38,7 @@ if TYPE_CHECKING:
     from bokeh.document import Document
 
 # constants
-BOKEH_PATH = pkg_resources.resource_filename("tiatoolbox", "visualization/bokeh_app")
+BOKEH_PATH = importlib_resources.files("tiatoolbox.visualization.bokeh_app")
 FILLED = 0
 MICRON_FORMATTER = 1
 GRIDLINES = 2
@@ -56,15 +62,6 @@ def get_renderer_prop(prop: str) -> json:
     """Get a renderer property from the server."""
     resp = main.UI["s"].get(f"http://{main.host2}:5000/tileserver/renderer/{prop}")
     return resp.json()
-
-
-@pytest.fixture(scope="module")
-def data_path(tmp_path_factory: pytest.TempPathFactory) -> dict[str, object]:
-    """Set up a temporary data directory."""
-    tmp_path = tmp_path_factory.mktemp("data")
-    (tmp_path / "slides").mkdir()
-    (tmp_path / "overlays").mkdir()
-    return {"base_path": tmp_path}
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -100,7 +97,7 @@ def annotation_path(data_path: dict[str, object]) -> dict[str, object]:
         data_path["base_path"] / "overlays",
     )
     data_path["img_overlay"] = _fetch_remote_sample(
-        "rendered_annotations_svs_1",
+        "svs_1_rendered_annotations_jpg",
         data_path["base_path"] / "overlays",
     )
     data_path["geojson_anns"] = _fetch_remote_sample(
@@ -158,8 +155,8 @@ def test_to_num() -> None:
 def test_get_level_by_extent() -> None:
     """Test the get_level_by_extent function."""
     max_lev = 10
-    assert get_level_by_extent([1000, 1000, 1100, 1100]) == max_lev
-    assert get_level_by_extent([1000, 1000, 1000000, 1000000]) == 0
+    assert get_level_by_extent((1000, 1000, 1100, 1100)) == max_lev
+    assert get_level_by_extent((1000, 1000, 1000000, 1000000)) == 0
 
 
 # test the bokeh app
@@ -322,7 +319,7 @@ def test_type_cmap_select(doc: Document) -> None:
     cmap_select.value = ["prob"]
     # select a type to assign the cmap to
     cmap_select.value = ["prob", "0"]
-    # set edge thicknes to 0 so the edges don't add an extra colour
+    # set edge thickness to 0 so the edges don't add an extra colour
     spinner = doc.get_model_by_name("edge_size0")
     spinner.value = 0
     im = get_tile("overlay", 1, 2, 2, show=False)
@@ -687,14 +684,29 @@ def test_color_cycler() -> None:
 def test_cmap_select(doc: Document) -> None:
     """Test changing the cmap."""
     cmap_select = doc.get_model_by_name("cmap0")
-    main.UI["cprop_input"].value = ["type"]
-    # set the cmap to "viridis"
-    cmap_select.value = "viridis"
+
+    main.UI["cprop_input"].value = ["prob"]
+    # set to jet
+    cmap_select.value = "jet"
     resp = main.UI["s"].get(f"http://{main.host2}:5000/tileserver/cmap")
-    assert resp.json() == "viridis"
+    assert resp.json() == "jet"
+    # set to dict
     cmap_select.value = "dict"
     resp = main.UI["s"].get(f"http://{main.host2}:5000/tileserver/cmap")
+    assert isinstance(resp.json(), dict)
+
+    main.UI["cprop_input"].value = ["type"]
     # should now be the type mapping
+    resp = main.UI["s"].get(f"http://{main.host2}:5000/tileserver/cmap")
+    for key in main.UI["vstate"].mapper:
+        assert str(key) in resp.json()
+        assert np.all(
+            np.array(resp.json()[str(key)]) == np.array(main.UI["vstate"].mapper[key]),
+        )
+    # set the cmap to "coolwarm"
+    cmap_select.value = "coolwarm"
+    resp = main.UI["s"].get(f"http://{main.host2}:5000/tileserver/cmap")
+    # as cprop is type (categorical), it should have had no effect
     for key in main.UI["vstate"].mapper:
         assert str(key) in resp.json()
         assert np.all(
@@ -706,10 +718,9 @@ def test_cmap_select(doc: Document) -> None:
     assert resp.json() == "jet"
     # set to dict
     main.UI["cprop_input"].value = ["prob"]
-    cmap_select.value = "dict"
     resp = main.UI["s"].get(f"http://{main.host2}:5000/tileserver/cmap")
-    assert len(resp.json()) > 10
-    assert isinstance(resp.json(), dict)
+    # should be coolwarm as thats the last cmap we set, and prob is continuous
+    assert resp.json() == "coolwarm"
 
 
 def test_option_buttons() -> None:
