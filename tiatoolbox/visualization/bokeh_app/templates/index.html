@@ -85,7 +85,15 @@
   </div>
 </div>
 <div class="slide"> {{ embed(roots.slide_windows) }} </div><div class="ui"> {{ embed(roots.ui_layout) }} </div>
-<div class="description"> {{ embed(roots.description) }} </div>
+<div class="description"> 
+  {{ embed(roots.description) }}
+  <form id="uploadForm" enctype="multipart/form-data">
+    <input id="fileInput" type="file" name="file"/>
+    <button type="button" onclick="uploadFile()">Upload</button>
+  </form>
+  <div id="uploadStatus"></div> 
+</div>
+
 <script>
   const closePopupBtn = document.getElementById('close-popup');
   const popup = document.getElementById('popup');
@@ -117,5 +125,33 @@
   document.addEventListener('mouseup', function() {
       isDragging = false;
   });
+
+  async function uploadFile() {
+    const input = document.getElementById('fileInput');
+    if (!input.files.length) {
+      return alert('Please select a file to upload');
+    }
+
+    const file = input.files[0];
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('folder', '{{ slide_folder }}');
+    // need to set host to tile-service-demo if deployed
+    try {
+      const response = await fetch('http://127.0.0.1:5000/tileserver/upload', {
+        method: 'POST',
+        body: formData,
+      });
+
+      if (response.status === 200) {
+        document.getElementById('uploadStatus').innerText = 'Upload successful!';
+      } else {
+        document.getElementById('uploadStatus').innerText = 'Upload failed!';
+      }
+    } catch (error) {
+      console.error('Error:', error);
+      document.getElementById('uploadStatus').innerText = 'Upload error!';
+    }
+  }
 </script>
 {% endblock %}
