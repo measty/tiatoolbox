@@ -7,6 +7,32 @@
 
 {% block postamble %}
   <style>
+    #modalBackdrop {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100vw;
+        height: 100vh;
+        background: rgba(0, 0, 0, 0.5); /* Semi-transparent backdrop */
+        z-index: 1000; /* High z-index to ensure it's on top */
+    }
+
+    #uploadModal {
+        position: fixed; /* Stay in place */
+        z-index: 1001; /* Sits on top of the backdrop */
+        left: 50%; /* Half of the viewport width */
+        top: 50%; /* Half of the viewport height */
+        transform: translate(-50%, -50%); /* Offset by half of the modal's width and height */
+        background: white;
+        padding: 20px;
+        border-radius: 5px;
+        box-shadow: 0 5px 15px rgba(0, 0, 0, 0.3);
+    }
+
+    .modal-content {
+        text-align: center;
+    }
+
     .slide {
         width: 80%;
         height: 100%;
@@ -84,14 +110,28 @@
     <button class="btn btn-primary" id="close-popup">Close</button>
   </div>
 </div>
-<div class="slide"> {{ embed(roots.slide_windows) }} </div><div class="ui"> {{ embed(roots.ui_layout) }} </div>
+<div class="slide" id="dropZone"> {{ embed(roots.slide_windows) }} </div><div class="ui"> {{ embed(roots.ui_layout) }} </div>
+<input type="file" id="fileInput" style="display: none;" multiple>
+<!-- Backdrop -->
+<div id="modalBackdrop" style="display:none;"></div>
+<!-- Hidden modal -->
+<div id="uploadModal" style="display:none;">
+  <div class="modal-content">
+    <div>Files will be uploaded in the background, scroll to bottom of page to see progress. Please select the type of file you are uploading:</div>
+    <button id="Slide">Slide</button>
+    <button id="Overlay">Overlay</button>
+  </div>
+</div>
 <div class="description"> 
   {{ embed(roots.description) }}
-  <form id="uploadForm" enctype="multipart/form-data">
-    <input id="fileInput" type="file" name="file"/>
-    <button type="button" onclick="uploadFile()">Upload</button>
-  </form>
-  <div id="uploadStatus"></div> 
+  <!-- Progress bar container -->
+  <div style="width: 100%; background-color: #ddd;">
+    <!-- Progress bar -->
+    <div id="uploadProgress" style="width: 0%; height: 30px; background-color: #4CAF50; text-align: center; color: white;"></div>
+  </div>
+
+  <!-- Status display -->
+  <div id="uploadStatus"></div>
 </div>
 
 <script>
@@ -126,32 +166,93 @@
       isDragging = false;
   });
 
-  async function uploadFile() {
-    const input = document.getElementById('fileInput');
-    if (!input.files.length) {
-      return alert('Please select a file to upload');
-    }
+  document.getElementById('dropZone').addEventListener('dragover', function(event) {
+      event.stopPropagation();
+      event.preventDefault();
+      event.dataTransfer.dropEffect = 'copy'; // Explicitly show this is a copy.
+  });
 
-    const file = input.files[0];
-    const formData = new FormData();
-    formData.append('file', file);
-    formData.append('folder', '{{ slide_folder }}');
-    // need to set host to tile-service-demo if deployed
-    try {
-      const response = await fetch('http://127.0.0.1:5000/tileserver/upload', {
-        method: 'POST',
-        body: formData,
+  document.getElementById('dropZone').addEventListener('drop', function(event) {
+      event.stopPropagation();
+      event.preventDefault();
+      const files = event.dataTransfer.files; // FileList object.
+      showUploadModal(files);
+  });
+
+  function showUploadModal(files) {
+      // Show the backdrop
+      document.getElementById('modalBackdrop').style.display = 'block';
+
+      // Show the modal
+      const uploadModal = document.getElementById('uploadModal');
+      uploadModal.style.display = 'block';
+
+      // Add event listeners for the buttons
+      document.getElementById('Slide').onclick = function() {
+          handleFiles(files, 'slides');
+          uploadModal.style.display = 'none'; // Hide the modal
+          document.getElementById('modalBackdrop').style.display = 'none';
+      };
+      document.getElementById('Overlay').onclick = function() {
+          handleFiles(files, 'overlays');
+          uploadModal.style.display = 'none'; // Hide the modal
+          document.getElementById('modalBackdrop').style.display = 'none';
+      };
+  }
+
+  function handleFiles(files, type) {
+      for (let i = 0, f; f = files[i]; i++) {
+          // Process each file here
+          uploadFile(f, type);
+      }
+  }
+
+  function uploadFile(file, type) {
+      const xhr = new XMLHttpRequest();
+      const formData = new FormData();
+      const progressElement = document.getElementById('uploadProgress'); // Progress bar element in your HTML
+      const statusElement = document.getElementById('uploadStatus'); // Status display element in your HTML
+
+      formData.append('file', file);
+      if (type === 'slides') {
+          formData.append('folder', '{{ slide_folder }}');
+      } else if (type === 'overlays') {
+          formData.append('folder', '{{ overlay_folder }}');
+      }
+
+      // Progress event
+      xhr.upload.addEventListener('progress', function(e) {
+          if (e.lengthComputable) {
+              const percentComplete = (e.loaded / e.total) * 100;
+              // Update your progress bar here
+              progressElement.style.width = percentComplete + '%';
+              progressElement.textContent = `${percentComplete.toFixed(2)}%`; // Optional: show percentage number in progress bar
+          }
       });
 
-      if (response.status === 200) {
-        document.getElementById('uploadStatus').innerText = 'Upload successful!';
-      } else {
-        document.getElementById('uploadStatus').innerText = 'Upload failed!';
-      }
-    } catch (error) {
-      console.error('Error:', error);
-      document.getElementById('uploadStatus').innerText = 'Upload error!';
-    }
+      // Load event
+      xhr.addEventListener('load', function() {
+          if (xhr.status === 200) {
+              statusElement.innerText = 'Upload successful!';
+          } else {
+              statusElement.innerText = 'Upload failed!';
+          }
+      });
+
+      // Error event
+      xhr.addEventListener('error', function() {
+          statusElement.innerText = 'Upload error!';
+      });
+
+      // Abort event
+      xhr.addEventListener('abort', function() {
+          statusElement.innerText = 'Upload aborted!';
+      });
+
+      // Open and send the request
+      xhr.open('POST', 'http://127.0.0.1:5000/tileserver/upload', true);
+      xhr.send(formData);
   }
+
 </script>
 {% endblock %}

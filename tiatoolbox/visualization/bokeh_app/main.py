@@ -2290,6 +2290,7 @@ class DocConfig:
         base_doc.add_root(slide_info)
         base_doc.title = "Tiatoolbox Visualization Tool"
         base_doc.template_variables["slide_folder"] = make_safe_name(doc_config["slide_folder"])
+        base_doc.template_variables["overlay_folder"] = make_safe_name(doc_config["overlay_folder"])
         return slide_wins, control_tabs
 
 
