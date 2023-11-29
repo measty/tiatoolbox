@@ -1049,26 +1049,6 @@ def handle_graph_layer(attr: MenuItemClick) -> None:  # skipcq: PY-R1000
         UI["hover"].tooltips = tooltips
 
 
-# Define the callback function
-def file_input_cb(attr, old, new):
-    # The file contents are in the 'value' property as base64 encoded
-    if len(new) == 0:
-        print("No file selected")
-        return
-    raw_contents = UI["file_input"].value
-    # Convert from base64 to bytes
-    import base64
-    # Determine the file names
-    file_names = UI["file_input"].filename
-    # Save files to disk
-    for file_name, raw_content in zip(file_names, raw_contents):
-        print(len(raw_content))
-        file_contents = base64.b64decode(raw_content)
-        with open(doc_config["slide_folder"] / file_name, "wb") as f:
-            f.write(file_contents)
-        print(f"File saved to {doc_config['slide_folder'] / file_name}")
-
-
 def update_ui_on_new_annotations(ann_types: list[str]) -> None:
     """Update the UI when new annotations are added."""
     UI["vstate"].types = ann_types
@@ -1532,9 +1512,6 @@ def gather_ui_elements(  # noqa: PLR0915
         description=slide_tt,
     )
 
-    
-    # Create a FileInput widget
-    file_input = FileInput(name=f"file_input{win_num}", multiple=True)
     cmmenu = [
         ("jet", "jet"),
         ("coolwarm", "coolwarm"),
@@ -1709,7 +1686,6 @@ def gather_ui_elements(  # noqa: PLR0915
     pt_size_spinner.on_change("value", pt_size_cb)
     edge_size_spinner.on_change("value", edge_size_cb)
     slide_select.on_change("value", slide_select_cb)
-    file_input.on_change("filename", file_input_cb)
     save_button.on_click(save_cb)
     cmap_select.on_change("value", cmap_select_cb)
     blur_spinner.on_change("value", blur_spinner_cb)
@@ -1761,7 +1737,6 @@ def gather_ui_elements(  # noqa: PLR0915
         zip(
             [
                 "slide_select",
-                "file_input",
                 "layer_drop",
                 "slide_row",
                 "overlay_row",
@@ -1774,7 +1749,6 @@ def gather_ui_elements(  # noqa: PLR0915
             ],
             [
                 slide_select,
-                file_input,
                 layer_drop,
                 slide_row,
                 overlay_row,
