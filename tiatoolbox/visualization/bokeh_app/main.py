@@ -2112,6 +2112,15 @@ def update() -> None:
         UI["vstate"].update_state = DO_UPDATE
 
 
+def check_folders() -> None:
+    """Update the list of available slides and overlays."""
+    populate_slide_list(doc_config["slide_folder"])
+    populate_layer_list(
+        Path(UI["vstate"].slide_path).stem,
+        doc_config["overlay_folder"],
+    )
+
+
 def control_tabs_cb(attr: str, old: int, new: int) -> None:  # noqa: ARG001
     """Callback to handle selecting active window."""
     if new == 1 and len(slide_wins.children) == 1:
@@ -2284,6 +2293,7 @@ class DocConfig:
         # Add the window and controls etc to the document
         base_doc.template_variables["demo_name"] = doc_config["demo_name"]
         base_doc.add_periodic_callback(update, 220)
+        base_doc.add_periodic_callback(check_folders, 5000)
         base_doc.add_root(slide_wins)
         base_doc.add_root(control_tabs)
         base_doc.add_root(popup_table)
