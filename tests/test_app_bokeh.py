@@ -46,7 +46,21 @@ GRIDLINES = 2
 
 # helper functions and fixtures
 def get_tile(layer: str, x: float, y: float, z: float, *, show: bool) -> np.ndarray:
-    """Get a tile from the server."""
+    """Get a tile from the server.
+
+    Args:
+        layer (str):
+            The layer to get the tile from.
+        x (float):
+            The x coordinate of the tile.
+        y (float):
+            The y coordinate of the tile.
+        z (float):
+            The zoom level of the tile.
+        show (bool):
+            Whether to show the tile.
+
+    """
     source = main.UI["p"].renderers[main.UI["vstate"].layer_dict[layer]].tile_source
     url = source.url
     # replace {x}, {y}, {z} with tile coordinates
@@ -59,7 +73,13 @@ def get_tile(layer: str, x: float, y: float, z: float, *, show: bool) -> np.ndar
 
 
 def get_renderer_prop(prop: str) -> json:
-    """Get a renderer property from the server."""
+    """Get a renderer property from the server.
+
+    Args:
+        prop (str):
+            The property to get.
+
+    """
     resp = main.UI["s"].get(f"http://{main.host2}:5000/tileserver/renderer/{prop}")
     return resp.json()
 
@@ -68,7 +88,7 @@ def get_renderer_prop(prop: str) -> json:
 def annotation_path(data_path: dict[str, object]) -> dict[str, object]:
     """Download some testing slides and overlays.
 
-    Sets up a dictionary defining the paths to the files
+    Set up a dictionary defining the paths to the files
     that can be grabbed as a fixture to refer to during tests.
 
     """
