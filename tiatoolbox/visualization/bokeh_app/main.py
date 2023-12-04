@@ -38,6 +38,7 @@ from bokeh.models import (
     Div,
     Dropdown,
     FuncTickFormatter,
+    FileInput,
     Glyph,
     HoverTool,
     HTMLTemplateFormatter,
@@ -1513,6 +1514,7 @@ def gather_ui_elements(  # noqa: PLR0915
         name=f"slide_select{win_num}",
         description=slide_tt,
     )
+
     cmmenu = [
         ("jet", "jet"),
         ("coolwarm", "coolwarm"),
@@ -2087,6 +2089,15 @@ def update() -> None:
         UI["vstate"].update_state = DO_UPDATE
 
 
+def check_folders() -> None:
+    """Update the list of available slides and overlays."""
+    populate_slide_list(doc_config["slide_folder"])
+    populate_layer_list(
+        Path(UI["vstate"].slide_path).stem,
+        doc_config["overlay_folder"],
+    )
+
+
 def control_tabs_cb(attr: str, old: int, new: int) -> None:  # noqa: ARG001
     """Callback to handle selecting active window."""
     if new == 1 and len(slide_wins.children) == 1:
@@ -2232,7 +2243,7 @@ class DocConfig:
             the controls tab.
 
         """
-        # set initial slide to first one in base folder
+        # Set initial slide to first one in base folder
         slide_list = []
         for ext in ["*.svs", "*ndpi", "*.tiff", "*.mrxs", "*.png", "*.jpg"]:
             slide_list.extend(list(doc_config["slide_folder"].glob(ext)))
@@ -2259,11 +2270,14 @@ class DocConfig:
         # Add the window and controls etc to the document
         base_doc.template_variables["demo_name"] = doc_config["demo_name"]
         base_doc.add_periodic_callback(update, 220)
+        base_doc.add_periodic_callback(check_folders, 5000)
         base_doc.add_root(slide_wins)
         base_doc.add_root(control_tabs)
         base_doc.add_root(popup_table)
         base_doc.add_root(slide_info)
         base_doc.title = "Tiatoolbox Visualization Tool"
+        base_doc.template_variables["slide_folder"] = make_safe_name(doc_config["slide_folder"])
+        base_doc.template_variables["overlay_folder"] = make_safe_name(doc_config["overlay_folder"])
         return slide_wins, control_tabs
 
 

@@ -55,6 +55,8 @@ def run_bokeh(img_input: list[str], port: int, *, noshow: bool) -> None:
         "1000",
         "--check-unused-sessions",
         "1000",
+        "--websocket-max-message-size",
+        str(3000 * 1024 * 1024),
         "--args",
         *img_input,
     ]

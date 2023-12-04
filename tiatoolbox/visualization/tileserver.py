@@ -163,6 +163,7 @@ class TileServer(Flask):
         )
         self.route("/tileserver/tap_query/<x>/<y>")(self.tap_query)
         self.route("/tileserver/prop_range", methods=["PUT"])(self.prop_range)
+        self.route("/tileserver/upload", methods=["POST"])(self.file_upload)
         self.route("/tileserver/shutdown", methods=["POST"])(self.shutdown)
 
     def _get_session_id(self: TileServer) -> str:
@@ -716,6 +717,16 @@ class TileServer(Flask):
         minv, maxv = prop_range
         self.renderers[session_id].score_fn = lambda x: (x - minv) / (maxv - minv)
         return "done"
+    
+    def file_upload(self: TileServer) -> str:
+        file = request.files['file']
+        folder = request.form['folder']
+        folder = self.decode_safe_name(folder)
+        if file:
+            # Save the file
+            file.save(Path(folder) / file.filename)
+            return 'Upload successful!', 200
+        return 'No file uploaded', 400
 
     @staticmethod
     def shutdown() -> None:
