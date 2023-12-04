@@ -64,20 +64,32 @@
       position: absolute;
       top: 30%;
       left: 20%;
-      width: 20%;
-      height: 30%;
+      width: 30%;
+      height: 50%;
       background-color: rgba(0, 0, 0, 0.0);
       display: flex;
       justify-content: center;
       align-items: center;
     }
 
+    .dialog {
+      position: absolute;
+      background-color: white;
+      top: 10%;
+      left: 20%;
+      width: 35%;
+      height: 70%;
+      z-index: 2;
+      overflow: auto;
+    }
+
+
     .popup-content {
       background-color: white;
       padding: 10px;
       border-radius: 5px;
-      width: 80%;
-      max-width: 350px;
+      width: 90%;
+      max-width: 400px;
       box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
       z-index: 2;
     }
@@ -99,8 +111,8 @@
 
 <!-- goes in body -->
 {% block contents %}
-<div id="popup" class="popup">
-  <div class="popup-content hidden">
+<div class="popup">
+  <div id="props-popup" class="popup-content hidden">
     <div class="popup-header">
       <h2>Annotation Properties</h2>
     </div>
@@ -108,6 +120,16 @@
     {{ embed(roots.popup_window) }}
     </div>
     <button class="btn btn-primary" id="close-popup">Close</button>
+  </div>
+</div>
+<div class="popup">
+  <div id="gpt-popup" class="popup-content hidden">
+    <div class="popup-header">
+      <h2>Prompt to be sent:</h2>
+    </div>
+    <div class="popup-body">
+      {{ embed(roots.dialog) }}
+    </div>
   </div>
 </div>
 <div class="slide" id="dropZone"> {{ embed(roots.slide_windows) }} </div><div class="ui"> {{ embed(roots.ui_layout) }} </div>
@@ -123,7 +145,7 @@
     <button id="Overlay">Overlay</button>
   </div>
 </div>
-<div class="description"> 
+<div class="description">
   {{ embed(roots.description) }}
   <!-- Progress bar container -->
   <div style="width: 100%; background-color: #ddd;">
@@ -134,37 +156,47 @@
   <!-- Status display -->
   <div id="uploadStatus"></div>
 </div>
-
 <script>
-  const closePopupBtn = document.getElementById('close-popup');
-  const popup = document.getElementById('popup');
-  const popupContent = document.querySelector('.popup-content');
-  const popupHeader = document.querySelector('.popup-header');
+  // Query all popup headers and contents
+  const popupHeaders = document.querySelectorAll('.popup-header');
+  const popups = document.querySelectorAll('.popup-content');
 
-  let isDragging = false;
-  let offsetX, offsetY;
+  // Function to initialize drag functionality for each popup
+  function makePopupDraggable(popupHeader, popupContent) {
+      let isDragging = false;
+      let offsetX, offsetY;
 
-  closePopupBtn.addEventListener('click', function() {
-      popupContent.classList.add('hidden');
-  });
-
-  popupHeader.addEventListener('mousedown', function(e) {
-      isDragging = true;
-      offsetX = e.clientX - popupContent.getBoundingClientRect().left;
-      offsetY = e.clientY - popupContent.getBoundingClientRect().top;
-  });
-
-  document.addEventListener('mousemove', function(e) {
-      if (isDragging) {
-          popupContent.style.left = (e.clientX - offsetX) + 'px';
-          popupContent.style.top = (e.clientY - offsetY) + 'px';
+      popupHeader.addEventListener('mousedown', function(e) {
+          isDragging = true;
+          offsetX = e.clientX - popupContent.getBoundingClientRect().left;
+          offsetY = e.clientY - popupContent.getBoundingClientRect().top;
           popupContent.style.position = 'fixed';
-          console.log('New position is:', popupContent.style.left, popupContent.style.top);
-      }
-  });
+      });
 
-  document.addEventListener('mouseup', function() {
-      isDragging = false;
+      document.addEventListener('mousemove', function(e) {
+          if (isDragging) {
+              popupContent.style.left = (e.clientX - offsetX) + 'px';
+              popupContent.style.top = (e.clientY - offsetY) + 'px';
+          }
+      });
+
+      document.addEventListener('mouseup', function() {
+          isDragging = false;
+      });
+  }
+
+  // Attach close button functionality and make each popup draggable
+  popups.forEach((popupContent, index) => {
+      const closePopupBtn = popupContent.querySelector('.btn-primary');
+      const popupHeader = popupHeaders[index];
+
+      if (closePopupBtn) {
+        closePopupBtn.addEventListener('click', function() {
+          popupContent.classList.add('hidden');
+        });
+      }
+
+      makePopupDraggable(popupHeader, popupContent);
   });
 
   document.getElementById('dropZone').addEventListener('dragover', function(event) {
@@ -256,4 +288,5 @@
   }
 
 </script>
+
 {% endblock %}

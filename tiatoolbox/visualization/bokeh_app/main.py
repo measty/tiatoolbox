@@ -1,22 +1,27 @@
 """Main module for the tiatoolbox visualization bokeh app."""
 from __future__ import annotations
 
+import base64
+import io
 import json
 import os
 import pickle
 import sys
 import tempfile
+import time
 import urllib
 from cmath import pi
 from pathlib import Path, PureWindowsPath
 from shutil import rmtree
 from typing import TYPE_CHECKING, Any, Callable, SupportsFloat
 
+import cv2
 import numpy as np
 import pandas as pd
 import requests
 import torch
 from matplotlib import colormaps
+from openai import InternalServerError, OpenAI
 from PIL import Image
 from requests.adapters import HTTPAdapter, Retry
 
@@ -33,12 +38,13 @@ from bokeh.models import (
     ColorPicker,
     Column,
     ColumnDataSource,
+    CustomAction,
     CustomJS,
     DataTable,
     Div,
     Dropdown,
+    FreehandDrawTool,
     FuncTickFormatter,
-    FileInput,
     Glyph,
     HoverTool,
     HTMLTemplateFormatter,
@@ -59,6 +65,7 @@ from bokeh.models import (
     TabPanel,
     Tabs,
     TapTool,
+    TextAreaInput,
     TextInput,
     Toggle,
     Tooltip,
@@ -90,14 +97,36 @@ FILLED = 0
 MICRON_FORMATTER = 1
 GRIDLINES = 2
 MAX_FEATS = 15
-N_PERMANENT_RENDERERS = 5
+N_PERMANENT_RENDERERS = 6
 NO_UPDATE = 0
 PENDING_UPDATE = 1
 DO_UPDATE = 2
 
 default_cm = "viridis"  # any valid matplotlib colormap string
 
-# Stylesheets to format some things better
+# ---- GPT stuff ----
+gpt_images = []
+
+# some default gpt prompts
+sys_prompt = "You are an expert pathologist tasked with providing clear, concise answers to questions about provided H&E stained histological images, from advanced Pathology Students who are learning to accurately assess tissue samples and identify medically relevant features."
+# prompt if just a plain region is sent
+prompt_no_ann = "Provide a concise assesment of this image for the student. Include your best judgement on what sort of tissue the sample is from, comment on noteworthy histological features, cells, and structures, and whether the tissue is normal or suspicious of disease."
+# promt if a region with a user-drawn annotation is sent
+prompt_ann = "Provide a concise assesment of this image for the student. Include your best judgement on what sort of tissue the sample is from, comment on noteworthy histological features (paying particular attention to the regions indicated by green annotations), and whether the tissue is normal or suspicious of disease."
+
+# client for openai reqs
+api_key = os.environ.get("OPENAI_API_KEY")
+if api_key is None:
+    logger.warning(
+        "OPENAI_API_KEY not set, GPT-Vision will not work. Add as a system environment variable on your machine, or in .env file.",
+    )
+    client = None
+else:
+    # we have an api key, so set up the client
+    client = OpenAI(api_key=api_key)
+# -------------------
+
+# stylesheets to format some things better
 
 # Stylesheet for the help tooltips
 help_ss = InlineStyleSheet(
@@ -134,6 +163,14 @@ class UIWrapper:
     def __getitem__(self: UIWrapper, key: str) -> Any:  # noqa: ANN401
         """Gets ui element for the active window."""
         return win_dicts[self.active][key]
+
+
+def encode_image(tile_image: Image.Image) -> str:
+    """Encode an image as a base64 string."""
+    image_io = io.BytesIO()
+    tile_image.save(image_io, format="webp")
+    image_io.seek(0)
+    return base64.b64encode(image_io.read()).decode("utf-8")
 
 
 def format_info(info: dict[str, Any]) -> str:
@@ -632,7 +669,7 @@ def change_tiles(layer_name: str = "overlay") -> None:
             render_parents=False,
         )
         for layer_key in UI["vstate"].layer_dict:
-            if layer_key in ["rect", "pts", "nodes", "edges"]:
+            if layer_key in ["rect", "pts", "line", "nodes", "edges"]:
                 continue
             grp = tg.get_grp()
             ts = make_ts(
@@ -664,7 +701,7 @@ class ViewerState:
         self.cprop = None
         self.init_z = None
         self.types = list(self.mapper.keys())
-        self.layer_dict = {"slide": 0, "rect": 1, "pts": 2}
+        self.layer_dict = {"slide": 0, "rect": 1, "pts": 2, "line": 3}
         self.update_state = 0
         self.thickness = -1
         self.model_mpp = 0
@@ -897,13 +934,21 @@ def slide_select_cb(attr: str, old: str, new: str) -> None:  # noqa: ARG001
     # Reset the data sources for glyph overlays
     UI["pt_source"].data = {"x": [], "y": []}
     UI["box_source"].data = {"x": [], "y": [], "width": [], "height": []}
+    UI["ml_source"].data = {"xs": [], "ys": []}
     UI["node_source"].data = {"x_": [], "y_": [], "node_color_": []}
     UI["edge_source"].data = {"x0_": [], "y0_": [], "x1_": [], "y1_": []}
     UI["hover"].tooltips = None
     if len(UI["p"].renderers) > N_PERMANENT_RENDERERS:
         for r in UI["p"].renderers[N_PERMANENT_RENDERERS:].copy():
             UI["p"].renderers.remove(r)
-    UI["vstate"].layer_dict = {"slide": 0, "rect": 1, "pts": 2, "nodes": 3, "edges": 4}
+    UI["vstate"].layer_dict = {
+        "slide": 0,
+        "rect": 1,
+        "pts": 2,
+        "line": 3,
+        "nodes": 4,
+        "edges": 5,
+    }
     UI["vstate"].slide_path = slide_path
     UI["color_column"].children = []
     UI["type_column"].children = []
@@ -1202,7 +1247,9 @@ def to_model_cb(attr: ButtonClick) -> None:  # noqa: ARG001
     """Callback to run currently selected model."""
     if UI["vstate"].current_model == "hovernet":
         segment_on_box()
-    # Add any other models here
+    # add other models here
+    elif UI["vstate"].current_model == "gpt-vision":
+        gpt_inference()
     else:  # pragma: no cover
         logger.warning("unknown model")
 
@@ -1298,6 +1345,126 @@ def tap_event_cb(event: DoubleTap) -> None:
         "property": list(data_dict.keys()),
         "value": list(data_dict.values()),
     }
+
+
+def gpt_inference() -> None:
+    """Callback to send selected region of the slide to gpt-vision.
+
+    Will use openai API to send image ROI to gpt asssistant instucted to provide
+    accurate descriptions of provided histology images, and will display the
+    generated text in a popup window.
+
+    """
+    # reset image plot size
+    im_fig.height = 350
+    im_fig.width = 350
+    im_fig.x_range.end = 100
+    im_fig.y_range.end = 100
+    # also reset image source
+    im_fig.image_rgba(image=[], x=0, y=0, dw=100, dh=100)
+
+    if len(UI["box_source"].data["x"]) > 0:
+        x = round(
+            UI["box_source"].data["x"][0] - 0.5 * UI["box_source"].data["width"][0],
+        )
+        y = -round(
+            UI["box_source"].data["y"][0] + 0.5 * UI["box_source"].data["height"][0],
+        )
+        width = round(UI["box_source"].data["width"][0])
+        height = round(UI["box_source"].data["height"][0])
+
+    else:
+        # find the box that contains all the lines in ml_source
+        xs = UI["ml_source"].data["xs"]
+        ys = UI["ml_source"].data["ys"]
+        x = round(min([min(x) for x in xs]))
+        y = -round(max([max(y) for y in ys]))
+        width = round(max([max(x) for x in xs]) - x)
+        height = -round(min([min(y) for y in ys]) + y)
+
+        if max(width, height) > 1300:
+            # we will resize the region to 1500px max by reading at lower res
+            scale = 1300 / max(width, height)
+        else:
+            scale = 1.0
+        # pad the box a bit
+        x -= int(100 / scale)
+        y -= int(100 / scale)
+        width += int(200 / scale)
+        height += int(200 / scale)
+
+    if len(UI["ml_source"].data["xs"]) > 0:
+        prompt = prompt_ann
+    else:
+        # we've drawn nothing, so use the no annotation prompt
+        prompt = prompt_no_ann
+
+    if max(width, height) > 1500:
+        # we will resize the region to 1500px max by reading at lower res
+        scale = 1500 / max(width, height)
+    else:
+        scale = 1.0
+
+    print(
+        f"preparing region x: {x}, y: {y}, width: {width}, height: {height} to gpt-vision.",
+    )
+
+    if scale < 1.0:
+        read_res = UI["vstate"].wsi.info.mpp / scale
+
+        region = UI["vstate"].wsi.read_bounds(
+            (x, y, x + width, y + height),
+            read_res,
+            "mpp",
+        )
+    else:
+        # just read at baseline
+        region = UI["vstate"].wsi.read_bounds(
+            (x, y, x + width, y + height),
+        )
+    xs = UI["ml_source"].data["xs"]
+    ys = UI["ml_source"].data["ys"]
+    # use opencv to draw the polylines on the region
+    for i in range(len(xs)):
+        cv2.polylines(
+            region,
+            np.array(
+                [(np.array([xs[i], -np.array(ys[i])]).T - np.array([x, y])) * scale],
+                dtype=np.int32,
+            ),
+            False,
+            (0, 255, 0),
+            3,
+        )
+    # import pdb; pdb.set_trace()
+    # convert image to base64
+    img_array = np.array(Image.fromarray(region).convert("RGBA"), dtype=np.uint8)
+    # import pdb; pdb.set_trace()
+    img_array = img_array.view(dtype=np.uint32).reshape(img_array.shape[:-1])
+    img_array = np.flipud(
+        img_array,
+    )  # Flip the image array vertically because Bokeh origin is at the bottom left
+    # img_array[:, :, [0, 1, 2, 3]] = img_array[:, :, [2, 1, 0, 3]]  # Swap bytes from BGRA to RGBA
+
+    # Display the image in the Bokeh figure
+    print(f"image size to be sent is: {img_array.shape}")
+    aspect_ratio = img_array.shape[1] / img_array.shape[0]
+    if aspect_ratio > 1:
+        im_fig.height = int(350 / aspect_ratio)
+        im_fig.y_range.end = 100 / aspect_ratio
+        im_fig.image_rgba(image=[img_array], x=0, y=0, dw=100, dh=100 / aspect_ratio)
+    else:
+        im_fig.width = int(350 * aspect_ratio)
+        im_fig.x_range.end = 100 * aspect_ratio
+        im_fig.image_rgba(image=[img_array], x=0, y=0, dw=100 * aspect_ratio, dh=100)
+    prompt_input.value = prompt
+    # dialog.visible = True
+    if len(gpt_images) < 5:
+        # keep a history of 5 max images
+        gpt_images.append(Image.fromarray(region))
+    else:
+        gpt_images.pop(0)
+        gpt_images.append(Image.fromarray(region))
 
 
 def segment_on_box() -> None:
@@ -1589,7 +1756,7 @@ def gather_ui_elements(  # noqa: PLR0915
     )
     model_drop = Select(
         title="choose model:",
-        options=["hovernet"],
+        options=["hovernet", "gpt-vision"],
         height=25,
         width=120,
         max_width=120,
@@ -1694,6 +1861,14 @@ def gather_ui_elements(  # noqa: PLR0915
     blur_spinner.on_change("value", blur_spinner_cb)
     scale_spinner.on_change("value", scale_spinner_cb)
     to_model_button.on_click(to_model_cb)
+    js_popup_code = """
+        if (model_drop.value == 'gpt-vision') {
+            var gpt_popup = document.getElementById('gpt-popup');
+            gpt_popup.classList.remove('hidden');
+        }
+    """
+    callback = CustomJS(args={"model_drop": model_drop}, code=js_popup_code)
+    to_model_button.js_on_click(callback)
     model_drop.on_change("value", model_drop_cb)
     layer_drop.on_click(layer_drop_cb)
     opt_buttons.on_change("active", opt_buttons_cb)
@@ -1888,7 +2063,7 @@ def make_window(vstate: ViewerState) -> dict:  # noqa: PLR0915
 
     # Tap query popup callbacks
     js_popup_code = """
-        var popupContent = document.querySelector('.popup-content');
+        var popupContent = document.getElementById('props-popup');
         if (popupContent.classList.contains('hidden')) {
             popupContent.classList.remove('hidden');
             }
@@ -1922,11 +2097,42 @@ def make_window(vstate: ViewerState) -> dict:  # noqa: PLR0915
     p.grid.grid_line_color = None
     box_source = ColumnDataSource({"x": [], "y": [], "width": [], "height": []})
     pt_source = ColumnDataSource({"x": [], "y": []})
-    r = p.rect("x", "y", "width", "height", source=box_source, fill_alpha=0)
+    ml_source = ColumnDataSource({"xs": [], "ys": []})
+    r = p.rect(
+        "x",
+        "y",
+        "width",
+        "height",
+        source=box_source,
+        fill_alpha=0,
+        line_width=3,
+    )
     c = p.circle("x", "y", source=pt_source, color="red", size=5)
+    ml = p.multi_line("xs", "ys", source=ml_source, color="green", line_width=3)
     p.add_tools(BoxEditTool(renderers=[r], num_objects=1))
     p.add_tools(PointDrawTool(renderers=[c]))
+    p.add_tools(FreehandDrawTool(renderers=[ml], num_objects=5))
+    # p.add_tools(LassoSelectTool())
     p.add_tools(TapTool())
+    clear_code = """
+                box_source.clear()
+                pt_source.clear()
+                ml_source.clear()
+                """
+    p.add_tools(
+        CustomAction(
+            callback=CustomJS(
+                args={
+                    "box_source": box_source,
+                    "pt_source": pt_source,
+                    "ml_source": ml_source,
+                },
+                code=clear_code,
+            ),
+            description="Clear",
+        ),
+    )
+
     if get_from_config(["opts", "hover_on"], 0) == 0:
         p.toolbar.active_inspect = None
 
@@ -2008,6 +2214,7 @@ def make_window(vstate: ViewerState) -> dict:  # noqa: PLR0915
         "s": s,
         "box_source": box_source,
         "pt_source": pt_source,
+        "ml_source": ml_source,
         "node_source": node_source,
         "edge_source": edge_source,
         "hover": hover,
@@ -2051,11 +2258,84 @@ popup_table = DataTable(
     name="popup_window",
 )
 
-# Some setup
+
+def submit_cb(event: ButtonClick) -> None:
+    """Callback to submit prompt to gpt-vision via api."""
+    prompt = prompt_input.value
+    im_size = gpt_images[-1].size
+    base64_image = encode_image(gpt_images[-1])
+
+    print(f"sending image size: {im_size} to gpt-vision.")
+    # send a message containing the image
+    prompt_input.value = "Sent to GPT-Vision. Waiting for response - this typically takes < 10 seconds, but may take longer if openAI server is busy. It may occasionally fail."
+    tries = 0
+    while tries < 3:
+        try:
+            completion = client.chat.completions.create(
+                model="gpt-4-vision-preview",
+                messages=[
+                    {
+                        "role": "system",
+                        "content": sys_prompt,
+                    },
+                    {
+                        "role": "user",
+                        "content": [
+                            prompt,
+                            {"image": base64_image},
+                        ],
+                    },
+                ],
+                max_tokens=500,
+            )
+            break
+        except InternalServerError as e:
+            print(
+                f"error: {e} when sending to gpt-vision. trying again (try {tries} / 3)",
+            )
+            tries += 1
+            time.sleep(1)
+
+    print("response received.")
+    # extract the text from the response
+    print(completion)
+    text = completion.choices[0].message.content
+
+    # update the popup
+    prompt_input.value = text
+
+
+#
+im_fig = figure(
+    x_range=(0, 100),
+    y_range=(0, 100),
+    height=350,
+    width=350,
+    toolbar_location=None,
+    name="im_fig",
+)
+im_fig.axis.visible = False
+prompt_input = TextAreaInput(value=".", rows=7, width=350, height=250)
+submit_button = Button(label="Submit", button_type="success")
+close_button = Button(label="Close", button_type="success")
+js_popup_code = """
+    var popupContent = document.getElementById('gpt-popup');
+    popupContent.classList.add('hidden');
+"""
+
+close_button.js_on_event(ButtonClick, CustomJS(code=js_popup_code))
+submit_button.on_click(submit_cb)
+dialog_content = Column(
+    children=[im_fig, prompt_input, Row(children=[submit_button, close_button])],
+    name="dialog",
+)
+# dialog = Dialog(visible=True, closable=True, content=im_fig, name="dialog", draggable=True)
+
+# some setup
 
 color_cycler = ColorCycler()
 tg = TileGroup()
-tool_str = "pan,wheel_zoom,reset,save,fullscreen"
+tool_str = "pan,wheel_zoom,save,copy,fullscreen"
 req_args = []
 do_doc = False
 if curdoc().session_context is not None:
@@ -2274,10 +2554,15 @@ class DocConfig:
         base_doc.add_root(slide_wins)
         base_doc.add_root(control_tabs)
         base_doc.add_root(popup_table)
+        base_doc.add_root(dialog_content)
         base_doc.add_root(slide_info)
         base_doc.title = "Tiatoolbox Visualization Tool"
-        base_doc.template_variables["slide_folder"] = make_safe_name(doc_config["slide_folder"])
-        base_doc.template_variables["overlay_folder"] = make_safe_name(doc_config["overlay_folder"])
+        base_doc.template_variables["slide_folder"] = make_safe_name(
+            doc_config["slide_folder"],
+        )
+        base_doc.template_variables["overlay_folder"] = make_safe_name(
+            doc_config["overlay_folder"],
+        )
         return slide_wins, control_tabs
 
 

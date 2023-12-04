@@ -695,9 +695,13 @@ class TileServer(Flask):
 
         """
         session_id = self._get_session_id()
-        anns = self.get_ann_layer(session_id).store.query(
-            Point(x, y),
-        )
+        try:
+            anns = self.get_ann_layer(session_id).store.query(
+                Point(x, y),
+            )
+        except ValueError:
+            logger.warning("No annotations found at (%f, %f).", x, y)
+            return json.dumps({})
         if len(anns) == 0:
             return json.dumps({})
         return jsonify(list(anns.values())[-1].properties)
@@ -717,16 +721,16 @@ class TileServer(Flask):
         minv, maxv = prop_range
         self.renderers[session_id].score_fn = lambda x: (x - minv) / (maxv - minv)
         return "done"
-    
+
     def file_upload(self: TileServer) -> str:
-        file = request.files['file']
-        folder = request.form['folder']
+        file = request.files["file"]
+        folder = request.form["folder"]
         folder = self.decode_safe_name(folder)
         if file:
             # Save the file
             file.save(Path(folder) / file.filename)
-            return 'Upload successful!', 200
-        return 'No file uploaded', 400
+            return "Upload successful!", 200
+        return "No file uploaded", 400
 
     @staticmethod
     def shutdown() -> None:
