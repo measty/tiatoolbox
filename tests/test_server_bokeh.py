@@ -106,7 +106,7 @@ def test_cli_errors(data_path: dict[str, Path]) -> None:
     assert result.exit_code == 1
     assert (
         result.exc_info[1].args[0]
-        == "Must specify either base-path or both slide-path and overlay-path."
+        == "Must specify either base-path or both slides and overlays."
     )
 
     # test with non-existent input folder
@@ -115,9 +115,9 @@ def test_cli_errors(data_path: dict[str, Path]) -> None:
         [
             "visualize",
             "--noshow",
-            "--slide-path",
+            "--slides",
             str(data_path["base_path"] / "slides"),
-            "--overlay-path",
+            "--overlays",
             "non_existent_folder",
         ],
     )
