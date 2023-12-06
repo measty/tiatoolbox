@@ -774,7 +774,7 @@ def node_select_cb(attr: str, old: int, new: int) -> None:  # noqa: ARG001
 
 def overlay_toggle_cb(attr: str) -> None:  # noqa: ARG001
     """Callback to toggle the overlay on/off."""
-    for i in range(5, len(UI["p"].renderers)):
+    for i in range(N_PERMANENT_RENDERERS, len(UI["p"].renderers)):
         if UI["p"].renderers[i].alpha == 0:
             UI["p"].renderers[i].alpha = UI["overlay_alpha"].value
         else:
@@ -855,7 +855,7 @@ def slide_alpha_cb(attr: str, old: float, new: float) -> None:  # noqa: ARG001
 
 def overlay_alpha_cb(attr: str, old: float, new: float) -> None:  # noqa: ARG001
     """Callback to change the alpha of all overlay layers."""
-    for i in range(5, len(UI["p"].renderers)):
+    for i in range(N_PERMANENT_RENDERERS, len(UI["p"].renderers)):
         UI["p"].renderers[i].alpha = new
 
 
@@ -1944,8 +1944,8 @@ def gather_ui_elements(  # noqa: PLR0915
         ui_layout = column(
             [
                 ui_elements_1[el]
-                for el in doc_config["ui_elements_1"]
-                if doc_config["ui_elements_1"][el] == 1
+                for el in ui_elements_1
+                if get_from_config(["ui_elements_1", el], 1) == 1
             ],
             sizing_mode="stretch_width",
         )
@@ -1981,8 +1981,8 @@ def gather_ui_elements(  # noqa: PLR0915
         extra_options = column(
             [
                 ui_elements_2[el]
-                for el in doc_config["ui_elements_2"]
-                if doc_config["ui_elements_2"][el] == 1
+                for el in ui_elements_2
+                if get_from_config(["ui_elements_2", el], 1) == 1
             ],
         )
     else:
