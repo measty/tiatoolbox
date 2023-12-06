@@ -14,6 +14,7 @@ services:
       - ../app_data/:/app_data
     ports:
       - 20.0.0.13:8080:80
+    restart: on-failure
     networks:
       - tia-demos
 
