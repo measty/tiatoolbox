@@ -3,17 +3,23 @@ from __future__ import annotations
 
 import os
 import subprocess
+import sys
 from pathlib import Path
 from threading import Thread
 
 import click
-import pkg_resources
+
+if sys.version_info >= (3, 9):  # pragma: no cover
+    import importlib.resources as importlib_resources
+else:  # pragma: no cover
+    # To support Python 3.8
+    import importlib_resources  # type: ignore[import-not-found]
 from flask_cors import CORS
 
-from tiatoolbox.cli.common import cli_img_input, tiatoolbox_cli
+from tiatoolbox.cli.common import tiatoolbox_cli
 from tiatoolbox.visualization.tileserver import TileServer
 
-BOKEH_PATH = pkg_resources.resource_filename("tiatoolbox", "visualization/bokeh_app")
+BOKEH_PATH = importlib_resources.files("tiatoolbox.visualization.bokeh_app")
 
 
 def run_tileserver() -> None:
@@ -49,6 +55,8 @@ def run_bokeh(img_input: list[str], port: int, *, noshow: bool) -> None:
         "1000",
         "--check-unused-sessions",
         "1000",
+        "--websocket-max-message-size",
+        str(3000 * 1024 * 1024),
         "--args",
         *img_input,
     ]
@@ -56,13 +64,25 @@ def run_bokeh(img_input: list[str], port: int, *, noshow: bool) -> None:
 
 
 @tiatoolbox_cli.command()
-@cli_img_input(
-    usage_help="""Path to base directory containing images to be displayed.
-    If one instance of img-input is provided, Slides and overlays to be visualized
-    are expected in subdirectories of the base directory named slides and overlays,
-    respectively. It is also possible to provide a slide and overlay
-    path separately""",
-    multiple=True,
+@click.option(
+    "--base-path",
+    help="""Path to base directory containing images to be displayed.
+    Slides and overlays to be visualized are expected in subdirectories of the
+    base directory named slides and overlays, respectively. It is also possible
+    to provide a slide and overlay path separately
+    (use --slides and --overlays).""",
+)
+@click.option(
+    "--slides",
+    help="""Path to directory containing slides to be displayed.
+    This option must be used in conjunction with --overlay-path.
+    The --base-path option should not be used in this case.""",
+)
+@click.option(
+    "--overlays",
+    help="""Path to directory containing overlays to be displayed.
+    This option must be used in conjunction with --slides.
+    The --base-path option should not be used in this case.""",
 )
 @click.option(
     "--port",
@@ -71,18 +91,34 @@ def run_bokeh(img_input: list[str], port: int, *, noshow: bool) -> None:
     default=5006,
 )
 @click.option("--noshow", is_flag=True, help="Do not launch browser.")
-def visualize(img_input: list[str], port: int, *, noshow: bool) -> None:
+def visualize(
+    base_path: str,
+    slides: str,
+    overlays: str,
+    port: int,
+    *,
+    noshow: bool,
+) -> None:
     """Launches the visualization tool for the given directory(s).
 
-    If only one path is given, Slides and overlays to be visualized are expected in
-    subdirectories of the base directory named slides and overlays,
-    respectively.
+    If only base-path is given, Slides and overlays to be visualized are expected in
+    subdirectories of the base directory named slides and overlays, respectively.
+
+    Args:
+        base_path (str): Path to base directory containing images to be displayed.
+        slides (str): Path to directory containing slides to be displayed.
+        overlays (str): Path to directory containing overlays to be displayed.
+        port (int): Port to launch the visualization tool on.
+        noshow (bool): Do not launch in browser (mainly intended for testing).
 
     """
     # sanity check the input args
-    if len(img_input) == 0:
-        msg = "No input directory specified."
+    if base_path is None and (slides is None or overlays is None):
+        msg = "Must specify either base-path or both slides and overlays."
         raise ValueError(msg)
+    img_input = [base_path, slides, overlays]
+    img_input = [p for p in img_input if p is not None]
+    # check that the input paths exist
     for input_path in img_input:
         if not Path(input_path).exists():
             msg = f"{input_path} does not exist"

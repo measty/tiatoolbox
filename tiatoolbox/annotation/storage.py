@@ -46,6 +46,7 @@ from pathlib import Path
 from typing import (
     IO,
     TYPE_CHECKING,
+    Any,
     Callable,
     ClassVar,
     Generator,
@@ -1725,8 +1726,7 @@ class AnnotationStore(ABC, MutableMapping):
         fp: IO | str,
         scale_factor: tuple[float, float] = (1, 1),
         origin: tuple[float, float] = (0, 0),
-        *,
-        unpack_qupath_measurements: bool = False,
+        transform: Callable[[Annotation], Annotation] | None = None,
     ) -> AnnotationStore:
         """Create a new database with annotations loaded from a geoJSON file.
 
@@ -1739,21 +1739,47 @@ class AnnotationStore(ABC, MutableMapping):
                 annotations saved at non-baseline resolution.
             origin (Tuple[float, float]):
                 The x and y coordinates to use as the origin for the annotations.
-            unpack_qupath_measurements (bool):
-                If True, unpack QuPath measurements into individual properties of each
-                annotation. Defaults to False. Use only for .geojson exported by QuPath.
+            transform (Callable):
+                A function to apply to each annotation after loading. Should take an
+                annotation as input and return an annotation. Defaults to None.
+                Intended to facilitate modifying the way annotations are loaded to
+                accomodate the specifics of different annotation formats.
 
         Returns:
             AnnotationStore:
                 A new annotation store with the annotations loaded from the file.
 
+        Example:
+            To load annotations from a GeoJSON exported by QuPath, with measurements
+            stored in a 'measurements' property as a list of name-value pairs, and
+            unpack those measurements into a flat dictionary of properties of
+            each annotation:
+            >>> from tiatoolbox.annotation.storage import SQLiteStore
+            >>> def unpack_qupath(ann: Annotation) -> Annotation:
+            >>>    #Helper function to unpack QuPath measurements.
+            >>>    props = ann.properties
+            >>>    measurements = props.pop("measurements")
+            >>>    for m in measurements:
+            >>>        props[m["name"]] = m["value"]
+            >>>    return ann
+            >>> store = SQLiteStore.from_geojson(
+            ...     "exported_file.geojson",
+            ...     transform=unpack_qupath,
+            ... )
+
         """
         store = cls()
+        if transform is None:
+
+            def transform(annotation: Annotation) -> Annotation:
+                """Default import transform. Does Nothing."""
+                return annotation
+
         store.add_from_geojson(
             fp,
             scale_factor,
             origin=origin,
-            unpack_qupath_measurements=unpack_qupath_measurements,
+            transform=transform,
         )
         return store
 
@@ -1762,8 +1788,7 @@ class AnnotationStore(ABC, MutableMapping):
         fp: IO | str,
         scale_factor: tuple[float, float] = (1, 1),
         origin: tuple[float, float] = (0, 0),
-        *,
-        unpack_qupath_measurements: bool = False,
+        transform: Callable[[Annotation], Annotation] | None = None,
     ) -> None:
         """Add annotations from a .geojson file to an existing store.
 
@@ -1778,9 +1803,11 @@ class AnnotationStore(ABC, MutableMapping):
                 at non-baseline resolution.
             origin (Tuple[float, float]):
                 The x and y coordinates to use as the origin for the annotations.
-            unpack_qupath_measurements (bool):
-                If True, unpack QuPath measurements into individual properties of each
-                annotation. Defaults to False. Use only for .geojson exported by QuPath.
+            transform (Callable):
+                A function to apply to each annotation after loading. Should take an
+                annotation as input and return an annotation. Defaults to None.
+                Intended to facilitate modifying the way annotations are loaded to
+                accommodate the specifics of different annotation formats.
 
         """
 
@@ -1813,11 +1840,13 @@ class AnnotationStore(ABC, MutableMapping):
         )
 
         annotations = [
-            Annotation(
-                transform_geometry(
-                    feature2geometry(feature["geometry"]),
+            transform(
+                Annotation(
+                    transform_geometry(
+                        feature2geometry(feature["geometry"]),
+                    ),
+                    feature["properties"],
                 ),
-                unpack_qpath(feature["properties"]),
             )
             for feature in geojson["features"]
         ]
@@ -2206,13 +2235,13 @@ class SQLiteStore(AnnotationStore):
             self.con.commit()
         self.table_columns = self._get_table_columns()
 
-    def __getattribute__(self, name: str) -> Any:
+    def __getattribute__(self: SQLiteStore, name: str) -> Any:  # noqa: ANN401
         """If attr is con, return thread-local connection."""
         if name == "con":
             return self.get_connection(threading.get_ident())
         return super().__getattribute__(name)
 
-    def get_connection(self, thread_id) -> sqlite3.Connection:
+    def get_connection(self: SQLiteStore, thread_id: int) -> sqlite3.Connection:
         """Get a connection to the database."""
         if thread_id not in self.cons:
             con = sqlite3.connect(str(self.path), isolation_level="DEFERRED", uri=True)
@@ -2231,8 +2260,8 @@ class SQLiteStore(AnnotationStore):
                 return self._geometry_predicate(name, a, b)
 
             def pickle_expression(pickle_bytes: bytes, properties: str) -> bool:
-                """Function to load and execute pickle bytes with a "properties" dict."""
-                fn = pickle.loads(pickle_bytes)  # skipcq: BAN-B301
+                """Function to load and execute pickle bytes with "properties" dict."""
+                fn = pickle.loads(pickle_bytes)  # skipcq: BAN-B301  # noqa: S301
                 properties = json.loads(properties)
                 return fn(properties)
 
@@ -2249,6 +2278,7 @@ class SQLiteStore(AnnotationStore):
                 name: str,
                 nargs: int,
                 fn: Callable,
+                *,
                 deterministic: bool = False,
             ) -> None:
                 """Register a custom SQLite function.
@@ -2268,7 +2298,12 @@ class SQLiteStore(AnnotationStore):
 
                 """
                 try:
-                    con.create_function(name, nargs, fn, deterministic=deterministic)
+                    con.create_function(
+                        name,
+                        nargs,
+                        fn,
+                        deterministic=deterministic,
+                    )
                 except TypeError:
                     con.create_function(name, nargs, fn)
 
@@ -2448,9 +2483,6 @@ class SQLiteStore(AnnotationStore):
         self.optimize(vacuum=False, limit=1000)
         for con in self.cons.values():
             con.close()
-        self.metadata.con.close()
-        self.metadata = None
-        self.cons = {}
 
     def _make_token(self: SQLiteStore, annotation: Annotation, key: str | None) -> dict:
         """Create token data dict for tokenized SQL transaction."""

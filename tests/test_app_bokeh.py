@@ -5,24 +5,31 @@ import io
 import json
 import multiprocessing
 import re
+import sys
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Generator
 
-import bokeh.models as bkmodels
 import matplotlib.pyplot as plt
 import numpy as np
-import pkg_resources
+
+import bokeh.models as bkmodels
+
+if sys.version_info >= (3, 9):  # pragma: no cover
+    import importlib.resources as importlib_resources
+else:  # pragma: no cover
+    # To support Python 3.8
+    import importlib_resources  # type: ignore[import-not-found]
 import pytest
 import requests
-from bokeh.application import Application
-from bokeh.application.handlers import FunctionHandler
-from bokeh.events import ButtonClick, DoubleTap, MenuItemClick
 from flask_cors import CORS
 from matplotlib import colormaps
 from PIL import Image
 from scipy.ndimage import label
 
+from bokeh.application import Application
+from bokeh.application.handlers import FunctionHandler
+from bokeh.events import ButtonClick, DoubleTap, MenuItemClick
 from tiatoolbox.data import _fetch_remote_sample
 from tiatoolbox.visualization.bokeh_app import main
 from tiatoolbox.visualization.tileserver import TileServer
@@ -32,7 +39,7 @@ if TYPE_CHECKING:
     from bokeh.document import Document
 
 # constants
-BOKEH_PATH = pkg_resources.resource_filename("tiatoolbox", "visualization/bokeh_app")
+BOKEH_PATH = importlib_resources.files("tiatoolbox.visualization.bokeh_app")
 FILLED = 0
 MICRON_FORMATTER = 1
 GRIDLINES = 2
@@ -40,7 +47,21 @@ GRIDLINES = 2
 
 # helper functions and fixtures
 def get_tile(layer: str, x: float, y: float, z: float, *, show: bool) -> np.ndarray:
-    """Get a tile from the server."""
+    """Get a tile from the server.
+
+    Args:
+        layer (str):
+            The layer to get the tile from.
+        x (float):
+            The x coordinate of the tile.
+        y (float):
+            The y coordinate of the tile.
+        z (float):
+            The zoom level of the tile.
+        show (bool):
+            Whether to show the tile.
+
+    """
     source = main.UI["p"].renderers[main.UI["vstate"].layer_dict[layer]].tile_source
     url = source.url
     # replace {x}, {y}, {z} with tile coordinates
@@ -53,25 +74,22 @@ def get_tile(layer: str, x: float, y: float, z: float, *, show: bool) -> np.ndar
 
 
 def get_renderer_prop(prop: str) -> json:
-    """Get a renderer property from the server."""
+    """Get a renderer property from the server.
+
+    Args:
+        prop (str):
+            The property to get.
+
+    """
     resp = main.UI["s"].get(f"http://{main.host2}:5000/tileserver/renderer/{prop}")
     return resp.json()
-
-
-@pytest.fixture(scope="module")
-def data_path(tmp_path_factory: pytest.TempPathFactory) -> dict[str, object]:
-    """Set up a temporary data directory."""
-    tmp_path = tmp_path_factory.mktemp("data")
-    (tmp_path / "slides").mkdir()
-    (tmp_path / "overlays").mkdir()
-    return {"base_path": tmp_path}
 
 
 @pytest.fixture(scope="module", autouse=True)
 def annotation_path(data_path: dict[str, object]) -> dict[str, object]:
     """Download some testing slides and overlays.
 
-    Sets up a dictionary defining the paths to the files
+    Set up a dictionary defining the paths to the files
     that can be grabbed as a fixture to refer to during tests.
 
     """
@@ -100,7 +118,7 @@ def annotation_path(data_path: dict[str, object]) -> dict[str, object]:
         data_path["base_path"] / "overlays",
     )
     data_path["img_overlay"] = _fetch_remote_sample(
-        "rendered_annotations_svs_1",
+        "svs_1_rendered_annotations_jpg",
         data_path["base_path"] / "overlays",
     )
     data_path["geojson_anns"] = _fetch_remote_sample(
@@ -125,7 +143,7 @@ def run_app() -> None:
         layers={},
     )
     CORS(app, send_wildcard=True)
-    app.run(host="127.0.0.1", threaded=False)
+    app.run(host="127.0.0.1", threaded=True)
 
 
 @pytest.fixture(scope="module")
@@ -158,8 +176,8 @@ def test_to_num() -> None:
 def test_get_level_by_extent() -> None:
     """Test the get_level_by_extent function."""
     max_lev = 10
-    assert get_level_by_extent([1000, 1000, 1100, 1100]) == max_lev
-    assert get_level_by_extent([1000, 1000, 1000000, 1000000]) == 0
+    assert get_level_by_extent((1000, 1000, 1100, 1100)) == max_lev
+    assert get_level_by_extent((1000, 1000, 1000000, 1000000)) == 0
 
 
 # test the bokeh app
@@ -167,8 +185,8 @@ def test_get_level_by_extent() -> None:
 
 def test_roots(doc: Document) -> None:
     """Test that the document has the correct number of roots."""
-    # should be 3 roots: main window, controls, and popup table
-    assert len(doc.roots) == 3
+    # should be 4 roots: main window, controls, slide_info, popup table
+    assert len(doc.roots) == 4
 
 
 def test_config_loaded(data_path: pytest.TempPathFactory) -> None:
@@ -322,7 +340,7 @@ def test_type_cmap_select(doc: Document) -> None:
     cmap_select.value = ["prob"]
     # select a type to assign the cmap to
     cmap_select.value = ["prob", "0"]
-    # set edge thicknes to 0 so the edges don't add an extra colour
+    # set edge thickness to 0 so the edges don't add an extra colour
     spinner = doc.get_model_by_name("edge_size0")
     spinner.value = 0
     im = get_tile("overlay", 1, 2, 2, show=False)
@@ -413,7 +431,7 @@ def test_hovernet_on_box(doc: Document, data_path: pytest.TempPathFactory) -> No
     """Test running hovernet on a box."""
     slide_select = doc.get_model_by_name("slide_select0")
     slide_select.value = [data_path["slide2"].name]
-    go_button = doc.get_model_by_name("to_model0")
+    run_button = doc.get_model_by_name("to_model0")
     assert len(main.UI["color_column"].children) == 0
     slide_select.value = [data_path["slide1"].name]
     # set up a box selection
@@ -426,11 +444,10 @@ def test_hovernet_on_box(doc: Document, data_path: pytest.TempPathFactory) -> No
 
     # select hovernet model and run it on box
     model_select = doc.get_model_by_name("model_drop0")
-    click = MenuItemClick(model_select, model_select.menu[0])
-    model_select._trigger_event(click)
+    model_select.value = "hovernet"
 
-    click = ButtonClick(go_button)
-    go_button._trigger_event(click)
+    click = ButtonClick(run_button)
+    run_button._trigger_event(click)
     im = get_tile("overlay", 4, 8, 4, show=False)
     _, num = label(np.any(im[:, :, :3], axis=2))
     # check there are multiple cells being detected
@@ -688,24 +705,43 @@ def test_color_cycler() -> None:
 def test_cmap_select(doc: Document) -> None:
     """Test changing the cmap."""
     cmap_select = doc.get_model_by_name("cmap0")
-    main.UI["cprop_input"].value = ["type"]
-    # set the cmap to "viridis"
-    cmap_select.value = "viridis"
+
+    main.UI["cprop_input"].value = ["prob"]
+    # set to jet
+    cmap_select.value = "jet"
     resp = main.UI["s"].get(f"http://{main.host2}:5000/tileserver/cmap")
-    assert resp.json() == "viridis"
+    assert resp.json() == "jet"
+    # set to dict
     cmap_select.value = "dict"
     resp = main.UI["s"].get(f"http://{main.host2}:5000/tileserver/cmap")
+    assert isinstance(resp.json(), dict)
+
+    main.UI["cprop_input"].value = ["type"]
     # should now be the type mapping
+    resp = main.UI["s"].get(f"http://{main.host2}:5000/tileserver/cmap")
     for key in main.UI["vstate"].mapper:
         assert str(key) in resp.json()
         assert np.all(
             np.array(resp.json()[str(key)]) == np.array(main.UI["vstate"].mapper[key]),
         )
-
-    main.UI["cprop_input"].value = ["prob"]
-    cmap_select.value = "dict"
+    # set the cmap to "coolwarm"
+    cmap_select.value = "coolwarm"
     resp = main.UI["s"].get(f"http://{main.host2}:5000/tileserver/cmap")
-    assert len(resp.json()) > 10
+    # as cprop is type (categorical), it should have had no effect
+    for key in main.UI["vstate"].mapper:
+        assert str(key) in resp.json()
+        assert np.all(
+            np.array(resp.json()[str(key)]) == np.array(main.UI["vstate"].mapper[key]),
+        )
+    # set to jet
+    cmap_select.value = "jet"
+    resp = main.UI["s"].get(f"http://{main.host2}:5000/tileserver/cmap")
+    assert resp.json() == "jet"
+    # set to dict
+    main.UI["cprop_input"].value = ["prob"]
+    resp = main.UI["s"].get(f"http://{main.host2}:5000/tileserver/cmap")
+    # should be coolwarm as thats the last cmap we set, and prob is continuous
+    assert resp.json() == "coolwarm"
 
 
 def test_option_buttons() -> None:

@@ -11,11 +11,13 @@ from typing import IO, TYPE_CHECKING
 
 import cv2
 import joblib
+import numcodecs
 import numpy as np
 import pandas as pd
 import requests
 import torch
 import yaml
+import zarr
 from filelock import FileLock
 from shapely.affinity import translate
 from shapely.geometry import Polygon
@@ -27,19 +29,19 @@ from tiatoolbox.annotation.storage import Annotation, AnnotationStore, SQLiteSto
 from tiatoolbox.utils.exceptions import FileNotSupportedError
 
 if TYPE_CHECKING:  # pragma: no cover
-    import os
     from os import PathLike
 
+    import numpy.typing as npt
     from shapely import geometry
 
 
 def split_path_name_ext(
-    full_path: os | PathLike,
+    full_path: PathLike | str,
 ) -> tuple[Path, str, list[str]]:
     """Split path of a file to directory path, file name and extensions.
 
     Args:
-        full_path (os | PathLike):
+        full_path (PathLike | str):
             Path to a file.
 
     Returns:
@@ -59,13 +61,13 @@ def split_path_name_ext(
 
 
 def grab_files_from_dir(
-    input_path: os | PathLike,
-    file_types: str | tuple[str] = ("*.jpg", "*.png", "*.tif"),
+    input_path: PathLike,
+    file_types: str | tuple[str, ...] = ("*.jpg", "*.png", "*.tif"),
 ) -> list[Path]:
     """Grab file paths specified by file extensions.
 
     Args:
-        input_path (os | PathLike):
+        input_path (PathLike):
             Path to the directory where files
             need to be searched.
         file_types (str or tuple(str)):
@@ -91,7 +93,7 @@ def grab_files_from_dir(
         else:
             file_types = (file_types,)
 
-    files_grabbed = []
+    files_grabbed: list[Path] = []
     for files in file_types:
         files_grabbed.extend(input_path.glob(files))
     # Ensure same ordering
@@ -101,7 +103,7 @@ def grab_files_from_dir(
 
 def save_yaml(
     input_dict: dict,
-    output_path: os | PathLike = "output.yaml",
+    output_path: PathLike = Path("output.yaml"),
     *,
     parents: bool = False,
     exist_ok: bool = False,
@@ -111,7 +113,7 @@ def save_yaml(
     Args:
         input_dict (dict):
             A variable of type 'dict'.
-        output_path (os | PathLike):
+        output_path (PathLike):
             Path to save the output file.
         parents (bool):
             Make parent directories if they do not exist. Default is
@@ -135,11 +137,11 @@ def save_yaml(
         yaml.dump(input_dict, yaml_file)
 
 
-def imwrite(image_path: os | PathLike, img: np.ndarray) -> None:
+def imwrite(image_path: PathLike, img: np.ndarray) -> None:
     """Write numpy array to an image.
 
     Args:
-        image_path (os | PathLike):
+        image_path (PathLike):
             File path (including extension) to save image to.
         img (:class:`numpy.ndarray`):
             Image array of dtype uint8, MxNx3.
@@ -151,19 +153,18 @@ def imwrite(image_path: os | PathLike, img: np.ndarray) -> None:
         ...     np.ones([100, 100, 3]).astype('uint8')*255)
 
     """
-    if isinstance(image_path, Path):
-        image_path = str(image_path)
+    image_path_str = str(image_path)
 
-    if not cv2.imwrite(image_path, cv2.cvtColor(img, cv2.COLOR_RGB2BGR)):
+    if not cv2.imwrite(image_path_str, cv2.cvtColor(img, cv2.COLOR_RGB2BGR)):
         msg = "Could not write image."
         raise OSError(msg)
 
 
-def imread(image_path: os | PathLike, as_uint8: bool | None = None) -> np.ndarray:
+def imread(image_path: PathLike, as_uint8: bool | None = None) -> np.ndarray:
     """Read an image as numpy array.
 
     Args:
-        image_path (os | PathLike):
+        image_path (PathLike):
             File path (including extension) to read image.
         as_uint8 (bool):
             Read an image in uint8 format.
@@ -198,11 +199,11 @@ def imread(image_path: os | PathLike, as_uint8: bool | None = None) -> np.ndarra
     return image
 
 
-def load_stain_matrix(stain_matrix_input: np.ndarray | os | PathLike) -> np.ndarray:
+def load_stain_matrix(stain_matrix_input: np.ndarray | PathLike) -> np.ndarray:
     """Load a stain matrix as a numpy array.
 
     Args:
-        stain_matrix_input (ndarray or os | PathLike):
+        stain_matrix_input (ndarray | PathLike):
             Either a 2x3 or 3x3 numpy array or a path to a saved .npy /
             .csv file. If using a .csv file, there should be no column
             headers provided
@@ -276,8 +277,7 @@ def get_luminosity_tissue_mask(img: np.ndarray, threshold: float) -> np.ndarray:
 
 def mpp2common_objective_power(
     mpp: float | tuple[float, float],
-    common_powers: float
-    | tuple[float, ...] = (
+    common_powers: tuple[float, ...] = (
         1,
         1.25,
         2,
@@ -330,7 +330,9 @@ mpp2common_objective_power = np.vectorize(
 
 
 @np.vectorize
-def objective_power2mpp(objective_power: float | tuple[float]) -> float | tuple[float]:
+def objective_power2mpp(
+    objective_power: float | tuple[float, ...],
+) -> float | np.ndarray:
     r"""Approximate mpp from objective power.
 
     The formula used for estimation is :math:`power = \frac{10}{mpp}`.
@@ -340,10 +342,10 @@ def objective_power2mpp(objective_power: float | tuple[float]) -> float | tuple[
     Note that this function is wrapped in :class:`numpy.vectorize`.
 
     Args:
-        objective_power (float or tuple(float)): Objective power.
+        objective_power (float or tuple(float, ...)): Objective power.
 
     Returns:
-        float or tuple(float):
+        float or tuple(float | np.ndarray):
             Microns per-pixel (MPP) approximations.
 
     Examples:
@@ -354,7 +356,7 @@ def objective_power2mpp(objective_power: float | tuple[float]) -> float | tuple[
         array([0.25, 0.5, 1.])
 
     """
-    return 10 / float(objective_power)
+    return 10.0 / np.array(objective_power)
 
 
 @np.vectorize
@@ -414,7 +416,8 @@ def contrast_enhancer(img: np.ndarray, low_p: int = 2, high_p: int = 98) -> np.n
         msg = "Image should be uint8."
         raise AssertionError(msg)
     img_out = img.copy()
-    p_low, p_high = np.percentile(img_out, (low_p, high_p))
+    percentiles = np.array(np.percentile(img_out, (low_p, high_p)))
+    p_low, p_high = percentiles[0], percentiles[1]
     if p_low >= p_high:
         p_low, p_high = np.min(img_out), np.max(img_out)
     if p_high > p_low:
@@ -423,7 +426,7 @@ def contrast_enhancer(img: np.ndarray, low_p: int = 2, high_p: int = 98) -> np.n
             in_range=(p_low, p_high),
             out_range=(0.0, 255.0),
         )
-    return np.uint8(img_out)
+    return img_out.astype(np.uint8)
 
 
 def __numpy_array_to_table(input_table: np.ndarray) -> pd.DataFrame:
@@ -453,11 +456,11 @@ def __numpy_array_to_table(input_table: np.ndarray) -> pd.DataFrame:
     raise ValueError(msg)
 
 
-def __assign_unknown_class(input_table: np.ndarray | pd.DataFrame) -> pd.DataFrame:
+def __assign_unknown_class(input_table: pd.DataFrame) -> pd.DataFrame:
     """Creates a column and assigns None if class is unknown.
 
     Args:
-        input_table: (np.ndarray or pd.DataFrame):
+        input_table: (pd.DataFrame):
             input table.
 
     Returns:
@@ -479,12 +482,12 @@ def __assign_unknown_class(input_table: np.ndarray | pd.DataFrame) -> pd.DataFra
 
 
 def read_locations(
-    input_table: os | PathLike | np.ndarray | pd.DataFrame,
+    input_table: PathLike | np.ndarray | pd.DataFrame,
 ) -> pd.DataFrame:
     """Read annotations as pandas DataFrame.
 
     Args:
-        input_table (os | PathLike | np.ndarray | pd.DataFrame`):
+        input_table (PathLike | np.ndarray | pd.DataFrame`):
             Path to csv, npy or json. Input can also be a
             :class:`numpy.ndarray` or :class:`pandas.DataFrame`.
             First column in the table represents x position, second
@@ -637,7 +640,7 @@ def parse_cv2_interpolaton(interpolation: str | int) -> int:
 def assert_dtype_int(
     input_var: np.ndarray,
     message: str = "Input must be integer.",
-) -> AssertionError or None:
+) -> None:
     """Generate error if dtype is not int.
 
     Args:
@@ -657,8 +660,8 @@ def assert_dtype_int(
 
 def download_data(
     url: str,
-    save_path: os | PathLike | None = None,
-    save_dir: os | PathLike | None = None,
+    save_path: PathLike | None = None,
+    save_dir: PathLike | None = None,
     *,
     overwrite: bool = False,
     unzip: bool = False,
@@ -668,12 +671,12 @@ def download_data(
     The function can overwrite data if demanded else no action is taken.
 
     Args:
-        url (str | Path):
+        url (str):
             URL from where to download the data.
-        save_path (os | PathLike):
+        save_path (PathLike):
             Location to download the data (including filename).
             Can't be used with save_dir.
-        save_dir (os | PathLike):
+        save_dir (PathLike):
             Directory to save the data. Can't be used with save_path.
         overwrite (bool):
             True to force overwriting of existing data, default=False
@@ -727,23 +730,23 @@ def download_data(
 
         if unzip:
             unzip_path = save_dir / save_path.stem
-            unzip_data(str(save_path), str(unzip_path), del_zip=False)
+            unzip_data(save_path, unzip_path, del_zip=False)
             return unzip_path
 
     return save_path
 
 
 def unzip_data(
-    zip_path: os | PathLike,
-    save_path: os | PathLike,
+    zip_path: PathLike,
+    save_path: PathLike,
     *,
     del_zip: bool = True,
 ) -> None:
     """Extract data from zip file.
 
     Args:
-        zip_path (os | PathLike): Path where the zip file is located.
-        save_path (os | PathLike): Path where to save extracted files.
+        zip_path (PathLike): Path where the zip file is located.
+        save_path (PathLike): Path where to save extracted files.
         del_zip (bool): Whether to delete initial zip file after extraction.
 
     """
@@ -827,7 +830,7 @@ def save_as_json(
     Args:
         data (dict or list):
             Input data to save.
-        save_path (os | PathLike):
+        save_path (PathLike):
             Output to save the json of `input`.
         parents (bool):
             Make parent directories if they do not exist. Default is
@@ -920,7 +923,7 @@ def get_bounding_box(img: np.ndarray) -> np.ndarray:
     return np.array([c_min, r_min, cmax, r_max])
 
 
-def string_to_tuple(in_str: str) -> tuple[str]:
+def string_to_tuple(in_str: str) -> tuple[str, ...]:
     """Splits input string to tuple at ','.
 
     Args:
@@ -928,7 +931,7 @@ def string_to_tuple(in_str: str) -> tuple[str]:
             input string.
 
     Returns:
-        tuple:
+        tuple[str, ...]:
             Return a tuple of strings by splitting in_str at ','.
 
     """
@@ -967,11 +970,11 @@ def ppu2mpp(ppu: int, units: str | int) -> float:
     return 1 / ppu * microns_per_unit[units]
 
 
-def select_cv2_interpolation(scale_factor: float) -> str:
+def select_cv2_interpolation(scale_factor: float | npt.NDArray[np.float64]) -> str:
     """Return appropriate interpolation method for opencv based image resize.
 
     Args:
-        scale_factor (float):
+        scale_factor (float or np.ndarray[float, float]):
             Image resize scale factor.
 
     Returns:
@@ -985,7 +988,7 @@ def select_cv2_interpolation(scale_factor: float) -> str:
 
 
 def store_from_dat(
-    fp: IO | os | PathLike,
+    fp: IO | PathLike,
     scale_factor: tuple[float, float] = (1, 1),
     typedict: dict | None = None,
     origin: tuple[float, float] = (0, 0),
@@ -994,13 +997,15 @@ def store_from_dat(
     """Load annotations from a hovernet-style .dat file.
 
     Args:
-        fp (IO | os | PathLike):
+        fp (IO | PathLike):
             The file path or handle to load from.
         scale_factor (Tuple[float, float]):
             The scale factor in each dimension to use when loading the annotations.
             All coordinates will be multiplied by this factor to allow import of
             annotations saved at non-baseline resolution. Should be model_mpp/slide_mpp,
             where model_mpp is the resolution at which the annotations were saved.
+            If scale information is stored in the .dat file (as in cerberus output),
+            that will be used and this arg will be ignored.
         typedict (Dict[str, str]):
             A dictionary mapping annotation types to annotation keys. Annotations
             with a type that is a key in the dictionary, will have their type
@@ -1022,6 +1027,7 @@ def store_from_dat(
     """
     store = cls()
     add_from_dat(store, fp, scale_factor, typedict=typedict, origin=origin)
+    store.create_index("area", '"area"')
     return store
 
 
@@ -1042,7 +1048,7 @@ def make_valid_poly(
             A valid geometry.
 
     """
-    if origin != (0, 0):
+    if origin != (0, 0) and origin is not None:
         # transform coords to be relative to given pt.
         poly = translate(poly, -origin[0], -origin[1])
     if poly.is_valid:
@@ -1054,9 +1060,9 @@ def make_valid_poly(
 def anns_from_hoverdict(
     data: dict,
     props: list,
-    typedict: dict,
-    origin: tuple,
-    scale_factor: float,
+    typedict: dict | None,
+    origin: tuple[float, float],
+    scale_factor: tuple[float, float],
 ) -> list[Annotation]:
     """Helper function to create list of Annotation objects.
 
@@ -1070,9 +1076,9 @@ def anns_from_hoverdict(
             A list of properties
         typedict (dict):
             A dictionary mapping annotation types to more descriptive names.
-        origin (tuple):
+        origin (tuple[float, float]):
             The x and y coordinates to use as the origin for the annotations.
-        scale_factor (float):
+        scale_factor (tuple[float, float]):
             The scale factor to use when loading the annotations. All coordinates
             will be multiplied by this factor.
 
@@ -1132,8 +1138,8 @@ def make_default_dict(data: dict, subcat: str) -> dict:
 
 
 def add_from_dat(
-    store: list[AnnotationStore],
-    fp: IO | os | PathLike,
+    store: AnnotationStore,
+    fp: IO | PathLike,
     scale_factor: tuple[float, float] = (1, 1),
     typedict: dict | None = None,
     origin: tuple[float, float] = (0, 0),
@@ -1145,12 +1151,15 @@ def add_from_dat(
     Args:
         store (AnnotationStore):
             An :class:`AnnotationStore` object.
-        fp (IO | os | PathLike):
+        fp (IO | PathLike):
             The file path or handle to load from.
-        scale_factor (float):
+        scale_factor (tuple[float, float]):
             The scale factor to use when loading the annotations. All coordinates
             will be multiplied by this factor to allow import of annotations saved
-            at non-baseline resolution.
+            at non-baseline resolution. Should be model_mpp/slide_mpp, where
+            model_mpp is the resolution at which the annotations were saved.
+            If scale information is stored in the .dat file (as in cerberus output),
+            that will be used and this arg will be ignored.
         typedict (Dict[str, str]):
             A dictionary mapping annotation types to annotation keys. Annotations
             with a type that is a key in the dictionary, will have their type
@@ -1166,11 +1175,23 @@ def add_from_dat(
     """
     data = joblib.load(fp)
     props = list(data[next(iter(data.keys()))].keys())
+    if "base_resolution" in data and "proc_resolution" in data:
+        # we can infer scalefactor from resolutions
+        scale_factor = (
+            data["proc_resolution"]["resolution"]
+            / data["base_resolution"]["resolution"]
+        )
+        logger.info("Scale factor inferred from resolutions: %s", scale_factor)
     if "contour" not in props:
         # assume cerberus format with objects subdivided into categories
         anns = []
         for subcat in data:
-            if subcat == "resolution":
+            if (
+                subcat == "resolution"
+                or subcat == "proc_dimensions"
+                or subcat == "base_dimensions"
+                or "resolution" in subcat
+            ):
                 continue
             props = next(iter(data[subcat].values()))
             if not isinstance(props, dict):
@@ -1197,24 +1218,34 @@ def add_from_dat(
     store.append_many(anns)
 
 
-def patch_pred_store(
+def dict_to_store(
     patch_output: dict,
     scale_factor: tuple[int, int],
     class_dict: dict | None = None,
-) -> AnnotationStore:
-    """Create an SQLiteStore containing Annotations for each patch.
+    save_path: Path | None = None,
+) -> AnnotationStore | Path:
+    """Converts (and optionally saves) output of TIAToolbox engines as AnnotationStore.
 
     Args:
-        patch_output (dict): A dictionary of patch prediction information. Important
+        patch_output (dict):
+            A dictionary in the TIAToolbox Engines output format. Important
             keys are "probabilities", "predictions", "coordinates", and "labels".
-        scale_factor (tuple[int, int]): The scale factor to use when loading the
+        scale_factor (tuple[int, int]):
+            The scale factor to use when loading the
             annotations. All coordinates will be multiplied by this factor to allow
             conversion of annotations saved at non-baseline resolution to baseline.
             Should be model_mpp/slide_mpp.
-        class_dict (dict): Optional dictionary mapping class indices to class names.
+        class_dict (dict):
+            Optional dictionary mapping class indices to class names.
+        save_path (str or Path):
+            Optional Output directory to save the Annotation
+            Store results.
 
     Returns:
-        SQLiteStore: An SQLiteStore containing Annotations for each patch.
+        (SQLiteStore or Path):
+            An SQLiteStore containing Annotations for each patch
+            or Path to file storing SQLiteStore containing Annotations
+            for each patch.
 
     """
     if "coordinates" not in patch_output:
@@ -1236,7 +1267,7 @@ def patch_pred_store(
     if class_dict is None:
         # if no class dict create a default one
         class_dict = {i: i for i in np.unique(preds + labels).tolist()}
-    annotations = []
+
     # find what keys we need to save
     keys = ["predictions"]
     keys = keys + [key for key in ["probabilities", "labels"] if key in patch_output]
@@ -1257,4 +1288,56 @@ def patch_pred_store(
     store = SQLiteStore()
     keys = store.append_many(annotations, [str(i) for i in range(len(annotations))])
 
+    # if a save director is provided, then dump store into a file
+    if save_path:
+        # ensure parent directory exisits
+        save_path.parent.absolute().mkdir(parents=True, exist_ok=True)
+        # ensure proper db extension
+        save_path = save_path.parent.absolute() / (save_path.stem + ".db")
+        store.dump(save_path)
+        return save_path
+
     return store
+
+
+def dict_to_zarr(
+    raw_predictions: dict,
+    save_path: Path,
+    **kwargs: dict,
+) -> Path:
+    """Saves the output of TIAToolbox engines to a zarr file.
+
+    Args:
+        raw_predictions (dict):
+            A dictionary in the TIAToolbox Engines output format.
+        save_path (str or Path):
+            Path to save the zarr file.
+        **kwargs (dict):
+            Keyword Args to update patch_pred_store_zarr attributes.
+
+
+    Returns:
+        Path to zarr file storing the patch predictor output
+
+    """
+    # Default values for Compressor and Chunks set if not received from kwargs.
+    compressor = (
+        kwargs["compressor"] if "compressor" in kwargs else numcodecs.Zstd(level=1)
+    )
+    chunks = kwargs["chunks"] if "chunks" in kwargs else 10000
+
+    # ensure proper zarr extension
+    save_path = save_path.parent.absolute() / (save_path.stem + ".zarr")
+
+    # save to zarr
+    predictions_array = np.array(raw_predictions["predictions"])
+    z = zarr.open(
+        save_path,
+        mode="w",
+        shape=predictions_array.shape,
+        chunks=chunks,
+        compressor=compressor,
+    )
+    z[:] = predictions_array
+
+    return save_path
