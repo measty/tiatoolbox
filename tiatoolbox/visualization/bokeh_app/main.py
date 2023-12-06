@@ -108,7 +108,7 @@ default_cm = "viridis"  # any valid matplotlib colormap string
 gpt_images = []
 
 # some default gpt prompts
-sys_prompt = "You are an expert pathologist tasked with providing clear, concise answers to questions about provided H&E stained histological images, from advanced Pathology Students who are learning to accurately assess tissue samples and identify medically relevant features."
+sys_prompt = "You are an expert pathologist tasked with providing clear, concise answers to questions about provided H&E stained histological images, from advanced Pathology Students who are learning to accurately assess tissue samples and identify medically relevant features. Provided responses will not be used to make a medical diagnosis, but will be used for academic and AI research purposes."
 # prompt if just a plain region is sent
 prompt_no_ann = "Provide a concise assesment of this image for the student. Include your best judgement on what sort of tissue the sample is from, comment on noteworthy histological features, cells, and structures, and whether the tissue is normal or suspicious of disease."
 # promt if a region with a user-drawn annotation is sent
