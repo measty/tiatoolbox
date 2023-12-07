@@ -53,6 +53,7 @@ from bokeh.models import (
     Model,
     MultiChoice,
     NumericInput,
+    PasswordInput,
     PointDrawTool,
     RadioButtonGroup,
     RangeSlider,
@@ -104,26 +105,126 @@ DO_UPDATE = 2
 
 default_cm = "viridis"  # any valid matplotlib colormap string
 
+
 # ---- GPT stuff ----
-gpt_images = []
+class GPTInterface:
+    """Class to handle GPT requests."""
 
-# some default gpt prompts
-sys_prompt = "You are an expert pathologist tasked with providing clear, concise answers to questions about provided H&E stained histological images, from advanced Pathology Students who are learning to accurately assess tissue samples and identify medically relevant features."
-# prompt if just a plain region is sent
-prompt_no_ann = "Provide a concise assesment of this image for the student. Include your best judgement on what sort of tissue the sample is from, comment on noteworthy histological features, cells, and structures, and whether the tissue is normal or suspicious of disease."
-# promt if a region with a user-drawn annotation is sent
-prompt_ann = "Provide a concise assesment of this image for the student. Include your best judgement on what sort of tissue the sample is from, comment on noteworthy histological features (paying particular attention to the regions indicated by green annotations), and whether the tissue is normal or suspicious of disease."
+    def __init__(self: GPTInterface) -> None:
+        """Initialise the class."""
+        # client for openai reqs
+        self.api_key = os.environ.get("OPENAI_API_KEY")
+        if self.api_key is None:
+            logger.warning(
+                "OPENAI_API_KEY not set, GPT-Vision will not work. Add as a system environment variable on your machine, or in .env file.",
+            )
+            self.client = None
+        else:
+            # we have an api key, so set up the client
+            self.client = OpenAI(api_key=self.api_key)
 
-# client for openai reqs
-api_key = os.environ.get("OPENAI_API_KEY")
-if api_key is None:
-    logger.warning(
-        "OPENAI_API_KEY not set, GPT-Vision will not work. Add as a system environment variable on your machine, or in .env file.",
-    )
-    client = None
-else:
-    # we have an api key, so set up the client
-    client = OpenAI(api_key=api_key)
+        # will store short history of prompts and responses
+        self.gpt_images = []
+        self.gpt_prompts = []
+        self.gpt_responses = []
+        self.max_history = 5
+
+        # some default gpt prompts
+        self.sys_prompt = "You are an expert pathologist tasked with providing clear, concise answers to questions about provided H&E stained histological images, from advanced Pathology Students who are learning to accurately assess tissue samples and identify medically relevant features. Provided responses will be used for educational and research purposes only and so do not constitute medical advice."
+        # prompt if just a plain region is sent
+        self.prompt_no_ann = "Provide a concise assesment of this image for the student. Comment on noteworthy histological features and structures, and any abnormalities present."
+        # promt if a region with a user-drawn annotation is sent
+        self.prompt_ann = "Provide a concise assesment of this image for the student. Comment on noteworthy histological features and structures (paying particular attention to the regions indicated by green annotations), and any abnormalities present."
+
+    def update_api_key(self: GPTInterface, api_key: str) -> None:
+        """Update the api key."""
+        self.api_key = api_key
+        self.client = OpenAI(api_key=self.api_key)
+
+    def add_img(self: GPTInterface, img: np.array) -> None:
+        """Add an image to the history."""
+        if len(self.gpt_images) >= self.max_history:
+            self.gpt_images.pop(0)
+        self.gpt_images.append(img)
+
+    def send(self: GPTInterface, prompt: str) -> Any:
+        im_size = self.gpt_images[-1].size
+        base64_image = encode_image(self.gpt_images[-1])
+
+        print(f"sending image size: {im_size} to gpt-vision.")
+        # send a message containing the image
+        prompt_input.value = "Sent to GPT-Vision. Waiting for response - this typically takes < 10 seconds, but may take longer if openAI server is busy. It may occasionally fail."
+        tries = 0
+        text = "Failed to get response from GPT-Vision."
+        completion = None
+        while tries < 3:
+            try:
+                completion = self.client.chat.completions.create(
+                    model="gpt-4-vision-preview",
+                    messages=[
+                        {
+                            "role": "system",
+                            "content": self.sys_prompt,
+                        },
+                        {
+                            "role": "user",
+                            "content": [
+                                prompt,
+                                {"image": base64_image},
+                            ],
+                        },
+                    ],
+                    max_tokens=500,
+                )
+                break
+            except InternalServerError as e:
+                print(
+                    f"error: {e} when sending to gpt-vision. trying again (try {tries} / 3)",
+                )
+                tries += 1
+                time.sleep(1)
+
+        print("response received.")
+        # extract the text from the response
+        if completion is not None:
+            print(completion)
+            text = completion.choices[0].message.content
+
+        # add the prompt and response to the history
+        if len(self.gpt_prompts) >= self.max_history:
+            self.gpt_prompts.pop(0)
+            self.gpt_responses.pop(0)
+        self.gpt_prompts.append(prompt)
+        self.gpt_responses.append(text)
+
+        return text
+
+    def save_history(self: GPTInterface, path: Path, last_n=1) -> None:
+        """Save the last n prompts, responses and images in the history
+        to a file.
+
+        """
+        # make folder if it doesn't exist
+        path.mkdir(parents=True, exist_ok=True)
+        # files saved with form gpt_prompts_i.pkl - find the next i
+        i = 0
+        while (path / f"gpt_prompts_{i}.pkl").exists():
+            i += 1
+        path = path / f"gpt_prompts_{i}.pkl"
+        # save the last n prompts, responses and images
+        with open(path, "wb") as f:
+            pickle.dump(
+                {
+                    "prompts": self.gpt_prompts[-last_n:],
+                    "responses": self.gpt_responses[-last_n:],
+                    "images": self.gpt_images[-last_n:],
+                },
+                f,
+            )
+        print(f"saved last {last_n} prompts, responses and images to {path}")
+
+
+gpt_interface = GPTInterface()
 # -------------------
 
 # stylesheets to format some things better
@@ -1394,10 +1495,10 @@ def gpt_inference() -> None:
         height += int(200 / scale)
 
     if len(UI["ml_source"].data["xs"]) > 0:
-        prompt = prompt_ann
+        prompt = gpt_interface.prompt_ann
     else:
         # we've drawn nothing, so use the no annotation prompt
-        prompt = prompt_no_ann
+        prompt = gpt_interface.prompt_no_ann
 
     if max(width, height) > 1500:
         # we will resize the region to 1500px max by reading at lower res
@@ -1459,12 +1560,7 @@ def gpt_inference() -> None:
         im_fig.image_rgba(image=[img_array], x=0, y=0, dw=100 * aspect_ratio, dh=100)
     prompt_input.value = prompt
     # dialog.visible = True
-    if len(gpt_images) < 5:
-        # keep a history of 5 max images
-        gpt_images.append(Image.fromarray(region))
-    else:
-        gpt_images.pop(0)
-        gpt_images.append(Image.fromarray(region))
+    gpt_interface.add_img(Image.fromarray(region))
 
 
 def segment_on_box() -> None:
@@ -2261,48 +2357,31 @@ popup_table = DataTable(
 
 def submit_cb(event: ButtonClick) -> None:
     """Callback to submit prompt to gpt-vision via api."""
+    if gpt_interface.api_key is None:
+        # no api key found
+        prompt_input.value = (
+            "No API key found. Please set the OPENAI_API_KEY environment variable."
+        )
+        return
     prompt = prompt_input.value
-    im_size = gpt_images[-1].size
-    base64_image = encode_image(gpt_images[-1])
 
-    print(f"sending image size: {im_size} to gpt-vision.")
-    # send a message containing the image
-    prompt_input.value = "Sent to GPT-Vision. Waiting for response - this typically takes < 10 seconds, but may take longer if openAI server is busy. It may occasionally fail."
-    tries = 0
-    while tries < 3:
-        try:
-            completion = client.chat.completions.create(
-                model="gpt-4-vision-preview",
-                messages=[
-                    {
-                        "role": "system",
-                        "content": sys_prompt,
-                    },
-                    {
-                        "role": "user",
-                        "content": [
-                            prompt,
-                            {"image": base64_image},
-                        ],
-                    },
-                ],
-                max_tokens=500,
-            )
-            break
-        except InternalServerError as e:
-            print(
-                f"error: {e} when sending to gpt-vision. trying again (try {tries} / 3)",
-            )
-            tries += 1
-            time.sleep(1)
-
-    print("response received.")
-    # extract the text from the response
-    print(completion)
-    text = completion.choices[0].message.content
+    text = gpt_interface.send(prompt)
 
     # update the popup
     prompt_input.value = text
+
+
+def gpt_save_cb(event: ButtonClick) -> None:
+    """Callback to save the last image sent to gpt-vision to disk,
+    together with the prompt and response.
+
+    """
+    gpt_interface.save_history(get_from_config(["overlay_folder"]) / "gpt_prompts", 1)
+
+
+def api_input_cb(attr: str, old: str, new: str) -> None:
+    """Callback to update api key when input changes."""
+    gpt_interface.update_api_key(new)
 
 
 #
@@ -2315,8 +2394,16 @@ im_fig = figure(
     name="im_fig",
 )
 im_fig.axis.visible = False
+api_key_input = PasswordInput(
+    placeholder="enter api key..",
+    title="OpenAI API Key:",
+    width=300,
+    height=50,
+    sizing_mode="stretch_width",
+)
 prompt_input = TextAreaInput(value=".", rows=7, width=350, height=250)
 submit_button = Button(label="Submit", button_type="success")
+gpt_save_button = Button(label="Save", button_type="success")
 close_button = Button(label="Close", button_type="success")
 js_popup_code = """
     var popupContent = document.getElementById('gpt-popup');
@@ -2325,10 +2412,28 @@ js_popup_code = """
 
 close_button.js_on_event(ButtonClick, CustomJS(code=js_popup_code))
 submit_button.on_click(submit_cb)
-dialog_content = Column(
-    children=[im_fig, prompt_input, Row(children=[submit_button, close_button])],
-    name="dialog",
-)
+gpt_save_button.on_click(gpt_save_cb)
+api_key_input.on_change("value", api_input_cb)
+if gpt_interface.api_key is None:
+    # allow input for api key
+    dialog_content = Column(
+        children=[
+            api_key_input,
+            im_fig,
+            prompt_input,
+            Row(children=[submit_button, gpt_save_button, close_button]),
+        ],
+        name="dialog",
+    )
+else:
+    dialog_content = Column(
+        children=[
+            im_fig,
+            prompt_input,
+            Row(children=[submit_button, gpt_save_button, close_button]),
+        ],
+        name="dialog",
+    )
 # dialog = Dialog(visible=True, closable=True, content=im_fig, name="dialog", draggable=True)
 
 # some setup
@@ -2549,6 +2654,13 @@ class DocConfig:
 
         # Add the window and controls etc to the document
         base_doc.template_variables["demo_name"] = doc_config["demo_name"]
+        base_doc.template_variables["allow_upload"] = (
+            get_from_config(
+                ["allow_upload"],
+                0,
+            )
+            == 1
+        )
         base_doc.add_periodic_callback(update, 220)
         base_doc.add_periodic_callback(check_folders, 5000)
         base_doc.add_root(slide_wins)

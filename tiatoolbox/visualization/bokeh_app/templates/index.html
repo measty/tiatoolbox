@@ -139,10 +139,15 @@
 <!-- Hidden modal -->
 <div id="uploadModal" style="display:none;">
   <div class="modal-content">
-    <div>Files will be uploaded in the background, scroll to bottom of page to see progress. <br>
-       Please select the type of file you are uploading:</div>
-    <button id="Slide">Slide</button>
-    <button id="Overlay">Overlay</button>
+    {% if allow_upload %}
+      <div>Files will be uploaded in the background, scroll to bottom of page to see progress. <br>
+        Please select the type of file you are uploading:</div>
+      <button id="Slide">Slide</button>
+      <button id="Overlay">Overlay</button>
+    {% else %}
+      <div>File upload is disabled.</div>
+      <button id="Close">Close</button>
+    {% endif %}
   </div>
 </div>
 <div class="description">
@@ -221,16 +226,23 @@
       uploadModal.style.display = 'block';
 
       // Add event listeners for the buttons
-      document.getElementById('Slide').onclick = function() {
-          handleFiles(files, 'slides');
-          uploadModal.style.display = 'none'; // Hide the modal
-          document.getElementById('modalBackdrop').style.display = 'none';
-      };
-      document.getElementById('Overlay').onclick = function() {
-          handleFiles(files, 'overlays');
-          uploadModal.style.display = 'none'; // Hide the modal
-          document.getElementById('modalBackdrop').style.display = 'none';
-      };
+      if (document.getElementById('Slide') && document.getElementById('Overlay')) {
+        document.getElementById('Slide').onclick = function() {
+            handleFiles(files, 'slides');
+            uploadModal.style.display = 'none'; // Hide the modal
+            document.getElementById('modalBackdrop').style.display = 'none';
+        };
+        document.getElementById('Overlay').onclick = function() {
+            handleFiles(files, 'overlays');
+            uploadModal.style.display = 'none'; // Hide the modal
+            document.getElementById('modalBackdrop').style.display = 'none';
+        };
+      } else if (document.getElementById('Close')) {
+        document.getElementById('Close').onclick = function() {
+            uploadModal.style.display = 'none'; // Hide the modal
+            document.getElementById('modalBackdrop').style.display = 'none';
+        };
+      }
   }
 
   function handleFiles(files, type) {
