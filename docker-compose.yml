@@ -3,17 +3,18 @@ version: '3'
 services:
 
   # Proxies requests to internal services
-  reverse-proxy:
+  reverse-proxy-demo:
     image: nginx:1.23.0
-    container_name: reverse_proxy
+    container_name: reverse-proxy-demo
     depends_on:
         - demo-app
-        - tile-service
+        - tile-service-demo
     volumes:
       - ./tiatoolbox/visualization/reverse_proxy/nginx.conf:/etc/nginx/nginx.conf
       - ../app_data/:/app_data
     ports:
-      - 80:80
+      - 80:80     # 20.0.0.13:8080:80
+    restart: on-failure
     networks:
       - tia-demos
 
@@ -25,7 +26,7 @@ services:
       context: .
       dockerfile: DockerfileB
     depends_on:
-        - tile-service
+        - tile-service-demo
     ports:
       - 5100:5100
     restart: on-failure
@@ -40,9 +41,9 @@ services:
       sh -c "bokeh serve ./tiatoolbox/visualization/bokeh_app --enable-xsrf-cookies --auth-module=./tiatoolbox/visualization/bokeh_app/auth.py --log-level=debug --allow-websocket-origin="*" --port 5100 --use-xheaders --unused-session-lifetime 10000 --check-unused-sessions 5000 --keep-alive 0 --args /app_data"
 
   # serves the tiles
-  tile-service:
-    image: tile-service
-    container_name: tile-service
+  tile-service-demo:
+    image: tile-service-demo
+    container_name: tile-service-demo
     build:
       context: .
       dockerfile: DockerfileTS

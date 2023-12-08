@@ -7,6 +7,7 @@ import json
 import os
 import secrets
 import sys
+import tempfile
 import urllib
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -162,6 +163,7 @@ class TileServer(Flask):
         )
         self.route("/tileserver/tap_query/<x>/<y>")(self.tap_query)
         self.route("/tileserver/prop_range", methods=["PUT"])(self.prop_range)
+        self.route("/tileserver/upload", methods=["POST"])(self.file_upload)
         self.route("/tileserver/shutdown", methods=["POST"])(self.shutdown)
 
     def _get_session_id(self: TileServer) -> str:
@@ -287,11 +289,12 @@ class TileServer(Flask):
         """
         try:
             pyramid = self.pyramids[session_id][layer]
-            interpolation = (
-                "nearest"
-                if isinstance(self.layers[session_id][layer], VirtualWSIReader)
-                else "optimise"
-            )
+            if isinstance(self.layers[session_id][layer], VirtualWSIReader):
+                interpolation = "nearest"
+                transparent_value = 0
+            else:
+                interpolation = "optimise"
+                transparent_value = None
             if isinstance(pyramid, AnnotationTileGenerator):
                 interpolation = None
         except KeyError:
@@ -303,6 +306,7 @@ class TileServer(Flask):
                 y=y,
                 res=res,
                 interpolation=interpolation,
+                transparent_value=transparent_value,
             )
         except IndexError:
             return Response("Tile not found", status=404)
@@ -478,6 +482,9 @@ class TileServer(Flask):
             file_path,
             np.array(model_mpp) / np.array(self.slide_mpps[session_id]),
         )
+        tmp_path = Path(tempfile.gettempdir()) / "temp.db"
+        sq.dump(tmp_path)
+        sq = SQLiteStore(tmp_path)
         self.pyramids[session_id]["overlay"] = AnnotationTileGenerator(
             self.layers[session_id]["slide"].info,
             sq,
@@ -525,8 +532,13 @@ class TileServer(Flask):
             sq = SQLiteStore.from_geojson(overlay_path)
         elif overlay_path.suffix == ".dat":
             sq = store_from_dat(overlay_path)
-        else:
+        if overlay_path.suffix == ".db":
             sq = SQLiteStore(overlay_path, auto_commit=False)
+        else:
+            # make a temporary db for the new annotations
+            tmp_path = Path(tempfile.gettempdir()) / "temp.db"
+            sq.dump(tmp_path)
+            sq = SQLiteStore(tmp_path)
 
         for layer in self.pyramids[session_id].values():
             if isinstance(layer, AnnotationTileGenerator):
@@ -607,7 +619,10 @@ class TileServer(Flask):
         save_path = self.decode_safe_name(save_path)
         for layer in self.pyramids[session_id].values():
             if isinstance(layer, AnnotationTileGenerator):
-                if layer.store.path.suffix == ".db":
+                if (
+                    layer.store.path.suffix == ".db"
+                    and layer.store.path.name != "temp.db"
+                ):
                     logger.info("%s*.db committed.", layer.store.path.stem)
                     layer.store.commit()
                 else:
@@ -680,14 +695,18 @@ class TileServer(Flask):
 
         """
         session_id = self._get_session_id()
-        anns = self.get_ann_layer(session_id).store.query(
-            Point(x, y),
-        )
+        try:
+            anns = self.get_ann_layer(session_id).store.query(
+                Point(x, y),
+            )
+        except ValueError:
+            logger.warning("No annotations found at (%f, %f).", x, y)
+            return json.dumps({})
         if len(anns) == 0:
             return json.dumps({})
         return jsonify(list(anns.values())[-1].properties)
 
-    def prop_range(self):
+    def prop_range(self: TileServer) -> str:
         """Set the range which the color mapper will map to.
 
         It will create an appropriate function to map the range to the
@@ -702,6 +721,16 @@ class TileServer(Flask):
         minv, maxv = prop_range
         self.renderers[session_id].score_fn = lambda x: (x - minv) / (maxv - minv)
         return "done"
+
+    def file_upload(self: TileServer) -> str:
+        file = request.files["file"]
+        folder = request.form["folder"]
+        folder = self.decode_safe_name(folder)
+        if file:
+            # Save the file
+            file.save(Path(folder) / file.filename)
+            return "Upload successful!", 200
+        return "No file uploaded", 400
 
     @staticmethod
     def shutdown() -> None:

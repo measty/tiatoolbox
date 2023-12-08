@@ -17,15 +17,6 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 
-@pytest.fixture(scope="module")
-def data_path(tmp_path_factory: pytest.TempPathFactory) -> dict[str, Path]:
-    """Set up a temporary data directory."""
-    tmp_path = tmp_path_factory.mktemp("data")
-    (tmp_path / "slides").mkdir()
-    (tmp_path / "overlays").mkdir()
-    return {"base_path": tmp_path}
-
-
 @pytest.fixture(scope="module", autouse=True)
 def annotation_path(data_path: dict[str, Path]) -> dict[str, Path]:
     """Set up a dictionary defining the paths to the annotation files."""
