@@ -753,7 +753,7 @@ def change_tiles(layer_name: str = "overlay") -> None:
         return
 
     ts = make_ts(
-        f"http://{host}:{port}/tileserver/layer/{layer_name}/{UI['user']}/"
+        f"//{host}:{port}/tileserver/layer/{layer_name}/{UI['user']}/"
         f"zoomify/TileGroup{grp}"
         r"/{z}-{x}-{y}"
         f"@{UI['vstate'].res}x.jpg",
@@ -774,7 +774,7 @@ def change_tiles(layer_name: str = "overlay") -> None:
                 continue
             grp = tg.get_grp()
             ts = make_ts(
-                f"http://{host}:{port}/tileserver/layer/{layer_key}/{UI['user']}/"
+                f"//{host}:{port}/tileserver/layer/{layer_key}/{UI['user']}/"
                 f"zoomify/TileGroup{grp}"
                 r"/{z}-{x}-{y}"
                 f"@{UI['vstate'].res}x.jpg",
@@ -2183,7 +2183,7 @@ def make_window(vstate: ViewerState) -> dict:  # noqa: PLR0915
     # Set up the main slide window
     vstate.init_z = init_z
     ts1 = make_ts(
-        f"http://{host}:{port}/tileserver/layer/slide/{user}/zoomify/TileGroup1"
+        f"//{host}:{port}/tileserver/layer/slide/{user}/zoomify/TileGroup1"
         r"/{z}-{x}-{y}"
         f"@{vstate.res}x.jpg",
         vstate.num_zoom_levels,
