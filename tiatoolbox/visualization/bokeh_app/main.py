@@ -1927,12 +1927,14 @@ def gather_ui_elements(  # noqa: PLR0915
         max_width=60,
         sizing_mode="stretch_width",
         name=f"range_min{win_num}",
+        mode="float",
     )
     range_max = NumericInput(
         value=1,
         max_width=60,
         sizing_mode="stretch_width",
         name=f"range_max{win_num}",
+        mode="float",
     )
     range_slider = RangeSlider(
         start=0,

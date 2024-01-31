@@ -723,13 +723,29 @@ class TileServer(Flask):
         return "done"
 
     def file_upload(self: TileServer) -> str:
+        """Upload a file to the server.
+
+        The file will be saved to the folder specified in the form.
+        Only valid file formats for slides or overlays will be accepted.
+
+        """
+        valid_slides = [".svs", "ndpi", ".tiff", ".mrxs", ".png", ".jpg", "*.tif"]
+        valid_overlays = [*valid_slides, ".db", ".geojson", ".dat"]
         file = request.files["file"]
         folder = request.form["folder"]
         folder = self.decode_safe_name(folder)
+        save_path = Path(folder) / file.filename
+        if save_path.parts[-2] == "overlays":
+            valid_formats = valid_overlays
+        else:
+            valid_formats = valid_slides
+        # check its valid before saving
         if file:
-            # Save the file
-            file.save(Path(folder) / file.filename)
-            return "Upload successful!", 200
+            if save_path.suffix in valid_formats:
+                # Save the file
+                file.save(save_path)
+                return "Upload successful!", 200
+            return f"Invalid file format. Valid formats are {valid_formats}", 400
         return "No file uploaded", 400
 
     @staticmethod
