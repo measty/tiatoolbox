@@ -97,7 +97,7 @@ MAX_CAT = 10
 FILLED = 0
 MICRON_FORMATTER = 1
 GRIDLINES = 2
-MAX_FEATS = 15
+MAX_FEATS = 20
 N_PERMANENT_RENDERERS = 6
 NO_UPDATE = 0
 PENDING_UPDATE = 1
@@ -753,7 +753,7 @@ def change_tiles(layer_name: str = "overlay") -> None:
         return
 
     ts = make_ts(
-        f"http://{host}:{port}/tileserver/layer/{layer_name}/{UI['user']}/"
+        f"//{host}:{port}/tileserver/layer/{layer_name}/{UI['user']}/"
         f"zoomify/TileGroup{grp}"
         r"/{z}-{x}-{y}"
         f"@{UI['vstate'].res}x.jpg",
@@ -774,7 +774,7 @@ def change_tiles(layer_name: str = "overlay") -> None:
                 continue
             grp = tg.get_grp()
             ts = make_ts(
-                f"http://{host}:{port}/tileserver/layer/{layer_key}/{UI['user']}/"
+                f"//{host}:{port}/tileserver/layer/{layer_key}/{UI['user']}/"
                 f"zoomify/TileGroup{grp}"
                 r"/{z}-{x}-{y}"
                 f"@{UI['vstate'].res}x.jpg",
@@ -1927,12 +1927,14 @@ def gather_ui_elements(  # noqa: PLR0915
         max_width=60,
         sizing_mode="stretch_width",
         name=f"range_min{win_num}",
+        mode="float",
     )
     range_max = NumericInput(
         value=1,
         max_width=60,
         sizing_mode="stretch_width",
         name=f"range_max{win_num}",
+        mode="float",
     )
     range_slider = RangeSlider(
         start=0,
@@ -2183,7 +2185,7 @@ def make_window(vstate: ViewerState) -> dict:  # noqa: PLR0915
     # Set up the main slide window
     vstate.init_z = init_z
     ts1 = make_ts(
-        f"http://{host}:{port}/tileserver/layer/slide/{user}/zoomify/TileGroup1"
+        f"//{host}:{port}/tileserver/layer/slide/{user}/zoomify/TileGroup1"
         r"/{z}-{x}-{y}"
         f"@{vstate.res}x.jpg",
         vstate.num_zoom_levels,
