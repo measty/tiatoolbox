@@ -132,9 +132,9 @@ class GPTInterface:
         # some default gpt prompts
         self.sys_prompt = "You are an expert pathologist tasked with providing clear, concise answers to questions about provided H&E stained histological images, from advanced Pathology Students who are learning to accurately assess tissue samples and identify medically relevant features. Provided responses will be used for educational and research purposes only and so do not constitute medical advice."
         # prompt if just a plain region is sent
-        self.prompt_no_ann = "Provide a concise assesment of this image for the student. Comment on noteworthy histological features and structures, and any abnormalities present."
+        self.prompt_no_ann = "Provide a concise assessment of this image for the student. Comment on noteworthy histological features and structures, and any abnormalities present."
         # promt if a region with a user-drawn annotation is sent
-        self.prompt_ann = "Provide a concise assesment of this image for the student. Comment on noteworthy histological features and structures (paying particular attention to the regions indicated by green annotations), and any abnormalities present."
+        self.prompt_ann = "Provide a concise assessment of this image for the student. Comment on noteworthy histological features and structures (paying particular attention to the regions indicated by green annotations), and any abnormalities present."
 
     def update_api_key(self: GPTInterface, api_key: str) -> None:
         """Update the api key."""
@@ -2632,7 +2632,7 @@ class DocConfig:
         """
         # Set initial slide to first one in base folder
         slide_list = []
-        for ext in ["*.svs", "*ndpi", "*.tiff", "*.mrxs", "*.png", "*.jpg"]:
+        for ext in ["*.svs", "*ndpi", "*.tiff", "*.mrxs", "*.png", "*.jpg", "*.tif"]:
             slide_list.extend(list(doc_config["slide_folder"].glob(ext)))
             slide_list.extend(
                 list(doc_config["slide_folder"].glob(str(Path("*") / ext))),
