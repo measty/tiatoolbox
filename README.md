@@ -6,14 +6,14 @@ This visualization tool is in the process of being added to tiatoolbox, but for 
 
 If you already have a develop version of tiatoolbox set up, it should be sufficient to crete a new branch for your local tiatoolbox git from this repository, and switch to that when you want to do some visualization stuff.
 
-git remote add tiavis https://github.com/measty/tiatoolbox/  
-git fetch tiavis  
+git remote add tiavis https://github.com/measty/tiatoolbox/\
+git fetch tiavis\
 git checkout -b feature-add-gui tiafork/feature-add-gui
 
 You will also need to add a couple of extra packages to your environment:
 
-conda install bokeh -c bokeh  
-conda install flask-cors  
+conda install bokeh -c bokeh\
+conda install flask-cors
 
 ## From scratch
 
@@ -229,7 +229,7 @@ Prepare a computer as a convenient platform for further development of the Pytho
 5. Create virtual environment for TIAToolbox using
 
 ```sh
-    $ conda env create -f requirements.dev.conda.yml # for linux/mac only.
+    $ conda create -n tiatoolbox-dev python=3.9 # select version of your choice
     $ conda activate tiatoolbox-dev
 ```
 

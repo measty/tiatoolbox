@@ -1,4 +1,5 @@
 """Test the bokeh app with config.json file."""
+
 from __future__ import annotations
 
 import time
@@ -8,8 +9,8 @@ from typing import TYPE_CHECKING
 
 import pytest
 import requests
-from bokeh.client.session import ClientSession, pull_session
 
+from bokeh.client.session import ClientSession, pull_session
 from tiatoolbox.cli.visualize import run_bokeh, run_tileserver
 from tiatoolbox.data import _fetch_remote_sample
 

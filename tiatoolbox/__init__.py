@@ -1,16 +1,12 @@
 """Top-level package for TIA Toolbox."""
+
 from __future__ import annotations
 
+import importlib.resources as importlib_resources
 import importlib.util
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING, Dict, TypedDict
-
-if sys.version_info >= (3, 9):  # pragma: no cover
-    import importlib.resources as importlib_resources
-else:  # pragma: no cover
-    # To support Python 3.8
-    import importlib_resources  # type: ignore[import-not-found]
+from typing import TYPE_CHECKING, TypedDict
 
 import yaml
 
@@ -20,7 +16,7 @@ if TYPE_CHECKING:  # pragma: no cover
 
 __author__ = """TIA Centre"""
 __email__ = "tialab@dcs.warwick.ac.uk"
-__version__ = "1.4.1"
+__version__ = "1.5.1"
 
 # This will set the tiatoolbox external data
 # default to be the user home folder, should work on both Window and Unix/Linux
@@ -91,9 +87,8 @@ def read_registry_files(path_to_registry: str | Path) -> dict:
 
 
     """
-    path_to_registry = str(path_to_registry)  # To pass tests with Python 3.8
     pretrained_files_registry_path = importlib_resources.as_file(
-        importlib_resources.files("tiatoolbox") / path_to_registry,
+        importlib_resources.files("tiatoolbox") / str(path_to_registry),
     )
 
     with pretrained_files_registry_path as registry_file_path:

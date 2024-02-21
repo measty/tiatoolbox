@@ -1,4 +1,5 @@
 """Main module for the tiatoolbox visualization bokeh app."""
+
 from __future__ import annotations
 
 import base64
@@ -78,14 +79,14 @@ from bokeh.util import token
 
 # GitHub actions seems unable to find TIAToolbox unless this is here
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
-from tiatoolbox import logger  # noqa: E402
-from tiatoolbox.models.engine.nucleus_instance_segmentor import (  # noqa: E402
+from tiatoolbox import logger
+from tiatoolbox.models.engine.nucleus_instance_segmentor import (
     NucleusInstanceSegmentor,
 )
-from tiatoolbox.tools.pyramid import ZoomifyGenerator  # noqa: E402
-from tiatoolbox.utils.visualization import random_colors  # noqa: E402
-from tiatoolbox.visualization.ui_utils import get_level_by_extent  # noqa: E402
-from tiatoolbox.wsicore.wsireader import WSIReader  # noqa: E402
+from tiatoolbox.tools.pyramid import ZoomifyGenerator
+from tiatoolbox.utils.visualization import random_colors
+from tiatoolbox.visualization.ui_utils import get_level_by_extent
+from tiatoolbox.wsicore.wsireader import WSIReader
 
 if TYPE_CHECKING:  # pragma: no cover
     from bokeh.document import Document
@@ -424,7 +425,7 @@ def make_color_seq_from_cmap(cmap: str | None = None) -> list[str]:
 
 
 def make_safe_name(name: str) -> str:
-    """Helper to make a name safe for use in a url."""
+    """Helper to make a name safe for use in a URL."""
     return urllib.parse.quote(str(PureWindowsPath(name)), safe="")
 
 
@@ -1028,7 +1029,7 @@ def scale_spinner_cb(attr: str, old: float, new: float) -> None:  # noqa: ARG001
 
 
 def slide_select_cb(attr: str, old: str, new: str) -> None:  # noqa: ARG001
-    """Setup the newly chosen slide."""
+    """Set up the newly chosen slide."""
     if len(new) == 0:
         return
     slide_path = Path(doc_config["slide_folder"]) / Path(new[0])
@@ -1777,7 +1778,6 @@ def gather_ui_elements(  # noqa: PLR0915
         name=f"slide_select{win_num}",
         description=slide_tt,
     )
-
     cmmenu = [
         ("jet", "jet"),
         ("coolwarm", "coolwarm"),

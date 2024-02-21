@@ -1,4 +1,5 @@
 """Miscellaneous small functions repeatedly used in tiatoolbox."""
+
 from __future__ import annotations
 
 import copy
@@ -982,7 +983,7 @@ def select_cv2_interpolation(scale_factor: float | npt.NDArray[np.float64]) -> s
             interpolation type
 
     """
-    if np.any(scale_factor > 1.0):  # noqa: PLR2004
+    if np.any(scale_factor > 1.0):
         return "cubic"
     return "area"
 
@@ -1099,9 +1100,11 @@ def anns_from_hoverdict(
                 origin,
             ),
             {
-                prop: typedict[ann[prop]]
-                if prop == "type" and typedict is not None
-                else ann[prop]
+                prop: (
+                    typedict[ann[prop]]
+                    if prop == "type" and typedict is not None
+                    else ann[prop]
+                )
                 for prop in props[3:]
                 if prop in ann
             },
@@ -1324,7 +1327,7 @@ def dict_to_zarr(
     compressor = (
         kwargs["compressor"] if "compressor" in kwargs else numcodecs.Zstd(level=1)
     )
-    chunks = kwargs["chunks"] if "chunks" in kwargs else 10000
+    chunks = kwargs.get("chunks", 10000)
 
     # ensure proper zarr extension
     save_path = save_path.parent.absolute() / (save_path.stem + ".zarr")

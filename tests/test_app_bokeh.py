@@ -1,25 +1,18 @@
 """Test the tiatoolbox visualization tool."""
+
 from __future__ import annotations
 
+import importlib.resources as importlib_resources
 import io
 import json
 import multiprocessing
 import re
-import sys
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING, Generator
+from typing import TYPE_CHECKING
 
 import matplotlib.pyplot as plt
 import numpy as np
-
-import bokeh.models as bkmodels
-
-if sys.version_info >= (3, 9):  # pragma: no cover
-    import importlib.resources as importlib_resources
-else:  # pragma: no cover
-    # To support Python 3.8
-    import importlib_resources  # type: ignore[import-not-found]
 import pytest
 import requests
 from flask_cors import CORS
@@ -27,6 +20,7 @@ from matplotlib import colormaps
 from PIL import Image
 from scipy.ndimage import label
 
+import bokeh.models as bkmodels
 from bokeh.application import Application
 from bokeh.application.handlers import FunctionHandler
 from bokeh.events import ButtonClick, DoubleTap, MenuItemClick
@@ -35,7 +29,9 @@ from tiatoolbox.visualization.bokeh_app import main
 from tiatoolbox.visualization.tileserver import TileServer
 from tiatoolbox.visualization.ui_utils import get_level_by_extent
 
-if TYPE_CHECKING:
+if TYPE_CHECKING:  # pragma: no cover
+    from collections.abc import Generator
+
     from bokeh.document import Document
 
 # constants
@@ -86,7 +82,7 @@ def get_renderer_prop(prop: str) -> json:
 
 
 @pytest.fixture(scope="module", autouse=True)
-def annotation_path(data_path: dict[str, object]) -> dict[str, object]:
+def annotation_path(data_path: dict[str, Path]) -> dict[str, object]:
     """Download some testing slides and overlays.
 
     Set up a dictionary defining the paths to the files
@@ -524,9 +520,18 @@ def test_type_select(doc: Document, data_path: pytest.TempPathFactory) -> None:
     im = get_tile("overlay", 4, 8, 4, show=False)
     _, num_after = label(np.any(im[:, :, :3], axis=2))
     assert num_after < num_before
+
+    # turn off all the types
+    for type_toggle in type_column_list:
+        type_toggle.active = False
+    # check that there are no cells
+    im = get_tile("overlay", 4, 8, 4, show=False)
+    _, num_after = label(np.any(im[:, :, :3], axis=2))
+    assert num_after == 0
+
     # reselect them
-    type_column_list[0].active = True
-    type_column_list[-1].active = True
+    for type_toggle in type_column_list:
+        type_toggle.active = True
     # check we are back to original number of cells
     im = get_tile("overlay", 4, 8, 4, show=False)
     _, num_after = label(np.any(im[:, :, :3], axis=2))
@@ -733,14 +738,10 @@ def test_cmap_select(doc: Document) -> None:
         assert np.all(
             np.array(resp.json()[str(key)]) == np.array(main.UI["vstate"].mapper[key]),
         )
-    # set to jet
-    cmap_select.value = "jet"
-    resp = main.UI["s"].get(f"http://{main.host2}:5000/tileserver/cmap")
-    assert resp.json() == "jet"
-    # set to dict
+
     main.UI["cprop_input"].value = ["prob"]
     resp = main.UI["s"].get(f"http://{main.host2}:5000/tileserver/cmap")
-    # should be coolwarm as thats the last cmap we set, and prob is continuous
+    # should be coolwarm as that is the last cmap we set, and prob is continuous
     assert resp.json() == "coolwarm"
 
 

@@ -1,4 +1,5 @@
 """Simple Flask WSGI apps to display tiles as slippery maps."""
+
 from __future__ import annotations
 
 import copy
@@ -324,7 +325,7 @@ class TileServer(Flask):
 
     @staticmethod
     def decode_safe_name(name: str) -> Path:
-        """Decode a url-safe name."""
+        """Decode a URL-safe name."""
         return Path(urllib.parse.unquote(name).replace("\\", os.sep))
 
     def get_ann_layer(
@@ -582,6 +583,7 @@ class TileServer(Flask):
         props = []
         for prop_dict in ann_props.values():
             props.extend(list(prop_dict.keys()))
+        # remove duplicates
         return json.dumps(list(set(props)))
 
     def get_property_values(self: TileServer, prop: str, ann_type: str) -> str:
@@ -605,6 +607,8 @@ class TileServer(Flask):
             where=where,
             unique=True,
         )
+        # remove any None values
+        ann_props = [p for p in ann_props if p is not None]
         return json.dumps(list(ann_props))
 
     def commit_db(self: TileServer) -> str:

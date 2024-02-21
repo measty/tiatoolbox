@@ -1,4 +1,5 @@
 """This module defines classes which can read image data from WSI formats."""
+
 from __future__ import annotations
 
 import copy
@@ -10,7 +11,7 @@ import re
 from datetime import datetime
 from numbers import Number
 from pathlib import Path
-from typing import TYPE_CHECKING, Iterable
+from typing import TYPE_CHECKING
 
 import numpy as np
 import openslide
@@ -30,6 +31,8 @@ from tiatoolbox.utils.visualization import AnnotationRenderer
 from tiatoolbox.wsicore.wsimeta import WSIMeta
 
 if TYPE_CHECKING:  # pragma: no cover
+    from collections.abc import Iterable
+
     import glymur
 
     from tiatoolbox.typing import Bounds, IntBounds, IntPair, NumPair, Resolution, Units
@@ -96,8 +99,8 @@ def is_zarr(path: Path) -> bool:
         _ = zarr.open(str(path), mode="r")
     except Exception:  # skipcq: PYL-W0703  # noqa: BLE001
         return False
-    else:
-        return True
+
+    return True
 
 
 def is_ngff(  # noqa: PLR0911
@@ -225,7 +228,7 @@ class WSIReader:
     """
 
     @staticmethod
-    def open(  # noqa: A003, PLR0911
+    def open(  # noqa: PLR0911
         input_img: str | Path | np.ndarray | WSIReader,
         mpp: tuple[Number, Number] | None = None,
         power: Number | None = None,
@@ -403,10 +406,9 @@ class WSIReader:
 
         Returns:
             WSIMeta:
-                An object containing normalized slide metadata
+                An object containing normalized slide metadata.
 
         """
-        # In Python>=3.8 this could be replaced with functools.cached_property
         if self._m_info is not None:
             return copy.deepcopy(self._m_info)
         self._m_info = self._info()
@@ -989,11 +991,17 @@ class WSIReader:
             raise ValueError(
                 msg,
             )
+        scale_levels_available = [
+            np.log2(np.round(x, 3)) for x in self.info.level_downsamples
+        ]
         try:
-            level = np.log2(rescale)
-            if not level.is_integer():
+            level_scale = np.log2(rescale)
+            if not level_scale.is_integer():
                 raise ValueError  # noqa: TRY301
-            level = np.int_(level)
+            level_scale = np.int_(level_scale)
+            if level_scale not in scale_levels_available:
+                raise IndexError  # noqa: TRY301
+            level = scale_levels_available.index(level_scale)
             slide_dimension = self.info.level_dimensions[level]
             rescale = 1
         # Raise index error if desired pyramid level not embedded
@@ -1549,7 +1557,10 @@ class WSIReader:
 
             # convert to baseline reference frame
             bounds = start_w, start_h, end_w, end_h
-            baseline_bounds = tuple(bound * (2**level) for bound in bounds)
+            baseline_bounds = tuple(
+                bound * int(np.round(self.info.level_downsamples[level], 3))
+                for bound in bounds
+            )
             # Read image region
             im = self.read_bounds(baseline_bounds, level)
 
@@ -1567,7 +1578,7 @@ class WSIReader:
 
             # Rescale to the correct objective value
             if rescale != 1:
-                im = utils.transforms.imresize(img=im, scale_factor=rescale)
+                im = utils.transforms.imresize(img=im, scale_factor=1 / rescale)
 
             img_save_name = (
                 "_".join(
@@ -1587,10 +1598,10 @@ class WSIReader:
                 [
                     iter_tot,
                     img_save_name,
-                    start_w,
-                    end_w,
-                    start_h,
-                    end_h,
+                    int(start_w / rescale),
+                    int(end_w / rescale),
+                    int(start_h / rescale),
+                    int(end_h / rescale),
                     im.shape[0],
                     im.shape[1],
                 ],
@@ -5509,7 +5520,7 @@ class AnnotationStoreReader(WSIReader):
                 utils.transforms.background_composite(base_region, alpha=True),
             )
             im_region = Image.fromarray(im_region)
-            if self.alpha < 1.0:  # noqa: PLR2004
+            if self.alpha < 1.0:
                 im_region.putalpha(
                     im_region.getchannel("A").point(lambda i: i * self.alpha),
                 )
@@ -5702,7 +5713,7 @@ class AnnotationStoreReader(WSIReader):
                 utils.transforms.background_composite(base_region, alpha=True),
             )
             im_region = Image.fromarray(im_region)
-            if self.alpha < 1.0:  # noqa: PLR2004
+            if self.alpha < 1.0:
                 im_region.putalpha(
                     im_region.getchannel("A").point(lambda i: i * self.alpha),
                 )

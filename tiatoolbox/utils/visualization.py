@@ -1,4 +1,5 @@
 """Visualisation and overlay functions used in tiatoolbox."""
+
 from __future__ import annotations
 
 import colorsys
@@ -23,7 +24,7 @@ if TYPE_CHECKING:  # pragma: no cover
     from tiatoolbox.annotation import Annotation, AnnotationStore
 
 
-def random_colors(num_colors: int, *, bright: bool) -> list:
+def random_colors(num_colors: int, *, bright: bool) -> np.ndarray:
     """Generate a number of random colors.
 
     To get visually distinct colors, generate them in HSV space then
@@ -36,15 +37,15 @@ def random_colors(num_colors: int, *, bright: bool) -> list:
             To use bright color or not.
 
     Returns:
-        list:
-            List of (r, g, b) colors.
+        np.ndarray:
+            Array of (r, g, b) colors.
 
     """
     brightness = 1.0 if bright else 0.7
     hsv = [(i / num_colors, 1, brightness) for i in range(num_colors)]
     colors = [colorsys.hsv_to_rgb(*c) for c in hsv]
     random.shuffle(colors)
-    return colors
+    return np.array(colors)
 
 
 def colourise_image(img: np.ndarray, cmap: str = "viridis") -> np.ndarray:
@@ -118,7 +119,7 @@ def overlay_prediction_mask(
             msg,
         )
     if np.issubdtype(img.dtype, np.floating):
-        if not (img.max() <= 1.0 and img.min() >= 0):  # noqa: PLR2004
+        if not (img.max() <= 1.0 and img.min() >= 0):
             msg = "Not support float `img` outside [0, 1]."
             raise ValueError(msg)
         img = np.array(img * 255, dtype=np.uint8)
@@ -156,7 +157,7 @@ def overlay_prediction_mask(
     cv2.addWeighted(rgb_prediction, alpha, overlay, 1 - alpha, 0, overlay)
     overlay = overlay.astype(np.uint8)
 
-    if min_val > 0.0:  # noqa: PLR2004
+    if min_val > 0.0:
         overlay[~prediction_sel] = img[~prediction_sel]
 
     if ax is None and not return_ax:
@@ -309,7 +310,7 @@ def overlay_probability_map(
     overlay[overlay > 255.0] = 255.0  # noqa: PLR2004
     overlay = overlay.astype(np.uint8)
 
-    if min_val > 0.0:  # noqa: PLR2004
+    if min_val > 0.0:
         overlay[~prediction_sel] = img[~prediction_sel]
 
     if ax is None and not return_ax:
@@ -373,7 +374,7 @@ def _validate_overlay_probability_map(
             msg,
         )
 
-    if prediction.max() > 1.0:  # noqa: PLR2004
+    if prediction.max() > 1.0:
         msg = "Not support float `prediction` outside [0, 1]."
         raise ValueError(msg)
     if prediction.min() < 0:
@@ -381,15 +382,15 @@ def _validate_overlay_probability_map(
         raise ValueError(msg)
 
     # if `min_val` is defined, only display the overlay for areas with prob > min_val
-    if min_val < 0.0:  # noqa: PLR2004
+    if min_val < 0.0:
         msg = f"`min_val={min_val}` is not between [0, 1]."
         raise ValueError(msg)
-    if min_val > 1.0:  # noqa: PLR2004
+    if min_val > 1.0:
         msg = f"`min_val={min_val}` is not between [0, 1]."
         raise ValueError(msg)
 
     if np.issubdtype(img.dtype, np.floating):
-        if img.max() > 1.0:  # noqa: PLR2004
+        if img.max() > 1.0:
             msg = "Not support float `img` outside [0, 1]."
             raise ValueError(msg)
         if img.min() < 0:
@@ -403,7 +404,7 @@ def overlay_prediction_contours(
     canvas: np.ndarray,
     inst_dict: dict,
     type_colours: dict | None = None,
-    inst_colours: np.ndarray | tuple[int] = (255, 255, 0),
+    inst_colours: np.ndarray | tuple[int, int, int] = (255, 255, 0),
     line_thickness: int = 2,
     *,
     draw_dot: bool,
@@ -443,23 +444,26 @@ def overlay_prediction_contours(
 
     if inst_colours is None:
         inst_colours = random_colors(len(inst_dict), bright=True)
-        inst_colours = np.array(inst_colours) * 255
-        inst_colours = inst_colours.astype(np.uint8)
-    elif isinstance(inst_colours, tuple):
-        inst_colours = np.array([inst_colours] * len(inst_dict))
-    elif not isinstance(inst_colours, np.ndarray):
-        msg = f"`inst_colours` must be np.ndarray or tuple: {type(inst_colours)}"
+
+    if not isinstance(inst_colours, (tuple, np.ndarray)):
+        msg = f"`inst_colours` must be np.ndarray or tuple: {type(inst_colours)}."
         raise TypeError(
             msg,
         )
-    inst_colours = inst_colours.astype(np.uint8)
+
+    inst_colours_array = np.array(inst_colours) * 255
+
+    if isinstance(inst_colours, tuple):
+        inst_colours_array = np.array([inst_colours] * len(inst_dict))
+
+    inst_colours_array = inst_colours_array.astype(np.uint8)
 
     for idx, [_, inst_info] in enumerate(inst_dict.items()):
         inst_contour = inst_info["contour"]
         if "type" in inst_info and type_colours is not None:
             inst_colour = type_colours[inst_info["type"]][1]
         else:
-            inst_colour = (inst_colours[idx]).tolist()
+            inst_colour = (inst_colours_array[idx]).tolist()
         cv2.drawContours(
             overlay,
             [np.array(inst_contour)],
@@ -479,9 +483,9 @@ def plot_graph(
     canvas: np.ndarray,
     nodes: np.ndarray,
     edges: np.ndarray,
-    node_colors: tuple[int] | np.ndarray = (255, 0, 0),
+    node_colors: tuple[int, int, int] | np.ndarray = (255, 0, 0),
     node_size: int = 5,
-    edge_colors: tuple[int] | np.ndarray = (0, 0, 0),
+    edge_colors: tuple[int, int, int] | np.ndarray = (0, 0, 0),
     edge_size: int = 5,
 ) -> np.ndarray:
     """Drawing a graph onto a canvas.
@@ -512,25 +516,29 @@ def plot_graph(
 
     """
     if isinstance(node_colors, tuple):
-        node_colors = [node_colors] * len(nodes)
+        node_colors_list = np.array([node_colors] * len(nodes))
+    else:
+        node_colors_list = node_colors.tolist()
     if isinstance(edge_colors, tuple):
-        edge_colors = [edge_colors] * len(edges)
+        edge_colors_list = [edge_colors] * len(edges)
+    else:
+        edge_colors_list = edge_colors.tolist()
 
     # draw the edges
-    def to_int_tuple(x: list | np.ndarray) -> tuple[int, ...]:
+    def to_int_tuple(x: tuple[int, ...] | np.ndarray) -> tuple[int, ...]:
         """Helper to convert to tuple of int."""
         return tuple(int(v) for v in x)
 
     for idx, (src, dst) in enumerate(edges):
         src_ = to_int_tuple(nodes[src])
         dst_ = to_int_tuple(nodes[dst])
-        color = to_int_tuple(edge_colors[idx])
+        color = to_int_tuple(edge_colors_list[idx])
         cv2.line(canvas, src_, dst_, color, thickness=edge_size)
 
     # draw the nodes
     for idx, node in enumerate(nodes):
         node_ = to_int_tuple(node)
-        color = to_int_tuple(node_colors[idx])
+        color = to_int_tuple(node_colors_list[idx])
         cv2.circle(canvas, node_, node_size, color, thickness=-1)
     return canvas
 
@@ -605,14 +613,14 @@ class AnnotationRenderer:
         zoomed_out_strat: int | str = 10000,
         thickness: int = -1,
         edge_thickness: int = 1,
-        secondary_cmap: dict[str, str, str] | None = None,
+        secondary_cmap: dict | None = None,
         blur_radius: int = 0,
         score_prop_edge: str | None = None,
         function_mapper: Callable | None = None,
     ) -> None:
         """Initialize :class:`AnnotationRenderer`."""
-        self.raw_mapper = None
-        self.mapper = mapper
+        self.raw_mapper: str | dict | list | None = None
+        self.mapper = self._set_mapper(value=mapper)
         self.score_prop = score_prop
         self.score_prop_edge = score_prop_edge
         self.where = where
@@ -626,6 +634,7 @@ class AnnotationRenderer:
         self.sec_score_fn = score_fn
         self.blur_radius = blur_radius
         self.function_mapper = function_mapper
+        self.blur: ImageFilter.GaussianBlur | None
         if blur_radius > 0:
             self.blur = ImageFilter.GaussianBlur(blur_radius)
             self.edge_thickness = 0
@@ -844,6 +853,29 @@ class AnnotationRenderer:
             thickness=3,
         )
 
+    def _set_mapper(
+        self: AnnotationRenderer,
+        value: str | list | dict | None,
+    ) -> Callable:
+        """Set the mapper."""
+        self.__dict__["mapper"] = value
+        if value is None:
+            self.raw_mapper = "jet"
+            self.__dict__["mapper"] = colormaps["jet"]
+        if isinstance(value, str) and value != "categorical":
+            self.raw_mapper = value
+            self.__dict__["mapper"] = colormaps[value]
+        if isinstance(value, list):
+            colors = random_colors(len(value), bright=True)
+            self.__dict__["mapper"] = {
+                key: (*color, 1) for key, color in zip(value, colors)
+            }
+        if isinstance(value, dict):
+            self.raw_mapper = value
+            self.__dict__["mapper"] = lambda x: value[x]
+
+        return self.__dict__["mapper"]
+
     def __setattr__(
         self: AnnotationRenderer,
         __name: str,
@@ -852,20 +884,9 @@ class AnnotationRenderer:
         """Set attribute each time an attribute is set."""
         if __name == "mapper":
             # save a more readable version of the mapper too
-            if __value is None:
-                self.raw_mapper = "jet"
-                __value = colormaps["jet"]
-            if isinstance(__value, str) and __value != "categorical":
-                self.raw_mapper = __value
-                __value = colormaps[__value]
-            if isinstance(__value, list):
-                colors = random_colors(len(__value), bright=True)
-                __value = {key: (*color, 1) for key, color in zip(__value, colors)}
-            if isinstance(__value, dict):
-                self.raw_mapper = __value
-                self.__dict__[__name] = lambda x: __value[x]
-                return
-        if __name == "blur_radius":
+            _ = self._set_mapper(__value)
+            return
+        if __name == "blur_radius" and isinstance(__value, int):
             # need to change additional settings
             if __value > 0:
                 self.__dict__["blur"] = ImageFilter.GaussianBlur(__value)
@@ -921,11 +942,10 @@ class AnnotationRenderer:
             int((bounds[2] - bounds[0]) / scale),
         ]
 
-        mpp_sf = (
-            np.minimum(self.info["mpp"][0] / 0.25, 1)
-            if self.info["mpp"] is not None
-            else 1
-        )
+        mpp_sf = 1
+        if self.info["mpp"] is not None:
+            mpp_sf = np.minimum(self.info["mpp"][0] / 0.25, 1)
+
         min_area = 0.0005 * (output_size[0] * output_size[1]) * (scale * mpp_sf) ** 2
 
         tile = np.zeros((output_size[0] * res, output_size[1] * res, 4), dtype=np.uint8)

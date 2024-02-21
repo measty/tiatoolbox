@@ -1,4 +1,5 @@
 """Test for utils."""
+
 from __future__ import annotations
 
 import hashlib
@@ -1646,7 +1647,7 @@ def test_imwrite(tmp_path: Path) -> NoReturn:
 
     with pytest.raises(IOError, match="Could not write image"):
         utils.misc.imwrite(
-            tmp_path / "thisfolderdoesnotexist" / "test_imwrite.jpg",
+            tmp_path / "this_folder_does_not_exist" / "test_imwrite.jpg",
             img,
         )
 

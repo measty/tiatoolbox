@@ -22,6 +22,7 @@ Properties
     Key-value pairs associated with a geometry.
 
 """
+
 from __future__ import annotations
 
 import contextlib
@@ -39,7 +40,7 @@ import uuid
 import zlib
 from abc import ABC, abstractmethod
 from collections import defaultdict
-from collections.abc import MutableMapping
+from collections.abc import Generator, Iterable, Iterator, MutableMapping
 from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
@@ -49,9 +50,6 @@ from typing import (
     Any,
     Callable,
     ClassVar,
-    Generator,
-    Iterable,
-    Iterator,
 )
 
 import numpy as np
@@ -121,7 +119,7 @@ class Annotation:
         if self._geometry is None:
             # Lazy creation of Shapely object when first requested. This
             # is memoized under _geometry. object.__setattr__ must be
-            # used becuase the class is frozen and will disallow normal
+            # used because the class is frozen and will disallow normal
             # assignment.
             object.__setattr__(self, "_geometry", shapely_wkb.loads(self._wkb))
         # Return memoized geometry
@@ -1277,8 +1275,8 @@ class AnnotationStore(ABC, MutableMapping):
                 Only annotations for which this predicate is true will
                 be returned. Defaults to None (assume always true). This
                 may be a string, Callable, or pickled function as bytes.
-                Callables are called to filter each result returned the
-                from annotation store backend in python before being
+                Callables are called to filter each result returned
+                from the annotation store backend in python before being
                 returned to the user. A pickle object is, where
                 possible, hooked into the backend as a user defined
                 function to filter results during the backend query.
@@ -1825,14 +1823,6 @@ class AnnotationStore(ABC, MutableMapping):
                 )
             return geom
 
-        def unpack_qpath(props: dict) -> dict:
-            """Helper function to unpack QuPath measurements."""
-            if unpack_qupath_measurements and "measurements" in props:
-                measurements = props.pop("measurements")
-                for m in measurements:
-                    props[m["name"]] = m["value"]
-            return props
-
         geojson = self._load_cases(
             fp=fp,
             string_fn=json.loads,
@@ -2035,7 +2025,9 @@ class AnnotationStore(ABC, MutableMapping):
         transformed_geoms = {
             key: transform(annotation.geometry) for key, annotation in self.items()
         }
-        self.patch_many(transformed_geoms.keys(), transformed_geoms.values())
+        _keys = transformed_geoms.keys()
+        _values = transformed_geoms.values()
+        self.patch_many(_keys, _values)
 
     def __del__(self: AnnotationStore) -> None:
         """Implements destructor method.
@@ -2297,15 +2289,12 @@ class SQLiteStore(AnnotationStore):
                         Whether the function is deterministic.
 
                 """
-                try:
-                    con.create_function(
-                        name,
-                        nargs,
-                        fn,
-                        deterministic=deterministic,
-                    )
-                except TypeError:
-                    con.create_function(name, nargs, fn)
+                con.create_function(
+                    name,
+                    nargs,
+                    fn,
+                    deterministic=deterministic,
+                )
 
             register_custom_function(
                 "geometry_predicate",
@@ -2388,6 +2377,7 @@ class SQLiteStore(AnnotationStore):
         cx: float,
         cy: float,
     ) -> bytes:
+        """Unpack WKB data."""
         return (
             self._decompress_data(data)
             if data
@@ -2483,6 +2473,7 @@ class SQLiteStore(AnnotationStore):
         self.optimize(vacuum=False, limit=1000)
         for con in self.cons.values():
             con.close()
+        self.cons = {}
 
     def _make_token(self: SQLiteStore, annotation: Annotation, key: str | None) -> dict:
         """Create token data dict for tokenized SQL transaction."""
@@ -2597,8 +2588,10 @@ class SQLiteStore(AnnotationStore):
             if geometry_predicate == "centers_within_k":
                 # Use rtree index to check distance between points
                 query_string += (
-                    "AND (POWER((:min_x + :max_x)/2 - (min_x + max_x)/2, 2) + "
-                    " POWER((:min_y + :max_y)/2 - (min_y + max_y)/2, 2)) < :distance2 "
+                    "AND (((:min_x + :max_x)/2 - (min_x + max_x)/2)*"
+                    "((:min_x + :max_x)/2 - (min_x + max_x)/2) + "
+                    " ((:min_y + :max_y)/2 - (min_y + max_y)/2)*"
+                    "((:min_y + :max_y)/2 - (min_y+ max_y)/2)) < :distance2 "
                 )
                 query_parameters["distance2"] = distance**2
             # Otherwise, perform a regular bounding box intersection
@@ -3172,8 +3165,8 @@ class SQLiteStore(AnnotationStore):
                 Only annotations for which this predicate is true will
                 be returned. Defaults to None (assume always true). This
                 may be a string, Callable, or pickled function as bytes.
-                Callables are called to filter each result returned the
-                from annotation store backend in python before being
+                Callables are called to filter each result returned
+                from the annotation store backend in python before being
                 returned to the user. A pickle object is, where
                 possible, hooked into the backend as a user defined
                 function to filter results during the backend query.
