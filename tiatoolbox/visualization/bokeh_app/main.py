@@ -950,6 +950,54 @@ def cprop_input_cb(attr: str, old: str, new: list[str]) -> None:  # noqa: ARG001
     UI["vstate"].to_update.update(["overlay"])
 
 
+def cmap_builder_cb(attr, old, new):
+    """Add a property to the colormap and make a ColorPicker for it,
+    then add it to the UI["cmap_picker_column"]. if new < old, remove the
+    ColorPicker wit the deselected property from the cmap_picker_column
+    """
+    if len(new) > len(old):
+        new_prop = set(new).difference(set(old))
+        new_prop = new_prop.pop()
+
+        color_picker = ColorPicker(
+            title=new_prop,
+            color=color_cycler.get_next(),
+            width=100,
+            height=50,
+        )
+        color_picker.on_change("color", cmap_picker_cb)
+        UI["cmap_picker_column"].children.append(color_picker)
+    else:
+        old_prop = set(old).difference(set(new))
+        old_prop = old_prop.pop()
+        for i, cp in enumerate(UI["cmap_picker_column"].children):
+            if cp.title == old_prop:
+                UI["cmap_picker_column"].children.pop(i)
+                break
+
+
+def cmap_picker_cb(attr, old, new):
+    """Update the colormap with the new color"""
+    # anything needed here?
+
+
+def cmap_builder_button_cb():
+    """Submit the dict of properties and colors to the server"""
+    cmap = {}
+    for cp in UI["cmap_picker_column"].children:
+        cmap[cp.title] = hex2rgb(cp.color)
+    if len(cmap) == 0:
+        return
+    if len(cmap) == 1:
+        cprop_input_cb(None, None, list(cmap.keys()))
+        return
+    UI["s"].put(
+        f"http://{host2}:5000/tileserver/build_cmap/{UI['mixing_type_select'].labels[UI['mixing_type_select'].active]}/{UI['cmap_select'].value}/{json.dumps(cmap)}",
+    )
+    UI["vstate"].update_state = 1
+    UI["vstate"].to_update.update(["overlay"])
+
+
 def slide_alpha_cb(attr: str, old: float, new: float) -> None:  # noqa: ARG001
     """Callback to change the alpha of the slide."""
     UI["p"].renderers[0].alpha = new
@@ -1564,6 +1612,63 @@ def gpt_inference() -> None:
     gpt_interface.add_img(Image.fromarray(region))
 
 
+def stain_select_cb(attr, old, new):
+    stain = UI["stain_select"].labels[new]
+    wed = UI["wed_slider"].value
+    weh = UI["weh_slider"].value
+    wdh = UI["wdh_slider"].value
+    wde = UI["wde_slider"].value
+    UI["s"].put(
+        f"http://{host2}:5000/tileserver/change_demux/{stain}/{wed}/{weh}/{wdh}/{wde}",
+    )
+    UI["vstate"].update_state = 1
+    UI["vstate"].to_update.update(["slide"])
+
+
+def demux_slider_cb(attr, old, new):
+    stain = UI["stain_select"].labels[UI["stain_select"].active]
+    wed = float(UI["wed_slider"].value)
+    weh = float(UI["weh_slider"].value)
+    wdh = float(UI["wdh_slider"].value)
+    wde = float(UI["wde_slider"].value)
+    UI["s"].put(
+        f"http://{host2}:5000/tileserver/change_demux/{stain}/{wed}/{weh}/{wdh}/{wde}",
+    )
+    UI["vstate"].update_state = 1
+    UI["vstate"].to_update.update(["slide"])
+
+
+def add_postproc_cb(attr):
+    UI["s"].post(
+        f"http://{host2}:5000/tileserver/add_post_proc",
+        data={
+            "name": json.dumps("StainFalseColor"),  # "VirtualRestainer"),
+            "layer": json.dumps("slide"),
+            "kwargs": json.dumps(
+                {
+                    # "stains": UI["stain_select"].labels[UI["stain_select"].active],
+                    # "coupling_coeffs": {
+                    #     "wed": UI["wed_slider"].value,
+                    #     "weh": UI["weh_slider"].value,
+                    #     "wdh": UI["wdh_slider"].value,
+                    #     "wde": UI["wde_slider"].value,
+                    # },
+                    # "load_path": str(
+                    #     slide_folder / f"{UI['vstate'].slide_path.stem}_info.pkl"
+                    # ),
+                    "channel_map": {
+                        "R": [1, 0, 0],
+                        "G": [0, 1, 0],
+                        "B": [0, 0, 1],
+                    },
+                },
+            ),
+        },
+    )
+    UI["vstate"].update_state = 1
+    UI["vstate"].to_update.update(["slide"])
+
+
 def segment_on_box() -> None:
     """Callback to run hovernet on a region of the slide.
 
@@ -1622,6 +1727,60 @@ def segment_on_box() -> None:
     # Clean up temp files
     rmtree(tmp_save_dir)
     rmtree(tmp_mask_dir)
+
+
+# run nuclick on user selected points in pt_source
+def nuclick_on_pts(attr):
+    x = np.round(np.array(UI["pt_source"].data["x"]))
+    y = -np.round(np.array(UI["pt_source"].data["y"]))
+
+    model = NuClick(5, 1)
+    # pretrained_weights = r"C:\Users\meast\app_data\NuClick_Nuclick_40xAll.pth"
+    fetch_pretrained_weights(
+        "nuclick_original-pannuke",
+        r"./nuclick_weights.pth",
+        overwrite=False,
+    )
+    saved_state_dict = torch.load(r"./nuclick_weights.pth", map_location="cpu")
+    model.load_state_dict(saved_state_dict, strict=True)
+    UI["vstate"].model_mpp = 0.25
+    ioconf = IOInteractiveSegmentorConfig(
+        input_resolutions=[{"resolution": 0.25, "units": "mpp"}],
+        patch_size=(128, 128),
+    )
+    inst_segmentor = InteractiveSegmentor(
+        num_loader_workers=0,
+        batch_size=16,
+        model=model,
+    )
+
+    points = np.vstack([x, y]).T
+    points = points / (ioconf.input_resolutions[0]["resolution"] / UI["vstate"].mpp[0])
+    print(points.shape)
+    nuclick_output = inst_segmentor.predict(
+        [UI["vstate"].slide_path],
+        [points],
+        ioconfig=ioconf,
+        save_dir="/app_data/sample_tile_results/",
+        patch_size=(128, 128),
+        resolution=0.25,
+        units="mpp",
+        on_gpu=False,
+        save_output=True,
+    )
+
+    # fname='-*-'.join('.\\sample_tile_results\\0.dat'.split('\\'))
+    fname = make_safe_name("\\app_data\\sample_tile_results\\0.dat")
+    print(fname)
+    resp = UI["s"].put(
+        f"http://{host2}:5000/tileserver/load_annotations/{fname}/{UI['vstate'].model_mpp}",
+    )
+    print(resp.text)
+    UI["vstate"].types = json.loads(resp.text)
+    update_mapper()
+    rmtree(Path(r"/app_data/sample_tile_results"))
+    initialise_overlay()
+    change_tiles("overlay")
 
 
 # endregion
@@ -1946,6 +2105,42 @@ def gather_ui_elements(  # noqa: PLR0915
         sizing_mode="stretch_width",
         name=f"range_slider{win_num}",
     )
+    cmap_builder_input = MultiChoice(
+        title="Choose props and colors:",
+        max_items=10,
+        options=["*"],
+        search_option_limit=5000,
+        sizing_mode="stretch_width",
+        # max_width=300,
+    )
+    cmap_builder_button = Button(
+        label="Build Cmap",
+        button_type="success",
+        max_width=90,
+        sizing_mode="stretch_width",
+    )
+    cmap_picker_column = column(children=[])
+    mixing_type_select = RadioButtonGroup(
+        labels=["lin", "max", "avg", "prod", "pow", "softm"],
+        active=4,
+    )
+    add_postproc_button = Button(
+        label="Add Postproc",
+        button_type="success",
+        max_width=90,
+        sizing_mode="stretch_width",
+    )
+    stain_select = RadioButtonGroup(
+        labels=["HE", "HD", "HED"],
+        active=0,
+        width=100,
+        max_width=100,
+        sizing_mode="stretch_width",
+    )
+    weh_slider = Slider(start=0, end=1, value=0.1, step=0.01, title="weh")
+    wed_slider = Slider(start=0, end=1, value=0.5, step=0.01, title="wed")
+    wde_slider = Slider(start=0, end=1, value=0.5, step=0.01, title="wde")
+    wdh_slider = Slider(start=0, end=1, value=0.5, step=0.01, title="wdh")
 
     # Associate callback functions to the widgets
     slide_alpha.on_change("value", slide_alpha_cb)
@@ -1979,6 +2174,14 @@ def gather_ui_elements(  # noqa: PLR0915
     range_checkbox.on_change("active", range_checkbox_cb)
     range_min.on_change("value", range_min_cb)
     range_max.on_change("value", range_max_cb)
+    cmap_builder_input.on_change("value", cmap_builder_cb)
+    cmap_builder_button.on_click(cmap_builder_button_cb)
+    add_postproc_button.on_click(add_postproc_cb)
+    stain_select.on_change("active", stain_select_cb)
+    weh_slider.on_change("value", demux_slider_cb)
+    wed_slider.on_change("value", demux_slider_cb)
+    wde_slider.on_change("value", demux_slider_cb)
+    wdh_slider.on_change("value", demux_slider_cb)
 
     # Create some layouts
     type_column = column(children=layer_boxes, name=f"type_column{win_num}")
@@ -2063,6 +2266,16 @@ def gather_ui_elements(  # noqa: PLR0915
                 "res_switch",
                 "range_row",
                 "range_slider",
+                "mixing_type_select",
+                "cmap_builder_input",
+                "cmap_picker_column",
+                "cmap_builder_button",
+                "add_postproc_button",
+                "stain_select",
+                "weh_slider",
+                "wed_slider",
+                "wde_slider",
+                "wdh_slider",
             ],
             [
                 opt_buttons,
@@ -2071,6 +2284,16 @@ def gather_ui_elements(  # noqa: PLR0915
                 res_switch,
                 range_row,
                 range_slider,
+                mixing_type_select,
+                cmap_builder_input,
+                cmap_picker_column,
+                cmap_builder_button,
+                add_postproc_button,
+                stain_select,
+                weh_slider,
+                wed_slider,
+                wde_slider,
+                wdh_slider,
             ],
         ),
     )

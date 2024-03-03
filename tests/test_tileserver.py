@@ -40,6 +40,21 @@ def setup_app(client: FlaskClient) -> str:
     return client.get_cookie("session_id").value
 
 
+def safe_str(name):
+    """Make a name safe for use in a URL."""
+    return urllib.parse.quote(str(PureWindowsPath(name)), safe="")
+
+
+def setup_app(client):
+    client.get("/tileserver/setup")
+    # get the "user" cookie
+    cookie = next(
+        (cookie for cookie in client.cookie_jar if cookie.name == "user"),
+        None,
+    )
+    return cookie.value
+
+
 @pytest.fixture(scope="session")
 def cell_grid() -> list[Polygon]:
     """Generate a grid of fake cell boundary polygon annotations."""

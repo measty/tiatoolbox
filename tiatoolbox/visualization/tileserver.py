@@ -10,16 +10,18 @@ import secrets
 import sys
 import tempfile
 import urllib
+from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 import numpy as np
 from flask import Flask, Response, jsonify, make_response, request, send_file
 from flask.templating import render_template
-from matplotlib import colormaps
+from matplotlib import cm, colormaps
 from PIL import Image
 from shapely.geometry import Point
 
+import tiatoolbox.visualization.bokeh_app.postproc_defs as postproc
 from tiatoolbox import data, logger
 from tiatoolbox.annotation import AnnotationStore, SQLiteStore
 from tiatoolbox.tools.pyramid import AnnotationTileGenerator, ZoomifyGenerator
@@ -166,6 +168,14 @@ class TileServer(Flask):
         self.route("/tileserver/prop_range", methods=["PUT"])(self.prop_range)
         self.route("/tileserver/upload", methods=["POST"])(self.file_upload)
         self.route("/tileserver/shutdown", methods=["POST"])(self.shutdown)
+        self.route("/tileserver/build_cmap/<mix_type>/<cmap>/<cdict>", methods=["PUT"])(
+            self.build_cmap,
+        )
+        self.route("/tileserver/add_post_proc", methods=["POST"])(self.add_post_proc)
+        self.route(
+            "/tileserver/change_demux/<stain>/<float:wed>/<float:weh>/<float:wdh>/<float:wde>",
+            methods=["PUT"],
+        )(self.change_demux)
 
     def _get_session_id(self: TileServer) -> str:
         """Get the session_id from the request.
@@ -756,3 +766,73 @@ class TileServer(Flask):
     def shutdown() -> None:
         """Shutdown the tileserver."""
         sys.exit()
+
+    def add_post_proc(self):
+        session_id = self._get_session_id()
+        post_processor = json.loads(request.form["name"])
+        kwargs = json.loads(request.form["kwargs"])
+        pp_class = getattr(postproc, post_processor)
+        self.pyramids[session_id][json.loads(request.form["layer"])].post_proc = (
+            pp_class(
+                **kwargs,
+            )
+        )
+        return "done"
+
+    def change_demux(self, stain, wed, weh, wdh, wde):
+        session_id = self._get_session_id()
+        self.pyramids[session_id]["slide"].post_proc.stains = stain
+        self.pyramids[session_id]["slide"].post_proc.coupling_coeffs = {
+            "wed": wed,
+            "weh": weh,
+            "wdh": wdh,
+            "wde": wde,
+        }
+        return "done"
+
+    def build_cmap(self, cmap, mix_type, cdict):
+        """Build a color mapper function from a dictionary."""
+        session_id = self._get_session_id()
+        cdict = json.loads(cdict)
+        props_list = list(cdict.keys())
+        color_matrix = np.array([cdict[prop] for prop in props_list])
+
+        def mapper_fn(props, props_list, color_matrix, mix_type, cmap):
+            prop_vals = np.array([props[prop] for prop in props_list])
+            if mix_type == "pow":
+                prop_vals = prop_vals**3 * (
+                    np.max(prop_vals) / (np.max(prop_vals**3) + 0.00001)
+                )
+            elif mix_type == "max":
+                prop_vals[prop_vals < np.max(prop_vals)] = 0
+            elif mix_type == "softm":
+                # calculate softmax
+                mv = np.max(prop_vals)
+                prop_vals = np.exp(prop_vals)
+                prop_vals = prop_vals / np.sum(prop_vals)
+                prop_vals = prop_vals * mv / np.max(prop_vals)
+            elif mix_type == "lin":
+                prop_vals[prop_vals < 0.1] = 0
+            # calculate weighted average
+            if mix_type in ["pow", "max", "lin", "softm"]:
+                color = np.matmul(prop_vals, color_matrix) * 255
+                if np.max(color) > 255:
+                    color = color * (255 / np.max(color))
+            elif mix_type == "avg":
+                color = np.array(cmap(np.mean(prop_vals))) * 255
+            else:
+                color = (
+                    np.array(cmap(np.prod(prop_vals))) * 255 * (1.15 ** len(prop_vals))
+                )
+            return (int(color[0]), int(color[1]), int(color[2]), 255)
+
+        mapper_fn = partial(
+            mapper_fn,
+            props_list=props_list,
+            color_matrix=color_matrix,
+            mix_type=mix_type,
+            cmap=cm.get_cmap(cmap),
+        )
+        # set renderer mapper
+        self.renderers[session_id].function_mapper = mapper_fn
+        return "done"

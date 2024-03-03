@@ -26,7 +26,11 @@ from shapely.geometry import shape as feature2geometry
 from skimage import exposure
 
 from tiatoolbox import logger
-from tiatoolbox.annotation.storage import Annotation, AnnotationStore, SQLiteStore
+from tiatoolbox.annotation.storage import (
+    Annotation,
+    AnnotationStore,
+    SQLiteStore,
+)
 from tiatoolbox.utils.exceptions import FileNotSupportedError
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -34,6 +38,8 @@ if TYPE_CHECKING:  # pragma: no cover
 
     import numpy.typing as npt
     from shapely import geometry
+
+    from tiatoolbox.typing import Geometry
 
 
 def split_path_name_ext(
@@ -1146,6 +1152,7 @@ def add_from_dat(
     scale_factor: tuple[float, float] = (1, 1),
     typedict: dict | None = None,
     origin: tuple[float, float] = (0, 0),
+    crop_inside: Geometry | None = None,
 ) -> None:
     """Add annotations from a .dat file to an existing store.
 
@@ -1174,6 +1181,8 @@ def add_from_dat(
             'head2': {1: 'Gland', 2: 'Lumen', 3: ...}, ...}.
         origin (tuple(float, float)):
             The x and y coordinates to use as the origin for the annotations.
+        crop_inside (Geometry):
+            A shapely geometry to crop the annotations to. If None, no cropping
 
     """
     data = joblib.load(fp)
@@ -1216,8 +1225,9 @@ def add_from_dat(
             )
     else:
         anns = anns_from_hoverdict(data, props, typedict, origin, scale_factor)
-
-    logger.info("Added %d annotations.", len(anns))
+    if crop_inside is not None:
+        anns = [ann for ann in anns if ann.geometry.intersects(crop_inside)]
+    logger.info("Adding %d annotations.", len(anns))
     store.append_many(anns)
 
 

@@ -730,7 +730,10 @@ class SemanticSegmentor:
         elif auto_get_mask and mode == "wsi" and mask_path is None:
             # if no mask provided and `wsi` mode, generate basic tissue
             # mask on the fly
-            mask_reader = reader.tissue_mask(resolution=1.25, units="power")
+            mask_reader = reader.tissue_mask(
+                resolution=1.25,
+                units="power",
+            )
             mask_reader.info = reader.info
         return reader, mask_reader
 
@@ -1006,6 +1009,7 @@ class SemanticSegmentor:
             patch_shape_in_wsi = tuple(br_in_wsi - tl_in_wsi)
             # conversion to make cv2 happy
             prediction = prediction.astype(np.float32)
+            # if prediction.shape[:2] != patch_shape_in_wsi:
             prediction = cv2.resize(prediction, patch_shape_in_wsi[::-1])
             # ! cv2 resize will remove singleton !
             if add_singleton_dim:

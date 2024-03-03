@@ -8,7 +8,7 @@ import cv2
 import numpy as np
 from skimage.filters import threshold_otsu
 
-from tiatoolbox.utils.misc import objective_power2mpp
+from tiatoolbox.utils.misc import contrast_enhancer, objective_power2mpp
 
 
 class TissueMasker(ABC):
@@ -304,3 +304,46 @@ class MorphologicalMasker(OtsuTissueMasker):
 
             results.append(mask.astype(bool))
         return np.array(results)
+
+
+class LuminosityMasker(TissueMasker):
+    """Get tissue mask based on the luminosity of the input image."""
+
+    def __init__(self, threshold=0.8):
+        """Initialise a luminosity masker.
+
+        Args:
+            threshold (float):
+                Luminosity threshold used to determine tissue area.
+
+        """
+        super().__init__()
+        self.threshold = threshold
+
+    def transform(self, img):
+        """Get tissue mask based on the luminosity of the input image.
+
+        Args:
+            img (:class:`numpy.ndarray`):
+                Input image used to obtain tissue mask.
+            threshold (float):
+                Luminosity threshold used to determine tissue area.
+
+        Returns:
+            tissue_mask (:class:`numpy.ndarray`):
+                Binary tissue mask.
+
+        Examples:
+            >>> from tiatoolbox import utils
+            >>> tissue_mask = utils.misc.get_luminosity_tissue_mask(img, threshold=0.8)
+
+        """
+        img = img.astype("uint8")  # ensure input image is uint8
+        img = contrast_enhancer(img, low_p=2, high_p=98)  # Contrast  enhancement
+        img_lab = cv2.cvtColor(img, cv2.COLOR_RGB2LAB)
+        l_lab = img_lab[:, :, 0] / 255.0  # Convert to range [0,1].
+        tissue_mask = l_lab < self.threshold
+
+        # check it's not empty
+        if tissue_mask.sum() == 0:
+            raise ValueError("Empty tissue mask computed.")
