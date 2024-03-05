@@ -176,6 +176,7 @@ class TileServer(Flask):
             "/tileserver/change_demux/<stain>/<float:wed>/<float:weh>/<float:wdh>/<float:wde>",
             methods=["PUT"],
         )(self.change_demux)
+        self.route("/tileserver/postproc/<prop>", methods=["PUT"])(self.update_postproc)
 
     def _get_session_id(self: TileServer) -> str:
         """Get the session_id from the request.
@@ -771,6 +772,11 @@ class TileServer(Flask):
         session_id = self._get_session_id()
         post_processor = json.loads(request.form["name"])
         kwargs = json.loads(request.form["kwargs"])
+        if post_processor == "None":
+            self.pyramids[session_id][
+                json.loads(request.form["layer"])
+            ].post_proc = None
+            return "done"
         pp_class = getattr(postproc, post_processor)
         self.pyramids[session_id][json.loads(request.form["layer"])].post_proc = (
             pp_class(
@@ -836,3 +842,19 @@ class TileServer(Flask):
         # set renderer mapper
         self.renderers[session_id].function_mapper = mapper_fn
         return "done"
+
+    def update_postproc(self: TileServer, prop: str) -> str:
+        """Update a property in the postproc class.
+
+        Args:
+            prop (str): The property to update.
+
+        """
+        session_id = self._get_session_id()
+        val = request.form["val"]
+        val = json.loads(val)
+        if val in ["None", "null"]:
+            val = None
+        self.pyramids[session_id][
+            json.loads(request.form["layer"])
+        ].post_proc.__setattr__(prop, val)

@@ -1189,11 +1189,11 @@ def add_from_dat(
     props = list(data[next(iter(data.keys()))].keys())
     if "base_resolution" in data and "proc_resolution" in data:
         # we can infer scalefactor from resolutions
-        scale_factor = (
+        i_scale_factor = (
             data["proc_resolution"]["resolution"]
             / data["base_resolution"]["resolution"]
         )
-        logger.info("Scale factor inferred from resolutions: %s", scale_factor)
+        logger.info("Scale factor inferred from resolutions: %s", i_scale_factor)
     if "contour" not in props:
         # assume cerberus format with objects subdivided into categories
         anns = []

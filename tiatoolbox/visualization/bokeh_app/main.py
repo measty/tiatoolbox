@@ -1108,6 +1108,7 @@ def slide_select_cb(attr: str, old: str, new: str) -> None:  # noqa: ARG001
     initialise_slide()
     fname = make_safe_name(str(slide_path))
     UI["s"].put(f"http://{host2}:5000/tileserver/slide", data={"slide_path": fname})
+    UI["postproc_select"].value = "None"
     change_tiles("slide")
 
     # Load the overlay and graph automatically if set in config
@@ -1638,11 +1639,20 @@ def demux_slider_cb(attr, old, new):
     UI["vstate"].to_update.update(["slide"])
 
 
-def add_postproc_cb(attr):
+def channel_select_cb(attr, old, new):
+    UI["s"].put(
+        f"http://{host2}:5000/tileserver/postproc/channels",
+        data={"val": json.dumps(new), "layer": json.dumps("slide")},
+    )
+    UI["vstate"].update_state = 1
+    UI["vstate"].to_update.update(["slide"])
+
+
+def postproc_select_cb(attr, old, new):
     UI["s"].post(
         f"http://{host2}:5000/tileserver/add_post_proc",
         data={
-            "name": json.dumps("StainFalseColor"),  # "VirtualRestainer"),
+            "name": json.dumps(new),  # "VirtualRestainer"),
             "layer": json.dumps("slide"),
             "kwargs": json.dumps(
                 {
@@ -1656,11 +1666,7 @@ def add_postproc_cb(attr):
                     # "load_path": str(
                     #     slide_folder / f"{UI['vstate'].slide_path.stem}_info.pkl"
                     # ),
-                    "channel_map": {
-                        "R": [1, 0, 0],
-                        "G": [0, 1, 0],
-                        "B": [0, 0, 1],
-                    },
+                    "channels": UI["channel_select"].active,
                 },
             ),
         },
@@ -2124,9 +2130,10 @@ def gather_ui_elements(  # noqa: PLR0915
         labels=["lin", "max", "avg", "prod", "pow", "softm"],
         active=4,
     )
-    add_postproc_button = Button(
-        label="Add Postproc",
-        button_type="success",
+    postproc_select = Select(
+        title="Add Postproc",
+        options=["StainFalseColor", "TorchStainSep", "None"],  # "VirtualRestainer"],
+        value="None",
         max_width=90,
         sizing_mode="stretch_width",
     )
@@ -2141,6 +2148,11 @@ def gather_ui_elements(  # noqa: PLR0915
     wed_slider = Slider(start=0, end=1, value=0.5, step=0.01, title="wed")
     wde_slider = Slider(start=0, end=1, value=0.5, step=0.01, title="wde")
     wdh_slider = Slider(start=0, end=1, value=0.5, step=0.01, title="wdh")
+    channel_select = CheckboxButtonGroup(
+        labels=["H", "CDX2", "DAB", "MUC2", "MUC5"],
+        active=[0, 1, 2, 3, 4],
+        sizing_mode="stretch_width",
+    )
 
     # Associate callback functions to the widgets
     slide_alpha.on_change("value", slide_alpha_cb)
@@ -2176,12 +2188,13 @@ def gather_ui_elements(  # noqa: PLR0915
     range_max.on_change("value", range_max_cb)
     cmap_builder_input.on_change("value", cmap_builder_cb)
     cmap_builder_button.on_click(cmap_builder_button_cb)
-    add_postproc_button.on_click(add_postproc_cb)
+    postproc_select.on_change("value", postproc_select_cb)
     stain_select.on_change("active", stain_select_cb)
     weh_slider.on_change("value", demux_slider_cb)
     wed_slider.on_change("value", demux_slider_cb)
     wde_slider.on_change("value", demux_slider_cb)
     wdh_slider.on_change("value", demux_slider_cb)
+    channel_select.on_change("active", channel_select_cb)
 
     # Create some layouts
     type_column = column(children=layer_boxes, name=f"type_column{win_num}")
@@ -2266,16 +2279,17 @@ def gather_ui_elements(  # noqa: PLR0915
                 "res_switch",
                 "range_row",
                 "range_slider",
-                "mixing_type_select",
-                "cmap_builder_input",
-                "cmap_picker_column",
-                "cmap_builder_button",
-                "add_postproc_button",
-                "stain_select",
-                "weh_slider",
-                "wed_slider",
-                "wde_slider",
-                "wdh_slider",
+                # "mixing_type_select",
+                # "cmap_builder_input",
+                # "cmap_picker_column",
+                # "cmap_builder_button",
+                "postproc_select",
+                # "stain_select",
+                # "weh_slider",
+                # "wed_slider",
+                # "wde_slider",
+                # "wdh_slider",
+                "channel_select",
             ],
             [
                 opt_buttons,
@@ -2284,16 +2298,17 @@ def gather_ui_elements(  # noqa: PLR0915
                 res_switch,
                 range_row,
                 range_slider,
-                mixing_type_select,
-                cmap_builder_input,
-                cmap_picker_column,
-                cmap_builder_button,
-                add_postproc_button,
-                stain_select,
-                weh_slider,
-                wed_slider,
-                wde_slider,
-                wdh_slider,
+                # mixing_type_select,
+                # cmap_builder_input,
+                # cmap_picker_column,
+                # cmap_builder_button,
+                postproc_select,
+                # stain_select,
+                # weh_slider,
+                # wed_slider,
+                # wde_slider,
+                # wdh_slider,
+                channel_select,
             ],
         ),
     )
