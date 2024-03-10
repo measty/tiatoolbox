@@ -1242,7 +1242,7 @@ def handle_graph_layer(attr: MenuItemClick) -> None:  # skipcq: PY-R1000
         tooltips.extend(
             [
                 (graph_feat_names[i], f"@{graph_feat_names[i].replace(' ', '_')}")
-                for i in range(np.minimum(graph_dict["feats"].shape[1], 9))
+                for i in range(np.minimum(graph_dict["feats"].shape[1], MAX_FEATS))
             ],
         )
         UI["hover"].tooltips = tooltips
