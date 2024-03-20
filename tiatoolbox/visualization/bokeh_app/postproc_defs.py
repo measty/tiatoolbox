@@ -165,7 +165,7 @@ class StainLayer(nn.Module):
                 [
                     [0.62, 0.637, 0.458],  # H
                     [0.29, 0.832, 0.473],  # CDX2 (pink)
-                    [00.3, 0.491, 0.818],  # CDX8 (brown)
+                    [0.3, 0.491, 0.818],  # CDX8 (brown)
                     [0.033, 0.343, 0.939],  # MUC2 (yellow)
                     [0.741, 0.294, 0.604],
                 ],  # MUC5 (green),
@@ -204,9 +204,9 @@ class StainLayer(nn.Module):
 
         """
         # operates in NCHW
-        X = torch.max(x, 1e-6 * torch.ones_like(x))
+        X = torch.max(x, 1e-2 * torch.ones_like(x))
         X = X.permute(0, 2, 3, 1)  # Move to NHWC
-        Z = (torch.log(X) / np.log(1e-6)) @ self.StainMatrix
+        Z = (torch.log(X) / np.log(1e-2)) @ self.StainMatrix
         if self.use_bias:
             Z += self.bias
         Z = Z.permute(0, 3, 1, 2)  # ... and move back
@@ -226,7 +226,7 @@ class StainLayer(nn.Module):
             DESCRIPTION.
 
         """
-        log_adjust = -np.log(1e-6)
+        log_adjust = -np.log(1e-2)
         Z = x.permute(0, 2, 3, 1)
         if self.use_bias:
             Z -= self.bias
@@ -306,6 +306,7 @@ class TorchStainSep:
         normalize=False,
         use_bias=False,
         channels=None,
+        to_rgb=True,
     ):
         """Initializes the class
         Args:
@@ -321,21 +322,24 @@ class TorchStainSep:
             use_bias=use_bias,
         )
         if channels is None:
-            self.channels = [0, 1, 2, 3]
+            self.channels = [0, 1, 2, 3, 4]
         else:
             self.channels = channels
+        self.to_rgb = to_rgb
 
     def __call__(self, img):
         with torch.no_grad():
             img = TF.to_tensor(img).unsqueeze(0)
             img = self.stain_layer.forward(img)
             img = img.squeeze(0)
-            img = self.stain_layer.RemapChannel(
-                img,
-                toPIL=False,
-                channels=self.channels,
-                separate=False,
-            )
+            if self.to_rgb:
+                # map the channels we are keeping back to rgb
+                img = self.stain_layer.RemapChannel(
+                    img,
+                    toPIL=False,
+                    channels=self.channels,
+                    separate=False,
+                )
             img = img.permute(1, 2, 0)
-        # import pdb; pdb.set_trace()
+
         return (img.detach().cpu().numpy() * 255).astype(np.uint8)
