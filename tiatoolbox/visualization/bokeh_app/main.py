@@ -14,6 +14,10 @@ from typing import TYPE_CHECKING, Any, Callable, SupportsFloat
 import numpy as np
 import requests
 import torch
+from matplotlib import colormaps
+from PIL import Image
+from requests.adapters import HTTPAdapter, Retry
+
 from bokeh.events import ButtonClick, DoubleTap, MenuItemClick
 from bokeh.io import curdoc
 from bokeh.layouts import column, row
@@ -58,9 +62,6 @@ from bokeh.models.dom import HTML
 from bokeh.models.tiles import WMTSTileSource
 from bokeh.plotting import figure
 from bokeh.util import token
-from matplotlib import colormaps
-from PIL import Image
-from requests.adapters import HTTPAdapter, Retry
 
 # GitHub actions seems unable to find TIAToolbox unless this is here
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
@@ -725,7 +726,16 @@ def populate_slide_list(slide_folder: Path, search_txt: str | None = None) -> No
     """Populate the slide list with the available slides."""
     file_list = []
     len_slidepath = len(slide_folder.parts)
-    for ext in ["*.svs", "*ndpi", "*.tiff", "*.mrxs", "*.jpg", "*.png", "*.tif"]:
+    for ext in [
+        "*.svs",
+        "*ndpi",
+        "*.tiff",
+        "*.mrxs",
+        "*.jpg",
+        "*.png",
+        "*.tif",
+        "*.czi",
+    ]:
         file_list.extend(list(Path(slide_folder).glob(str(Path("*") / ext))))
         file_list.extend(list(Path(slide_folder).glob(ext)))
     if search_txt is None:
@@ -863,7 +873,7 @@ def slide_select_cb(attr: str, old: str, new: str) -> None:  # noqa: ARG001
     UI["type_column"].children = []
     logger.warning("loading %s", slide_path, stacklevel=2)
     populate_layer_list(slide_path.stem, doc_config["overlay_folder"])
-    UI["vstate"].wsi = WSIReader.open(slide_path)
+    # UI["vstate"].wsi = WSIReader.open(slide_path)
     initialise_slide()
     fname = make_safe_name(str(slide_path))
     UI["s"].put(f"http://{host2}:5000/tileserver/slide", data={"slide_path": fname})
@@ -1995,7 +2005,7 @@ def setup_config_ui_settings(config: dict) -> None:
         )
     populate_slide_list(config["slide_folder"])
     UI["slide_select"].value = [str(UI["vstate"].slide_path.name)]
-    slide_select_cb(None, None, new=[UI["vstate"].slide_path.name])
+    # slide_select_cb(None, None, new=[UI["vstate"].slide_path.name])
     populate_layer_list(
         Path(UI["vstate"].slide_path).stem,
         doc_config["overlay_folder"],
@@ -2086,7 +2096,16 @@ class DocConfig:
 
         # Set initial slide to first one in base folder
         slide_list = []
-        for ext in ["*.svs", "*ndpi", "*.tiff", "*.mrxs", "*.png", "*.jpg"]:
+        for ext in [
+            "*.svs",
+            "*ndpi",
+            "*.tiff",
+            "*.mrxs",
+            "*.png",
+            "*.jpg",
+            "*.tif",
+            "*.czi",
+        ]:
             slide_list.extend(list(doc_config["slide_folder"].glob(ext)))
             slide_list.extend(
                 list(doc_config["slide_folder"].glob(str(Path("*") / ext))),

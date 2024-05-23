@@ -400,13 +400,13 @@ class TileServer(Flask):
         slide_path = self.decode_safe_name(slide_path)
 
         self.layers[session_id] = {"slide": WSIReader.open(Path(slide_path))}
+        # import pdb; pdb.set_trace()
         self.pyramids[session_id] = {
             "slide": ZoomifyGenerator(self.layers[session_id]["slide"], tile_size=256),
         }
         if self.layers[session_id]["slide"].info.mpp is None:
             self.layers[session_id]["slide"].info.mpp = [1, 1]
         self.slide_mpps[session_id] = self.layers[session_id]["slide"].info.mpp
-
         return "done"
 
     def change_mapper(self: TileServer) -> str:
