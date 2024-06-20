@@ -3472,9 +3472,9 @@ class BioFormatsWSIReader(WSIReader):
     ) -> None:
         """Initialize :class:`BioFormatsWSIReader`."""
         super().__init__(input_img=input_img, mpp=mpp, power=power)
-        javabridge.kill_vm()
-        javabridge.start_vm(class_path=bioformats.JARS)
-        self.bf_reader = bioformats.ImageReader(str(self.input_path))
+        # javabridge.kill_vm()
+        javabridge.start_vm(class_path=bioformats.JARS, run_headless=True)
+        self.bf_reader = str(input_img)  # bioformats.ImageReader(str(self.input_path))
 
     def read_rect(
         self: BioFormatsWSIReader,
@@ -3515,55 +3515,56 @@ class BioFormatsWSIReader(WSIReader):
             units=units,
         )
 
-        wsi = self.bf_reader
+        with bioformats.ImageReader(str(self.input_path)) as wsi:
+            # correct location and size to not go ouot of bounds for the read level
+            level_dims = self.info.level_dimensions[read_level]
+            safe_level_size = np.minimum(level_size, level_dims[::-1] - level_location)
+            safe_level_size = np.maximum(safe_level_size, 1)
 
-        # correct location and size to not go ouot of bounds for the read level
-        level_dims = self.info.level_dimensions[read_level]
-        safe_level_size = np.minimum(level_size, level_dims[::-1] - level_location)
-        safe_level_size = np.maximum(safe_level_size, 1)
+            # Read at optimal level and corrected read size
+            im_region = self._read_region(level_location, read_level, safe_level_size)
+            im_region = np.array(im_region)
 
-        # Read at optimal level and corrected read size
-        im_region = self._read_region(level_location, read_level, safe_level_size)
-        im_region = np.array(im_region)
+            # pad back to level_size if needed
+            if not np.all(safe_level_size == level_size):
+                pad_size = level_size - safe_level_size
+                im_region = np.pad(
+                    im_region, ((0, pad_size[1]), (0, pad_size[0]), (0, 0))
+                )
 
-        # pad back to level_size if needed
-        if not np.all(safe_level_size == level_size):
-            pad_size = level_size - safe_level_size
-            im_region = np.pad(im_region, ((0, pad_size[1]), (0, pad_size[0]), (0, 0)))
+            # Apply padding outside the slide area
+            im_region = utils.image.crop_and_pad_edges(
+                bounds=utils.transforms.locsize2bounds(level_location, level_size),
+                max_dimensions=self.info.level_dimensions[read_level],
+                region=im_region,
+                pad_mode=pad_mode,
+                pad_constant_values=pad_constant_values,
+            )
 
-        # Apply padding outside the slide area
-        im_region = utils.image.crop_and_pad_edges(
-            bounds=utils.transforms.locsize2bounds(level_location, level_size),
-            max_dimensions=self.info.level_dimensions[read_level],
-            region=im_region,
-            pad_mode=pad_mode,
-            pad_constant_values=pad_constant_values,
-        )
+            # Resize to correct scale if required
+            im_region = utils.transforms.imresize(
+                img=im_region,
+                scale_factor=post_read_scale,
+                output_size=size,
+                interpolation=interpolation,
+            )
 
-        # Resize to correct scale if required
-        im_region = utils.transforms.imresize(
-            img=im_region,
-            scale_factor=post_read_scale,
-            output_size=size,
-            interpolation=interpolation,
-        )
-
-        return utils.transforms.background_composite(image=im_region, alpha=False)
+            return utils.transforms.background_composite(image=im_region, alpha=False)
 
     def _read_region(self, location, level, size):
         """Read a specific region using Bio-Formats."""
-        reader = self.bf_reader
-        # Bio-Formats uses ZCTYX order, handle it accordingly
-        x, y = location
-        if x > 0:
-            x -= 1
-        if y > 0:
-            y -= 1
-        width, height = size
-        im_region = reader.read(
-            t=0, series=level, rescale=False, XYWH=(x, y, width - 1, height - 1)
-        )
-        return im_region
+        with bioformats.ImageReader(str(self.input_path)) as reader:
+            # Bio-Formats uses ZCTYX order, handle it accordingly
+            x, y = location
+            if x > 0:
+                x -= 1
+            if y > 0:
+                y -= 1
+            width, height = size
+            im_region = reader.read(
+                t=0, series=level, rescale=False, XYWH=(x, y, width - 1, height - 1)
+            )
+            return im_region
 
     def read_bounds(
         self: BioFormatsWSIReader,
@@ -3608,49 +3609,52 @@ class BioFormatsWSIReader(WSIReader):
                 units=units,
             )
 
-        wsi = self.bf_reader
-
-        # Read at optimal level and corrected read size
-        location_at_baseline = bounds_at_read_level[:2]
-        _, size_at_read_level = utils.transforms.bounds2locsize(bounds_at_read_level)
-        im_region = self._read_region(
-            location=location_at_baseline,
-            level=read_level,
-            size=size_at_read_level,
-        )
-        im_region = np.array(im_region)
-
-        # Apply padding outside the slide area
-        im_region = utils.image.crop_and_pad_edges(
-            bounds=bounds_at_read_level,
-            max_dimensions=self.info.level_dimensions[read_level],
-            region=im_region,
-            pad_mode=pad_mode,
-            pad_constant_values=pad_constant_values,
-        )
-
-        # Resize to correct scale if required
-        if coord_space == "resolution":
-            im_region = utils.transforms.imresize(
-                img=im_region,
-                output_size=size_at_requested,
-                interpolation=interpolation,
+        with bioformats.ImageReader(str(self.input_path)) as wsi:
+            # Read at optimal level and corrected read size
+            location_at_baseline = bounds_at_read_level[:2]
+            _, size_at_read_level = utils.transforms.bounds2locsize(
+                bounds_at_read_level
             )
-        else:
-            im_region = utils.transforms.imresize(
-                img=im_region,
-                scale_factor=post_read_scale,
-                output_size=size_at_requested,
-                interpolation=interpolation,
+            im_region = self._read_region(
+                location=location_at_baseline,
+                level=read_level,
+                size=size_at_read_level,
+            )
+            im_region = np.array(im_region)
+
+            # Apply padding outside the slide area
+            im_region = utils.image.crop_and_pad_edges(
+                bounds=bounds_at_read_level,
+                max_dimensions=self.info.level_dimensions[read_level],
+                region=im_region,
+                pad_mode=pad_mode,
+                pad_constant_values=pad_constant_values,
             )
 
-        return utils.transforms.background_composite(image=im_region, alpha=False)
+            # Resize to correct scale if required
+            if coord_space == "resolution":
+                im_region = utils.transforms.imresize(
+                    img=im_region,
+                    output_size=size_at_requested,
+                    interpolation=interpolation,
+                )
+            else:
+                im_region = utils.transforms.imresize(
+                    img=im_region,
+                    scale_factor=post_read_scale,
+                    output_size=size_at_requested,
+                    interpolation=interpolation,
+                )
+
+            return utils.transforms.background_composite(image=im_region, alpha=False)
 
     def _info(self: BioFormatsWSIReader) -> WSIMeta:
         """Bio-Formats WSI meta data reader."""
-        reader = self.bf_reader
+        # with bioformats.get_image_reader(str(self.input_path)) as reader:
         metadata = bioformats.get_omexml_metadata(str(self.input_path))
         omexml = bioformats.OMEXML(metadata)
+        # opts = bioformats.get_metadata_options("ALL")
+        # reader.setMetadataOptions(opts)
 
         objective_power = (
             float(omexml.instrument().Objective.get_NominalMagnification()) * 2
@@ -4258,7 +4262,7 @@ class TIFFWSIReader(WSIReader):
         """Initialize :class:`TIFFWSIReader`."""
         super().__init__(input_img=input_img, mpp=mpp, power=power)
         self.tiff = tifffile.TiffFile(self.input_path)
-        self._axes = self.tiff.pages[0].axes
+        self._axes = self.tiff.series[0].axes
         # Flag which is True if the image is a simple single page tile TIFF
         is_single_page_tiled = all(
             [
@@ -4269,7 +4273,14 @@ class TIFFWSIReader(WSIReader):
                 len(self.tiff.pages) == 1,
             ],
         )
-        if not any([self.tiff.is_svs, self.tiff.is_ome, is_single_page_tiled]):
+        if not any(
+            [
+                self.tiff.is_svs,
+                self.tiff.is_ome,
+                is_single_page_tiled,
+                self.tiff.is_bigtiff,
+            ]
+        ):
             msg = "Unsupported TIFF WSI format."
             raise ValueError(msg)
 
@@ -4283,7 +4294,7 @@ class TIFFWSIReader(WSIReader):
 
             def page_area(page: tifffile.TiffPage) -> float:
                 """Calculate the area of a page."""
-                return np.prod(self._canonical_shape(page.shape)[:2])
+                return np.prod(self._canonical_shape(page.shape)[:2], dtype=float)
 
             series_areas = [page_area(s.pages[0]) for s in all_series]  # skipcq
             self.series_n = np.argmax(series_areas)
@@ -4293,8 +4304,8 @@ class TIFFWSIReader(WSIReader):
             series=self.series_n,
             aszarr=True,
         )
-        self._zarr_lru_cache = zarr.LRUStoreCache(self._zarr_store, max_size=cache_size)
-        self._zarr_group = zarr.open(self._zarr_lru_cache)
+        # self._zarr_lru_cache = zarr.LRUStoreCache(self._zarr_store, max_size=cache_size)
+        self._zarr_group = zarr.open(self._zarr_store)
         if not isinstance(self._zarr_group, zarr.hierarchy.Group):
             group = zarr.hierarchy.group()
             group[0] = self._zarr_group
@@ -4313,12 +4324,12 @@ class TIFFWSIReader(WSIReader):
 
         Returns:
             tuple:
-                Shape in YXS order.
+                Shape in YXS or YXC order.
 
         """
-        if self._axes == "YXS":
+        if self._axes == "YXS" or self._axes == "YXC":
             return shape
-        if self._axes == "SYX":
+        if self._axes == "SYX" or self._axes == "CYX":
             return np.roll(shape, -1)
         msg = f"Unsupported axes `{self._axes}`."
         raise ValueError(msg)
@@ -4960,7 +4971,7 @@ class TIFFWSIReader(WSIReader):
             # but base image is of different scale)
             (
                 read_level,
-                _,
+                bounds_at_read_level,
                 _,
                 post_read_scale,
             ) = self._find_read_bounds_params(
@@ -4972,7 +4983,7 @@ class TIFFWSIReader(WSIReader):
             # Find parameters for optimal read
             (
                 read_level,
-                _,
+                bounds_at_read_level,
                 size_at_requested,
                 post_read_scale,
             ) = self._find_read_bounds_params(
@@ -4983,7 +4994,7 @@ class TIFFWSIReader(WSIReader):
 
         im_region = utils.image.sub_pixel_read(
             image=self.level_arrays[read_level],
-            bounds=bounds_at_baseline,
+            bounds=bounds_at_read_level,
             output_size=size_at_requested,
             interpolation=interpolation,
             pad_mode=pad_mode,
