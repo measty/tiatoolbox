@@ -20,11 +20,6 @@ import numpy as np
 import pandas as pd
 import requests
 import torch
-from matplotlib import colormaps
-from openai import InternalServerError, OpenAI
-from PIL import Image
-from requests.adapters import HTTPAdapter, Retry
-
 from bokeh.events import ButtonClick, DoubleTap, MenuItemClick
 from bokeh.io import curdoc
 from bokeh.layouts import column, row
@@ -75,6 +70,10 @@ from bokeh.models.dom import HTML
 from bokeh.models.tiles import WMTSTileSource
 from bokeh.plotting import figure
 from bokeh.util import token
+from matplotlib import colormaps
+from openai import InternalServerError, OpenAI
+from PIL import Image
+from requests.adapters import HTTPAdapter, Retry
 
 # GitHub actions seems unable to find TIAToolbox unless this is here
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
@@ -160,7 +159,7 @@ class GPTInterface:
         while tries < 3:
             try:
                 completion = self.client.chat.completions.create(
-                    model="gpt-4-vision-preview",
+                    model="gpt-4o",
                     messages=[
                         {
                             "role": "system",
@@ -2205,7 +2204,7 @@ def make_window(vstate: ViewerState) -> dict:  # noqa: PLR0915
         fill_alpha=0,
         line_width=3,
     )
-    c = p.circle("x", "y", source=pt_source, color="red", size=5)
+    c = p.circle("x", "y", source=pt_source, color="red", radius=5)
     ml = p.multi_line("xs", "ys", source=ml_source, color="green", line_width=3)
     p.add_tools(BoxEditTool(renderers=[r], num_objects=1))
     p.add_tools(PointDrawTool(renderers=[c]))
@@ -2243,7 +2242,7 @@ def make_window(vstate: ViewerState) -> dict:  # noqa: PLR0915
         x="x_",
         y="y_",
         fill_color="node_color_",
-        size=5,
+        radius=5,
         line_width=0,
     )
     vstate.graph_edge = Segment(x0="x0_", y0="y0_", x1="x1_", y1="y1_")
