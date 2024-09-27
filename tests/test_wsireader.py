@@ -81,6 +81,7 @@ COLOR_DICT = {
 }
 RNG = np.random.default_rng()  # Numpy Random Generator
 
+
 # -------------------------------------------------------------------------------------
 # Utility Test Functions
 # -------------------------------------------------------------------------------------
@@ -958,7 +959,11 @@ def test_read_bounds_interpolated(sample_svs: Path) -> None:
 
 
 def test_read_bounds_level_consistency_openslide(sample_ndpi: Path) -> None:
-    """Test read_bounds produces the same visual field across resolution levels."""
+    """Test read_bounds produces the same visual field across resolution levels.
+
+    with OpenSlideWSIReader.
+
+    """
     wsi = wsireader.OpenSlideWSIReader(sample_ndpi)
     bounds = NDPI_TEST_TISSUE_BOUNDS
 
@@ -966,7 +971,11 @@ def test_read_bounds_level_consistency_openslide(sample_ndpi: Path) -> None:
 
 
 def test_read_bounds_level_consistency_jp2(sample_jp2: Path) -> None:
-    """Test read_bounds produces the same visual field across resolution levels."""
+    """Test read_bounds produces the same visual field across resolution levels.
+
+    Using JP2WSIReader.
+
+    """
     bounds = JP2_TEST_TISSUE_BOUNDS
     wsi = wsireader.JP2WSIReader(sample_jp2)
 
@@ -1471,6 +1480,9 @@ def test_wsireader_open(
     sample_ndpi: Path,
     sample_jp2: Path,
     sample_ome_tiff: Path,
+    sample_ventana_tif: Path,
+    sample_regular_tif: Path,
+    sample_qptiff: Path,
     source_image: Path,
     tmp_path: pytest.TempPathFactory,
 ) -> None:
@@ -1493,8 +1505,17 @@ def test_wsireader_open(
     wsi = WSIReader.open(sample_ome_tiff)
     assert isinstance(wsi, wsireader.TIFFWSIReader)
 
+    wsi = WSIReader.open(sample_ventana_tif)
+    assert isinstance(wsi, wsireader.OpenSlideWSIReader)
+
+    wsi = WSIReader.open(sample_regular_tif)
+    assert isinstance(wsi, wsireader.VirtualWSIReader)
+
     wsi = WSIReader.open(Path(source_image))
     assert isinstance(wsi, wsireader.VirtualWSIReader)
+
+    wsi = WSIReader.open(sample_qptiff)
+    assert isinstance(wsi, wsireader.TIFFWSIReader)
 
     img = utils.misc.imread(str(Path(source_image)))
     wsi = WSIReader.open(input_img=img)
@@ -1874,11 +1895,11 @@ def test_tiffwsireader_invalid_svs_metadata(
 
 
 def test_tiffwsireader_invalid_ome_metadata(
-    sample_ome_tiff: Path,
+    sample_ome_tiff_level_0: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Test exception raised for invalid OME-XML metadata instrument."""
-    wsi = wsireader.TIFFWSIReader(sample_ome_tiff)
+    wsi = wsireader.TIFFWSIReader(sample_ome_tiff_level_0)
     monkeypatch.setattr(
         wsi.tiff.pages[0],
         "description",
@@ -2110,7 +2131,6 @@ def test_store_reader_alpha(remote_sample: Callable) -> None:
         wsi_reader.info,
         base_wsi=wsi_reader,
     )
-    store_reader.renderer.info["mpp"] = store_reader.info.as_dict()["mpp"]
     wsi_thumb = wsi_reader.slide_thumbnail()
     wsi_tile = wsi_reader.read_rect((500, 500), (1000, 1000))
     store_thumb = store_reader.slide_thumbnail()
@@ -2537,7 +2557,12 @@ def test_jp2_no_header(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         },
         {
             "reader_class": TIFFWSIReader,
-            "sample_key": "ome-brightfield-pyramid-1-small",
+            "sample_key": "ome-brightfield-small-pyramid",
+            "kwargs": {},
+        },
+        {
+            "reader_class": OpenSlideWSIReader,
+            "sample_key": "ventana-tif",
             "kwargs": {},
         },
         {
@@ -2560,15 +2585,22 @@ def test_jp2_no_header(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
             "sample_key": "jp2-omnyx-small",
             "kwargs": {},
         },
+        {
+            "reader_class": TIFFWSIReader,
+            "sample_key": "qptiff_sample",
+            "kwargs": {},
+        },
     ],
     ids=[
         "AnnotationReaderOverlaid",
         "AnnotationReaderMaskOnly",
         "TIFFReader",
+        "OpenSlideReader (Ventana non-tiled tif)",
         "DICOMReader",
         "NGFFWSIReader",
         "OpenSlideWSIReader (Small SVS)",
         "OmnyxJP2WSIReader",
+        "TIFFReader_Multichannel",
     ],
 )
 def wsi(request: requests.request, remote_sample: Callable) -> WSIReader:
@@ -2759,3 +2791,46 @@ def test_file_path_does_not_exist() -> None:
 def test_read_mpp(wsi: WSIReader) -> None:
     """Test that the mpp is read correctly."""
     assert wsi.info.mpp == pytest.approx(0.25, 1)
+
+
+def test_read_multi_channel(source_image: Path) -> None:
+    """Test reading image with more than three channels.
+
+    Create a virtual WSI by concatenating the source_image.
+
+    """
+    img_array = utils.misc.imread(Path(source_image))
+    new_img_array = np.concatenate((img_array, img_array), axis=-1)
+
+    new_img_size = new_img_array.shape[:2][::-1]
+    meta = wsireader.WSIMeta(slide_dimensions=new_img_size, axes="YXS", mpp=(0.5, 0.5))
+    wsi = wsireader.VirtualWSIReader(new_img_array, info=meta)
+
+    region = wsi.read_rect(
+        location=(0, 0),
+        size=(50, 100),
+        pad_mode="reflect",
+        units="mpp",
+        resolution=0.25,
+    )
+    target = cv2.resize(
+        new_img_array[:50, :25, :],
+        (50, 100),
+        interpolation=cv2.INTER_CUBIC,
+    )
+
+    assert region.shape == (100, 50, (new_img_array.shape[-1]))
+    assert np.abs(np.median(region.astype(int) - target.astype(int))) == 0
+    assert np.abs(np.mean(region.astype(int) - target.astype(int))) < 0.2
+
+
+def test_visualise_multi_channel(sample_qptiff: Path) -> None:
+    """Test visualising a multi-channel qptiff multiplex image."""
+    wsi = wsireader.TIFFWSIReader(sample_qptiff, post_proc="auto")
+    wsi2 = wsireader.TIFFWSIReader(sample_qptiff, post_proc=None)
+
+    region = wsi.read_rect(location=(0, 0), size=(50, 100))
+    region2 = wsi2.read_rect(location=(0, 0), size=(50, 100))
+
+    assert region.shape == (100, 50, 3)
+    assert region2.shape == (100, 50, 7)

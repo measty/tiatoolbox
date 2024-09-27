@@ -138,6 +138,7 @@ def run_app() -> None:
         title="Tiatoolbox TileServer",
         layers={},
     )
+    app.json.sort_keys = False
     CORS(app, send_wildcard=True)
     app.run(host="127.0.0.1", threaded=True)
 
@@ -618,7 +619,7 @@ def test_pt_size_spinner(doc: Document) -> None:
     pt_size_spinner.value = 10
     # check that the point size has been set correctly
     assert (
-        main.UI["p"].renderers[main.UI["vstate"].layer_dict["nodes"]].glyph.size
+        main.UI["p"].renderers[main.UI["vstate"].layer_dict["nodes"]].glyph.radius
         == 2 * 10
     )
 
