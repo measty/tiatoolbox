@@ -1,4 +1,5 @@
 """pytest fixtures."""
+
 from __future__ import annotations
 
 import os
@@ -116,7 +117,37 @@ def sample_ome_tiff(remote_sample: Callable) -> Path:
     Download ome-tiff image for pytest.
 
     """
-    return remote_sample("ome-brightfield-pyramid-1-small")
+    return remote_sample("ome-brightfield-small-pyramid")
+
+
+@pytest.fixture(scope="session")
+def sample_ome_tiff_level_0(remote_sample: Callable) -> Path:
+    """Sample pytest fixture for ome-tiff image with one level.
+
+    Download ome-tiff image for pytest.
+
+    """
+    return remote_sample("ome-brightfield-small-level-0")
+
+
+@pytest.fixture(scope="session")
+def sample_ventana_tif(remote_sample: Callable) -> Path:
+    """Sample pytest fixture for non-tiled tif Ventana images.
+
+    Download Ventana tif image for pytest.
+
+    """
+    return remote_sample("ventana-tif")
+
+
+@pytest.fixture(scope="session")
+def sample_regular_tif(remote_sample: Callable) -> Path:
+    """Sample pytest fixture for non-tiled tif Ventana images.
+
+    Download Ventana tif image for pytest.
+
+    """
+    return remote_sample("regular-tif")
 
 
 @pytest.fixture(scope="session")

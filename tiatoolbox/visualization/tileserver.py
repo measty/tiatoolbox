@@ -1,4 +1,5 @@
 """Simple Flask WSGI apps to display tiles as slippery maps."""
+
 from __future__ import annotations
 
 import copy
@@ -23,6 +24,7 @@ from tiatoolbox import data, logger
 from tiatoolbox.annotation import AnnotationStore, SQLiteStore
 from tiatoolbox.tools.pyramid import AnnotationTileGenerator, ZoomifyGenerator
 from tiatoolbox.utils.misc import add_from_dat, store_from_dat
+from tiatoolbox.utils.postproc_defs import MultichannelToRGB
 from tiatoolbox.utils.visualization import AnnotationRenderer, colourise_image
 from tiatoolbox.wsicore.wsireader import OpenSlideWSIReader, VirtualWSIReader, WSIReader
 
@@ -164,6 +166,9 @@ class TileServer(Flask):
         self.route("/tileserver/tap_query/<x>/<y>")(self.tap_query)
         self.route("/tileserver/prop_range", methods=["PUT"])(self.prop_range)
         self.route("/tileserver/upload", methods=["POST"])(self.file_upload)
+        self.route("/tileserver/channels", methods=["GET"])(self.get_channels)
+        self.route("/tileserver/channels", methods=["PUT"])(self.set_channels)
+        self.route("/tileserver/enhance", methods=["PUT"])(self.set_enhance)
         self.route("/tileserver/shutdown", methods=["POST"])(self.shutdown)
 
     def _get_session_id(self: TileServer) -> str:
@@ -324,7 +329,7 @@ class TileServer(Flask):
 
     @staticmethod
     def decode_safe_name(name: str) -> Path:
-        """Decode a url-safe name."""
+        """Decode a URL-safe name."""
         return Path(urllib.parse.unquote(name).replace("\\", os.sep))
 
     def get_ann_layer(
@@ -582,6 +587,7 @@ class TileServer(Flask):
         props = []
         for prop_dict in ann_props.values():
             props.extend(list(prop_dict.keys()))
+        # remove duplicates
         return json.dumps(list(set(props)))
 
     def get_property_values(self: TileServer, prop: str, ann_type: str) -> str:
@@ -605,6 +611,8 @@ class TileServer(Flask):
             where=where,
             unique=True,
         )
+        # remove any None values
+        ann_props = [p for p in ann_props if p is not None]
         return json.dumps(list(ann_props))
 
     def commit_db(self: TileServer) -> str:
@@ -747,6 +755,37 @@ class TileServer(Flask):
                 return "Upload successful!", 200
             return f"Invalid file format. Valid formats are {valid_formats}", 400
         return "No file uploaded", 400
+
+    def get_channels(self: TileServer) -> Response:
+        """Get the channels of the slide."""
+        session_id = self._get_session_id()
+        if isinstance(self.layers[session_id]["slide"].post_proc, MultichannelToRGB):
+            return jsonify(
+                {
+                    "channels": self.layers[session_id]["slide"].post_proc.color_dict,
+                    "active": self.layers[session_id]["slide"].post_proc.channels,
+                },
+            )
+        return jsonify({"channels": {}, "active": []})
+
+    def set_channels(self: TileServer) -> str:
+        """Set the channels of the slide."""
+        session_id = self._get_session_id()
+        if isinstance(self.layers[session_id]["slide"].post_proc, MultichannelToRGB):
+            channels = json.loads(request.form["channels"])
+            active = json.loads(request.form["active"])
+            self.layers[session_id]["slide"].post_proc.color_dict = channels
+            self.layers[session_id]["slide"].post_proc.channels = active
+            self.layers[session_id]["slide"].post_proc.is_validated = False
+        return "done"
+
+    def set_enhance(self: TileServer) -> str:
+        """Set the enhance factor of the slide."""
+        session_id = self._get_session_id()
+        enhance = json.loads(request.form["val"])
+        if isinstance(self.layers[session_id]["slide"].post_proc, MultichannelToRGB):
+            self.layers[session_id]["slide"].post_proc.enhance = enhance
+        return "done"
 
     @staticmethod
     def shutdown() -> None:
