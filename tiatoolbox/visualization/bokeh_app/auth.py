@@ -8,6 +8,7 @@ consider a higher level tool, such as Panel:
     https://panel.holoviz.org/user_guide/Authentication.html
 
 """
+
 import json
 import secrets
 from pathlib import Path
@@ -34,6 +35,12 @@ class LoginHandler(RequestHandler):
         except Exception:
             errormessage = ""
         next_url = self.get_argument("next", "/bokeh_app")
+        slide = self.get_argument("slide", None)
+        if slide:
+            next_url += f"?slide={slide}"
+        window = self.get_argument("window", None)
+        if window:
+            next_url += f"?window={window}"
         self.next_url = next_url
         # parse text in next_url to get the 'demo' query parameter
         parsed = urlparse(next_url)
