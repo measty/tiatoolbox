@@ -425,7 +425,7 @@ def create_channel_color_ui():
 
     instructions = Div(
         text="""
-        <p>Instructions:</p>
+        <p>Multi-channel slides:</p>
         <ul>
             <li>Select active channels using the checkboxes</li>
             <li>Select a channel color and change using the picker below the table</li>
