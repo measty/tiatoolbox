@@ -2245,6 +2245,9 @@ def gather_ui_elements(  # noqa: PLR0915
             ],
         ),
     )
+    if len(get_from_config(["cohorts"], {})) < 2:
+        # if no cohorts, or only one, dont need cohort select
+        ui_elements_1.pop("cohort_select")
     if "ui_elements_1" in doc_config:
         # Only add the elements specified in config file
         ui_layout = column(
@@ -2260,9 +2263,6 @@ def gather_ui_elements(  # noqa: PLR0915
             list(ui_elements_1.values()),
             sizing_mode="stretch_width",
         )
-    if len(get_from_config(["cohorts"], {})) < 2:
-        # if no cohorts, or only one, dont need cohort select
-        ui_elements_1 = ui_elements_1.pop("cohort_select")
 
     # Elements in the secondary controls tab
     ui_elements_2 = dict(
