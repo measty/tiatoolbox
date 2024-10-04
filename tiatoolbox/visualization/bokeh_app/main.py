@@ -2262,7 +2262,7 @@ def gather_ui_elements(  # noqa: PLR0915
         )
     if len(get_from_config(["cohorts"], {})) < 2:
         # if no cohorts, or only one, dont need cohort select
-        ui_elements_1.pop("cohort_select")
+        ui_elements_1 = ui_elements_1.pop("cohort_select")
 
     # Elements in the secondary controls tab
     ui_elements_2 = dict(
