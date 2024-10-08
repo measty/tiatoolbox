@@ -1109,11 +1109,7 @@ def populate_slide_list(slide_folder: Path, search_txt: str | None = None) -> No
         for c in cats:
             cohort_slides.extend(cohorts[c])
         if len(cohort_slides) > 0:
-            file_list = [
-                p
-                for p in file_list
-                if Path(p[0]).name in cohort_slides
-            ]
+            file_list = [p for p in file_list if Path(p[0]).name in cohort_slides]
 
     UI["slide_select"].options = file_list
 
@@ -2249,6 +2245,9 @@ def gather_ui_elements(  # noqa: PLR0915
             ],
         ),
     )
+    if len(get_from_config(["cohorts"], {})) < 2:
+        # if no cohorts, or only one, dont need cohort select
+        ui_elements_1.pop("cohort_select")
     if "ui_elements_1" in doc_config:
         # Only add the elements specified in config file
         ui_layout = column(
@@ -2264,9 +2263,6 @@ def gather_ui_elements(  # noqa: PLR0915
             list(ui_elements_1.values()),
             sizing_mode="stretch_width",
         )
-    if len(get_from_config(["cohorts"], {})) < 2:
-        # if no cohorts, or only one, dont need cohort select
-        ui_elements_1.pop("cohort_select")
 
     # Elements in the secondary controls tab
     ui_elements_2 = dict(
