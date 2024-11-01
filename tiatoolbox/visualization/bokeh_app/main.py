@@ -1154,7 +1154,7 @@ def overlay_alpha_cb(attr: str, old: float, new: float) -> None:  # noqa: ARG001
 
 def pt_size_cb(attr: str, old: float, new: float) -> None:  # noqa: ARG001
     """Callback to change the size of the points."""
-    UI["vstate"].graph_node.radius = 2 * new
+    UI["vstate"].graph_node.radius = new
 
 
 def edge_size_cb(attr: str, old: float, new: float) -> None:  # noqa: ARG001
@@ -1962,8 +1962,8 @@ def gather_ui_elements(  # noqa: PLR0915
     pt_size_spinner = Spinner(
         title="Pt. Size:",
         low=0,
-        high=20,
-        step=1,
+        high=40,
+        step=2,
         value=4,
         width=60,
         height=50,
@@ -2492,7 +2492,7 @@ def make_window(vstate: ViewerState) -> dict:  # noqa: PLR0915
         line_width=3,
     )
     c = p.circle(
-        "x", "y", source=pt_source, color="red", radius=3, radius_units="screen"
+        "x", "y", source=pt_source, color="red", radius=4, radius_units="screen"
     )
     ml = p.multi_line("xs", "ys", source=ml_source, color="green", line_width=3)
     p.add_tools(BoxEditTool(renderers=[r], num_objects=1))
@@ -2531,7 +2531,7 @@ def make_window(vstate: ViewerState) -> dict:  # noqa: PLR0915
         x="x_",
         y="y_",
         fill_color="node_color_",
-        radius=3,
+        radius=4,
         radius_units="screen",
     )
     vstate.graph_edge = Segment(x0="x0_", y0="y0_", x1="x1_", y1="y1_")
