@@ -1,7 +1,7 @@
 """This module defines classes which can read image data from WSI formats."""
+
 from __future__ import annotations
 
-import copy
 import json
 import logging
 import math
@@ -10,8 +10,9 @@ import re
 from datetime import datetime
 from numbers import Number
 from pathlib import Path
-from typing import TYPE_CHECKING, Iterable
+from typing import TYPE_CHECKING
 
+import matplotlib.colors as mcolors
 import numpy as np
 import openslide
 import pandas as pd
@@ -23,6 +24,7 @@ from PIL import Image
 
 from tiatoolbox import logger, utils
 from tiatoolbox.annotation import AnnotationStore, SQLiteStore
+from tiatoolbox.utils import postproc_defs
 from tiatoolbox.utils.env_detection import pixman_warning
 from tiatoolbox.utils.exceptions import FileNotSupportedError
 from tiatoolbox.utils.magic import is_sqlite3
@@ -30,6 +32,8 @@ from tiatoolbox.utils.visualization import AnnotationRenderer
 from tiatoolbox.wsicore.wsimeta import WSIMeta
 
 if TYPE_CHECKING:  # pragma: no cover
+    from collections.abc import Iterable
+
     import glymur
 
     from tiatoolbox.typing import Bounds, IntBounds, IntPair, NumPair, Resolution, Units
@@ -96,8 +100,8 @@ def is_zarr(path: Path) -> bool:
         _ = zarr.open(str(path), mode="r")
     except Exception:  # skipcq: PYL-W0703  # noqa: BLE001
         return False
-    else:
-        return True
+
+    return True
 
 
 def is_ngff(  # noqa: PLR0911
@@ -202,6 +206,97 @@ def is_ngff(  # noqa: PLR0911
     return is_zarr(path)
 
 
+def _handle_virtual_wsi(
+    last_suffix: str,
+    input_path: Path,
+    mpp: tuple[Number, Number] | None,
+    power: Number | None,
+) -> VirtualWSIReader | None:
+    """Handle virtual WSI cases.
+
+    Args:
+        last_suffix (str):
+            Suffix of the file to read.
+        input_path (Path):
+             Input path to virtual WSI.
+        mpp (:obj:`tuple` or :obj:`list` or :obj:`None`, optional):
+            The MPP of the WSI. If not provided, the MPP is approximated
+            from the objective power.
+        power (:obj:`float` or :obj:`None`, optional):
+            The objective power of the WSI. If not provided, the power
+            is approximated from the MPP.
+
+    Returns:
+        VirtualWSIReader | None:
+            :class:`VirtualWSIReader` if input_path is valid path to virtual WSI
+            otherwise None.
+
+    """
+
+    # Handle homogeneous cases (based on final suffix)
+    def np_virtual_wsi(
+        input_path: np.ndarray,
+        *args: Number | tuple | str | WSIMeta | None,
+        **kwargs: dict,
+    ) -> VirtualWSIReader:
+        """Create a virtual WSI from a numpy array."""
+        return VirtualWSIReader(input_path, *args, **kwargs)
+
+    suffix_to_reader = {
+        ".npy": np_virtual_wsi,
+        ".jp2": JP2WSIReader,
+        ".jpeg": VirtualWSIReader,
+        ".jpg": VirtualWSIReader,
+        ".png": VirtualWSIReader,
+        ".tif": VirtualWSIReader,
+        ".tiff": VirtualWSIReader,
+    }
+
+    if last_suffix in suffix_to_reader:
+        return suffix_to_reader[last_suffix](input_path, mpp=mpp, power=power)
+
+    return None
+
+
+def _handle_tiff_wsi(
+    input_path: Path,
+    mpp: tuple[Number, Number] | None,
+    power: Number | None,
+    post_proc: str | callable | None,
+) -> TIFFWSIReader | OpenSlideWSIReader | None:
+    """Handle TIFF WSI cases.
+
+    Args:
+        input_path (Path):
+             Input path to virtual WSI.
+        mpp (:obj:`tuple` or :obj:`list` or :obj:`None`, optional):
+            The MPP of the WSI. If not provided, the MPP is approximated
+            from the objective power.
+        power (:obj:`float` or :obj:`None`, optional):
+            The objective power of the WSI. If not provided, the power
+            is approximated from the MPP.
+        post_proc (str | callable | None):
+            Post-processing function to apply to the image.
+
+    Returns:
+        OpenSlideWSIReader | TIFFWSIReader | None:
+            :class:`OpenSlideWSIReader` or :class:`TIFFWSIReader` if input_path is
+            valid path to tiff WSI otherwise None.
+
+    """
+    if openslide.OpenSlide.detect_format(input_path) is not None:
+        try:
+            return OpenSlideWSIReader(
+                input_path, mpp=mpp, power=power, post_proc=post_proc
+            )
+        except openslide.OpenSlideError:
+            pass
+    if is_tiled_tiff(input_path):
+        return TIFFWSIReader(input_path, mpp=mpp, power=power, post_proc=post_proc)
+
+    return None
+
+
 class WSIReader:
     """Base whole slide image (WSI) reader class.
 
@@ -221,14 +316,19 @@ class WSIReader:
         power (:obj:`float` or :obj:`None`, optional):
             The objective power of the WSI. If not provided, the power
             is approximated from the MPP.
+        post_proc (str | callable | None):
+            Post-processing function to apply to the image. If None,
+            no post-processing is applied. If 'auto', the post-processing
+            function is automatically selected based on the reader type.
 
     """
 
     @staticmethod
-    def open(  # noqa: A003, PLR0911
+    def open(  # noqa: PLR0911
         input_img: str | Path | np.ndarray | WSIReader,
         mpp: tuple[Number, Number] | None = None,
         power: Number | None = None,
+        post_proc: str | callable | None = "auto",
         **kwargs: dict,
     ) -> WSIReader:
         """Return an appropriate :class:`.WSIReader` object.
@@ -247,6 +347,10 @@ class WSIReader:
                 (x, y) tuple of the MPP in the units of the input image.
             power (float):
                 Objective power of the input image.
+            post_proc (str | callable | None):
+                Post-processing function to apply to the image. If None,
+                no post-processing is applied. If 'auto', the post-processing
+                function is automatically selected based on the reader type.
             kwargs (dict):
                 Key-word arguments.
 
@@ -266,7 +370,9 @@ class WSIReader:
                 msg,
             )
         if isinstance(input_img, np.ndarray):
-            return VirtualWSIReader(input_img, mpp=mpp, power=power)
+            return VirtualWSIReader(
+                input_img, mpp=mpp, power=power, post_proc=post_proc
+            )
 
         if isinstance(input_img, WSIReader):
             return input_img
@@ -276,14 +382,14 @@ class WSIReader:
         WSIReader.verify_supported_wsi(input_path)
 
         # Handle special cases first (DICOM, Zarr/NGFF, OME-TIFF)
-
         if is_dicom(input_path):
-            return DICOMWSIReader(input_path, mpp=mpp, power=power)
+            return DICOMWSIReader(input_path, mpp=mpp, power=power, post_proc=post_proc)
 
         _, _, suffixes = utils.misc.split_path_name_ext(input_path)
         last_suffix = suffixes[-1]
 
         if last_suffix == ".db":
+            kwargs["post_proc"] = post_proc
             return AnnotationStoreReader(input_path, **kwargs)
 
         if last_suffix in (".zarr",):
@@ -294,39 +400,30 @@ class WSIReader:
                 )
             return NGFFWSIReader(input_path, mpp=mpp, power=power)
 
-        if suffixes[-2:] in ([".ome", ".tiff"],):
-            return TIFFWSIReader(input_path, mpp=mpp, power=power)
+        if suffixes[-2:] in ([".ome", ".tiff"],) or suffixes[-2:] in (
+            [".ome", ".tif"],
+        ):
+            return TIFFWSIReader(input_path, mpp=mpp, power=power, post_proc=post_proc)
 
-        if last_suffix in (".tif", ".tiff") and is_tiled_tiff(input_path):
-            try:
-                return OpenSlideWSIReader(input_path, mpp=mpp, power=power)
-            except openslide.OpenSlideError:
-                return TIFFWSIReader(input_path, mpp=mpp, power=power)
+        if last_suffix == ".qptiff":
+            return TIFFWSIReader(input_path, mpp=mpp, power=power, post_proc=post_proc)
 
-        # Handle homogeneous cases (based on final suffix)
-        def np_virtual_wsi(
-            input_path: np.ndarray,
-            *args: Number | tuple | str | WSIMeta | None,
-            **kwargs: dict,
-        ) -> VirtualWSIReader:
-            """Create a virtual WSI from a numpy array."""
-            return VirtualWSIReader(input_path, *args, **kwargs)
+        if last_suffix in (".tif", ".tiff"):
+            tiff_wsi = _handle_tiff_wsi(
+                input_path, mpp=mpp, power=power, post_proc=post_proc
+            )
+            if tiff_wsi is not None:
+                return tiff_wsi
 
-        suffix_to_reader = {
-            ".npy": np_virtual_wsi,
-            ".jp2": JP2WSIReader,
-            ".jpeg": VirtualWSIReader,
-            ".jpg": VirtualWSIReader,
-            ".png": VirtualWSIReader,
-            ".tif": VirtualWSIReader,
-            ".tiff": VirtualWSIReader,
-        }
+        virtual_wsi = _handle_virtual_wsi(
+            last_suffix=last_suffix, input_path=input_path, mpp=mpp, power=power
+        )
 
-        if last_suffix in suffix_to_reader:
-            return suffix_to_reader[last_suffix](input_path, mpp=mpp, power=power)
+        if virtual_wsi is not None:
+            return virtual_wsi
 
         # Try openslide last
-        return OpenSlideWSIReader(input_path, mpp=mpp, power=power)
+        return OpenSlideWSIReader(input_path, mpp=mpp, power=power, post_proc=post_proc)
 
     @staticmethod
     def verify_supported_wsi(input_path: Path) -> None:
@@ -359,6 +456,7 @@ class WSIReader:
             ".jpeg",
             ".zarr",
             ".db",
+            ".qptiff",
         ]:
             msg = f"File {input_path} is not a supported file format."
             raise FileNotSupportedError(
@@ -370,6 +468,7 @@ class WSIReader:
         input_img: str | Path | np.ndarray | AnnotationStore,
         mpp: tuple[Number, Number] | None = None,
         power: Number | None = None,
+        post_proc: callable | None = None,
     ) -> None:
         """Initialize :class:`WSIReader`."""
         if isinstance(input_img, (np.ndarray, AnnotationStore)):
@@ -394,6 +493,7 @@ class WSIReader:
             msg = "`power` must be a number."
             raise TypeError(msg)
         self._manual_power = power
+        self.post_proc = self.get_post_proc(post_proc)
 
     @property
     def info(self: WSIReader) -> WSIMeta:
@@ -403,12 +503,11 @@ class WSIReader:
 
         Returns:
             WSIMeta:
-                An object containing normalized slide metadata
+                An object containing normalized slide metadata.
 
         """
-        # In Python>=3.8 this could be replaced with functools.cached_property
         if self._m_info is not None:
-            return copy.deepcopy(self._m_info)
+            return self._m_info
         self._m_info = self._info()
         if self._manual_mpp:
             self._m_info.mpp = np.array(self._manual_mpp)
@@ -425,6 +524,35 @@ class WSIReader:
 
         """
         self._m_info = meta
+
+    def get_post_proc(self: WSIReader, post_proc: str | callable | None) -> callable:
+        """Get the post-processing function.
+
+        Args:
+            post_proc (str | callable | None):
+                Post-processing function to apply to the image. If auto,
+                will use no post_proc unless reader is TIFF or Virtual Reader,
+                in which case it will use MultichannelToRGB.
+
+        Returns:
+            callable:
+                Post-processing function.
+
+        """
+        if callable(post_proc):
+            return post_proc
+        if post_proc is None:
+            return None
+        if post_proc == "auto":
+            # if its TIFFWSIReader or VirtualWSIReader, return fn to
+            # allow multichannel, else return None
+            if isinstance(self, (TIFFWSIReader, VirtualWSIReader)):
+                return postproc_defs.MultichannelToRGB()
+            return None
+        if isinstance(post_proc, str) and hasattr(postproc_defs, post_proc):
+            return getattr(postproc_defs, post_proc)()
+        msg = f"Invalid post-processing function: {post_proc}"
+        raise ValueError(msg)
 
     def _info(self: WSIReader) -> WSIMeta:
         """WSI metadata internal getter used to update info property.
@@ -989,11 +1117,17 @@ class WSIReader:
             raise ValueError(
                 msg,
             )
+        scale_levels_available = [
+            np.log2(np.round(x, 3)) for x in self.info.level_downsamples
+        ]
         try:
-            level = np.log2(rescale)
-            if not level.is_integer():
+            level_scale = np.log2(rescale)
+            if not level_scale.is_integer():
                 raise ValueError  # noqa: TRY301
-            level = np.int_(level)
+            level_scale = np.int_(level_scale)
+            if level_scale not in scale_levels_available:
+                raise IndexError  # noqa: TRY301
+            level = scale_levels_available.index(level_scale)
             slide_dimension = self.info.level_dimensions[level]
             rescale = 1
         # Raise index error if desired pyramid level not embedded
@@ -1060,7 +1194,7 @@ class WSIReader:
         units: Units = "level",
         interpolation: str = "optimise",
         pad_mode: str = "constant",
-        pad_constant_values: Number | Iterable[NumPair] = 0,
+        pad_constant_values: int | tuple[int, int] = 0,
         coord_space: str = "baseline",
         **kwargs: dict,
     ) -> np.ndarray:
@@ -1109,7 +1243,7 @@ class WSIReader:
                 Defaults to 'constant'. See :func:`numpy.pad` for
                 available modes.
             pad_constant_values (int, tuple(int)):
-                Constant values to use when padding with constant pad mode.
+                Constant values to use when padding with cmonstant pad mode.
                 Passed to the :func:`numpy.pad` `constant_values` argument.
                 Default is 0.
             coord_space (str):
@@ -1549,7 +1683,10 @@ class WSIReader:
 
             # convert to baseline reference frame
             bounds = start_w, start_h, end_w, end_h
-            baseline_bounds = tuple(bound * (2**level) for bound in bounds)
+            baseline_bounds = tuple(
+                bound * int(np.round(self.info.level_downsamples[level], 3))
+                for bound in bounds
+            )
             # Read image region
             im = self.read_bounds(baseline_bounds, level)
 
@@ -1567,7 +1704,7 @@ class WSIReader:
 
             # Rescale to the correct objective value
             if rescale != 1:
-                im = utils.transforms.imresize(img=im, scale_factor=rescale)
+                im = utils.transforms.imresize(img=im, scale_factor=1 / rescale)
 
             img_save_name = (
                 "_".join(
@@ -1587,10 +1724,10 @@ class WSIReader:
                 [
                     iter_tot,
                     img_save_name,
-                    start_w,
-                    end_w,
-                    start_h,
-                    end_h,
+                    int(start_w / rescale),
+                    int(end_w / rescale),
+                    int(start_h / rescale),
+                    int(end_h / rescale),
                     im.shape[0],
                     im.shape[1],
                 ],
@@ -1646,9 +1783,10 @@ class OpenSlideWSIReader(WSIReader):
         input_img: str | Path | np.ndarray,
         mpp: tuple[Number, Number] | None = None,
         power: Number | None = None,
+        post_proc: str | callable | None = "auto",
     ) -> None:
         """Initialize :class:`OpenSlideWSIReader`."""
-        super().__init__(input_img=input_img, mpp=mpp, power=power)
+        super().__init__(input_img=input_img, mpp=mpp, power=power, post_proc=post_proc)
         self.openslide_wsi = openslide.OpenSlide(filename=str(self.input_path))
 
     def read_rect(
@@ -1891,6 +2029,8 @@ class OpenSlideWSIReader(WSIReader):
             interpolation=interpolation,
         )
 
+        if self.post_proc is not None:
+            im_region = self.post_proc(im_region)
         return utils.transforms.background_composite(image=im_region, alpha=False)
 
     def read_bounds(
@@ -2076,6 +2216,8 @@ class OpenSlideWSIReader(WSIReader):
                 interpolation=interpolation,
             )
 
+        if self.post_proc is not None:
+            im_region = self.post_proc(im_region)
         return utils.transforms.background_composite(image=im_region, alpha=False)
 
     @staticmethod
@@ -2184,9 +2326,10 @@ class JP2WSIReader(WSIReader):
         input_img: str | Path | np.ndarray,
         mpp: tuple[Number, Number] | None = None,
         power: Number | None = None,
+        post_proc: str | callable | None = "auto",
     ) -> None:
         """Initialize :class:`OmnyxJP2WSIReader`."""
-        super().__init__(input_img=input_img, mpp=mpp, power=power)
+        super().__init__(input_img=input_img, mpp=mpp, power=power, post_proc=post_proc)
         import glymur
 
         glymur.set_option("lib.num_threads", os.cpu_count() or 1)
@@ -2430,6 +2573,8 @@ class JP2WSIReader(WSIReader):
             interpolation=interpolation,
         )
 
+        if self.post_proc is not None:
+            im_region = self.post_proc(im_region)
         return utils.transforms.background_composite(image=im_region, alpha=False)
 
     def read_bounds(
@@ -2604,6 +2749,8 @@ class JP2WSIReader(WSIReader):
                 interpolation=interpolation,
             )
 
+        if self.post_proc is not None:
+            im_region = self.post_proc(im_region)
         return utils.transforms.background_composite(image=im_region, alpha=False)
 
     @staticmethod
@@ -2781,8 +2928,14 @@ class VirtualWSIReader(WSIReader):
     :func:`~tiatoolbox.utils.image.sub_pixel_read`.
 
     Attributes:
-        img (:class:`numpy.ndarray`)
-        mode (str)
+        img (:class:`numpy.ndarray`):
+            Input image as :class:`numpy.ndarray`.
+        mode (str):
+            Mode of the input image. Default is 'rgb'. Allowed values
+            are: rgb, bool, feature. "rgb" mode supports bright-field color images.
+            "bool" mode supports binary masks,
+            interpolation in this case will be "nearest" instead of "bicubic".
+            "feature" mode allows multichannel features.
 
     Args:
         input_img (str, :obj:`Path`, :class:`numpy.ndarray`):
@@ -2791,7 +2944,12 @@ class VirtualWSIReader(WSIReader):
             Metadata for the virtual wsi.
         mode (str):
             Mode of the input image. Default is 'rgb'. Allowed values
-            are: rgb, bool.
+            are: rgb, bool, feature. "rgb" mode supports bright-field color images.
+            "bool" mode supports binary masks,
+            interpolation in this case will be "nearest" instead of "bicubic".
+            "feature" mode allows multichannel features.
+        post_proc (str, callable):
+            Post-processing function to apply to the output image.
 
     """
 
@@ -2802,21 +2960,34 @@ class VirtualWSIReader(WSIReader):
         power: Number | None = None,
         info: WSIMeta | None = None,
         mode: str = "rgb",
+        post_proc: str | callable | None = "auto",
     ) -> None:
         """Initialize :class:`VirtualWSIReader`."""
         super().__init__(
             input_img=input_img,
             mpp=mpp,
             power=power,
+            post_proc=post_proc,
         )
-        if mode.lower() not in ["rgb", "bool"]:
+        if mode.lower() not in ["rgb", "bool", "feature"]:
             msg = "Invalid mode."
             raise ValueError(msg)
-        self.mode = mode.lower()
+
         if isinstance(input_img, np.ndarray):
             self.img = input_img
         else:
             self.img = utils.imread(self.input_path)
+
+        if mode != "bool" and (
+            self.img.ndim == 2 or self.img.shape[2] not in [3, 4]  # noqa: PLR2004
+        ):
+            logger.warning(
+                "The image mode is set to 'feature' as the input"
+                " dimensions do not match with binary mask or RGB/RGBA.",
+            )
+            mode = "feature"
+
+        self.mode = mode.lower()
 
         if info is not None:
             self._m_info = info
@@ -3118,6 +3289,8 @@ class VirtualWSIReader(WSIReader):
         )
 
         if self.mode == "rgb":
+            if self.post_proc is not None:
+                im_region = self.post_proc(im_region)
             return utils.transforms.background_composite(image=im_region, alpha=False)
         return im_region
 
@@ -3267,6 +3440,9 @@ class VirtualWSIReader(WSIReader):
         if interpolation in [None, "none"]:
             interpolation = None
 
+        if interpolation == "optimise" and self.mode == "bool":
+            interpolation = "nearest"
+
         im_region = utils.image.sub_pixel_read(
             self.img,
             bounds_at_read,
@@ -3292,6 +3468,8 @@ class VirtualWSIReader(WSIReader):
             )
 
         if self.mode == "rgb":
+            if self.post_proc is not None:
+                im_region = self.post_proc(im_region)
             return utils.transforms.background_composite(image=im_region, alpha=False)
         return im_region
 
@@ -3355,12 +3533,13 @@ class TIFFWSIReader(WSIReader):
         mpp: tuple[Number, Number] | None = None,
         power: Number | None = None,
         series: str = "auto",
-        cache_size: int = 2**28,
+        cache_size: int = 2**28,  # noqa: ARG002
+        post_proc: str | callable | None = "auto",
     ) -> None:
         """Initialize :class:`TIFFWSIReader`."""
-        super().__init__(input_img=input_img, mpp=mpp, power=power)
+        super().__init__(input_img=input_img, mpp=mpp, power=power, post_proc=post_proc)
         self.tiff = tifffile.TiffFile(self.input_path)
-        self._axes = self.tiff.pages[0].axes
+        self._axes = self.tiff.series[0].axes
         # Flag which is True if the image is a simple single page tile TIFF
         is_single_page_tiled = all(
             [
@@ -3371,7 +3550,14 @@ class TIFFWSIReader(WSIReader):
                 len(self.tiff.pages) == 1,
             ],
         )
-        if not any([self.tiff.is_svs, self.tiff.is_ome, is_single_page_tiled]):
+        if not any(
+            [
+                self.tiff.is_svs,
+                self.tiff.is_ome,
+                is_single_page_tiled,
+                self.tiff.is_bigtiff,
+            ]
+        ):
             msg = "Unsupported TIFF WSI format."
             raise ValueError(msg)
 
@@ -3385,7 +3571,7 @@ class TIFFWSIReader(WSIReader):
 
             def page_area(page: tifffile.TiffPage) -> float:
                 """Calculate the area of a page."""
-                return np.prod(self._canonical_shape(page.shape)[:2])
+                return np.prod(self._canonical_shape(page.shape)[:2], dtype=float)
 
             series_areas = [page_area(s.pages[0]) for s in all_series]  # skipcq
             self.series_n = np.argmax(series_areas)
@@ -3395,16 +3581,55 @@ class TIFFWSIReader(WSIReader):
             series=self.series_n,
             aszarr=True,
         )
-        self._zarr_lru_cache = zarr.LRUStoreCache(self._zarr_store, max_size=cache_size)
-        self._zarr_group = zarr.open(self._zarr_lru_cache)
+        # remove LRU cache for now as seems to cause issues on windows
+        self._zarr_group = zarr.open(self._zarr_store)
         if not isinstance(self._zarr_group, zarr.hierarchy.Group):
             group = zarr.hierarchy.group()
             group[0] = self._zarr_group
             self._zarr_group = group
         self.level_arrays = {
-            int(key): ArrayView(array, axes=self.info.axes)
+            int(key): ArrayView(array, axes=self._axes)
             for key, array in self._zarr_group.items()
         }
+        # ensure level arrays are sorted by descending area
+        self.level_arrays = dict(
+            sorted(
+                self.level_arrays.items(),
+                key=lambda x: -np.prod(
+                    self._canonical_shape(x[1].array.shape[:2]), dtype=float
+                ),
+            )
+        )
+        # maybe get colors if they exist in metadata
+        self._get_colors_from_meta()
+
+    def _get_colors_from_meta(self: TIFFWSIReader) -> None:
+        """Get colors from metadata if they exist."""
+        if isinstance(self.post_proc, postproc_defs.MultichannelToRGB):
+            xml = self.info.raw["Description"]
+            try:
+                root = ElementTree.fromstring(xml)
+            except ElementTree.ParseError:
+                return
+            color_info = root.find(".//ScanColorTable")
+            if color_info is not None:
+                color_dict = {
+                    k.text.split("_")[0]: v.text
+                    for k, v in zip(
+                        color_info.iterfind("ScanColorTable-k"),
+                        color_info.iterfind("ScanColorTable-v"),
+                    )
+                }
+                # values will be either a string of 3 ints e.g 155, 128, 0, or
+                # a color name e.g Lime. Convert them all to RGB tuples.
+                for key, value in color_dict.items():
+                    if value is None:
+                        continue
+                    if "," in value:
+                        color_dict[key] = tuple(int(x) / 255 for x in value.split(","))
+                    else:
+                        color_dict[key] = mcolors.to_rgb(value)
+                self.post_proc.color_dict = color_dict
 
     def _canonical_shape(self: TIFFWSIReader, shape: IntPair) -> tuple:
         """Make a level shape tuple in YXS order.
@@ -3415,12 +3640,12 @@ class TIFFWSIReader(WSIReader):
 
         Returns:
             tuple:
-                Shape in YXS order.
+                Shape in YXS or YXC order.
 
         """
-        if self._axes == "YXS":
+        if self._axes in ("YXS", "YXC"):
             return shape
-        if self._axes == "SYX":
+        if self._axes in ("SYX", "CYX"):
             return np.roll(shape, -1)
         msg = f"Unsupported axes `{self._axes}`."
         raise ValueError(msg)
@@ -3660,10 +3885,10 @@ class TIFFWSIReader(WSIReader):
                 Containing metadata.
 
         """
-        level_count = len(self._zarr_group)
+        level_count = len(self.level_arrays)
         level_dimensions = [
-            np.array(self._canonical_shape(p.shape)[:2][::-1])
-            for p in self._zarr_group.values()
+            np.array(self._canonical_shape(p.array.shape)[:2][::-1])
+            for p in self.level_arrays.values()
         ]
         slide_dimensions = level_dimensions[0]
         level_downsamples = [(level_dimensions[0] / x)[0] for x in level_dimensions]
@@ -3901,15 +4126,17 @@ class TIFFWSIReader(WSIReader):
                 pad_mode=pad_mode,
                 pad_constant_values=pad_constant_values,
             )
-            return utils.transforms.background_composite(im_region, alpha=False)
+            if self.post_proc is not None:
+                im_region = self.post_proc(im_region)
+            return im_region
 
         # Find parameters for optimal read
         (
             read_level,
-            _,
-            _,
+            level_read_location,
+            level_read_size,
             post_read_scale,
-            baseline_read_size,
+            _,
         ) = self.find_read_rect_params(
             location=location,
             size=size,
@@ -3918,8 +4145,8 @@ class TIFFWSIReader(WSIReader):
         )
 
         bounds = utils.transforms.locsize2bounds(
-            location=location,
-            size=baseline_read_size,
+            location=level_read_location,
+            size=level_read_size,
         )
         im_region = utils.image.safe_padded_read(
             image=self.level_arrays[read_level],
@@ -3927,7 +4154,6 @@ class TIFFWSIReader(WSIReader):
             pad_mode=pad_mode,
             pad_constant_values=pad_constant_values,
         )
-
         im_region = utils.transforms.imresize(
             img=im_region,
             scale_factor=post_read_scale,
@@ -3935,7 +4161,9 @@ class TIFFWSIReader(WSIReader):
             interpolation=interpolation,
         )
 
-        return utils.transforms.background_composite(image=im_region, alpha=False)
+        if self.post_proc is not None:
+            im_region = self.post_proc(im_region)
+        return im_region
 
     def read_bounds(
         self: TIFFWSIReader,
@@ -4062,7 +4290,7 @@ class TIFFWSIReader(WSIReader):
             # but base image is of different scale)
             (
                 read_level,
-                _,
+                bounds_at_read_level,
                 _,
                 post_read_scale,
             ) = self._find_read_bounds_params(
@@ -4074,7 +4302,7 @@ class TIFFWSIReader(WSIReader):
             # Find parameters for optimal read
             (
                 read_level,
-                _,
+                bounds_at_read_level,
                 size_at_requested,
                 post_read_scale,
             ) = self._find_read_bounds_params(
@@ -4085,7 +4313,7 @@ class TIFFWSIReader(WSIReader):
 
         im_region = utils.image.sub_pixel_read(
             image=self.level_arrays[read_level],
-            bounds=bounds_at_baseline,
+            bounds=bounds_at_read_level,
             output_size=size_at_requested,
             interpolation=interpolation,
             pad_mode=pad_mode,
@@ -4107,6 +4335,8 @@ class TIFFWSIReader(WSIReader):
                 output_size=size_at_requested,
             )
 
+        if self.post_proc is not None:
+            return self.post_proc(im_region)
         return im_region
 
 
@@ -4120,11 +4350,12 @@ class DICOMWSIReader(WSIReader):
         input_img: str | Path | np.ndarray,
         mpp: tuple[Number, Number] | None = None,
         power: Number | None = None,
+        post_proc: str | callable | None = "auto",
     ) -> None:
         """Initialize :class:`DICOMWSIReader`."""
         from wsidicom import WsiDicom
 
-        super().__init__(input_img, mpp, power)
+        super().__init__(input_img, mpp, power, post_proc)
         self.wsi = WsiDicom.open(input_img)
 
     def _info(self: DICOMWSIReader) -> WSIMeta:
@@ -4416,6 +4647,8 @@ class DICOMWSIReader(WSIReader):
             interpolation=interpolation,
         )
 
+        if self.post_proc is not None:
+            im_region = self.post_proc(im_region)
         return utils.transforms.background_composite(image=im_region, alpha=False)
 
     def read_bounds(
@@ -4611,6 +4844,8 @@ class DICOMWSIReader(WSIReader):
                 interpolation=interpolation,
             )
 
+        if self.post_proc is not None:
+            return self.post_proc(im_region)
         return utils.transforms.background_composite(image=im_region, alpha=False)
 
 
@@ -4934,6 +5169,8 @@ class NGFFWSIReader(WSIReader):
                 pad_mode=pad_mode,
                 pad_constant_values=pad_constant_values,
             )
+            if self.post_proc is not None:
+                return self.post_proc(im_region)
             return utils.transforms.background_composite(image=im_region, alpha=False)
 
         # Find parameters for optimal read
@@ -4968,6 +5205,8 @@ class NGFFWSIReader(WSIReader):
             interpolation=interpolation,
         )
 
+        if self.post_proc is not None:
+            im_region = self.post_proc(im_region)
         return utils.transforms.background_composite(image=im_region, alpha=False)
 
     def read_bounds(
@@ -5505,11 +5744,13 @@ class AnnotationStoreReader(WSIReader):
                 coord_space=coord_space,
                 **kwargs,
             )
+            if self.post_proc is not None:
+                base_region = self.post_proc(base_region)
             base_region = Image.fromarray(
                 utils.transforms.background_composite(base_region, alpha=True),
             )
             im_region = Image.fromarray(im_region)
-            if self.alpha < 1.0:  # noqa: PLR2004
+            if self.alpha < 1.0:
                 im_region.putalpha(
                     im_region.getchannel("A").point(lambda i: i * self.alpha),
                 )
@@ -5698,11 +5939,13 @@ class AnnotationStoreReader(WSIReader):
                 coord_space=coord_space,
                 **kwargs,
             )
+            if self.post_proc is not None:
+                base_region = self.post_proc(base_region)
             base_region = Image.fromarray(
                 utils.transforms.background_composite(base_region, alpha=True),
             )
             im_region = Image.fromarray(im_region)
-            if self.alpha < 1.0:  # noqa: PLR2004
+            if self.alpha < 1.0:
                 im_region.putalpha(
                     im_region.getchannel("A").point(lambda i: i * self.alpha),
                 )

@@ -8,12 +8,14 @@ consider a higher level tool, such as Panel:
     https://panel.holoviz.org/user_guide/Authentication.html
 
 """
+
 import json
 import secrets
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 import tornado
+from tornado.escape import url_escape
 from tornado.web import RequestHandler
 
 
@@ -59,7 +61,7 @@ class LoginHandler(RequestHandler):
         self.render(
             "login.html",
             errormessage=errormessage,
-            action=f"/login?next={next_url}",
+            action=f"/login?next={url_escape(next_url)}",
         )
 
     def check_permission(self, username, password, config):
@@ -92,7 +94,6 @@ class LoginHandler(RequestHandler):
         auth = self.check_permission(username, password, config)
         if auth:
             self.set_current_user(username, 20)
-            next_url = self.get_argument("next", "/bokeh_app")
             self.redirect(next_url)
         else:
             error_msg = "?error=" + tornado.escape.url_escape("Login incorrect")

@@ -1,4 +1,5 @@
 """Miscellaneous small functions repeatedly used in tiatoolbox."""
+
 from __future__ import annotations
 
 import copy
@@ -31,7 +32,6 @@ from tiatoolbox.utils.exceptions import FileNotSupportedError
 if TYPE_CHECKING:  # pragma: no cover
     from os import PathLike
 
-    import numpy.typing as npt
     from shapely import geometry
 
 
@@ -482,12 +482,12 @@ def __assign_unknown_class(input_table: pd.DataFrame) -> pd.DataFrame:
 
 
 def read_locations(
-    input_table: PathLike | np.ndarray | pd.DataFrame,
+    input_table: str | Path | PathLike | np.ndarray | pd.DataFrame,
 ) -> pd.DataFrame:
     """Read annotations as pandas DataFrame.
 
     Args:
-        input_table (PathLike | np.ndarray | pd.DataFrame`):
+        input_table (str| Path| PathLike | np.ndarray | pd.DataFrame`):
             Path to csv, npy or json. Input can also be a
             :class:`numpy.ndarray` or :class:`pandas.DataFrame`.
             First column in the table represents x position, second
@@ -970,7 +970,7 @@ def ppu2mpp(ppu: int, units: str | int) -> float:
     return 1 / ppu * microns_per_unit[units]
 
 
-def select_cv2_interpolation(scale_factor: float | npt.NDArray[np.float64]) -> str:
+def select_cv2_interpolation(scale_factor: float | np.ndarray) -> str:
     """Return appropriate interpolation method for opencv based image resize.
 
     Args:
@@ -982,7 +982,7 @@ def select_cv2_interpolation(scale_factor: float | npt.NDArray[np.float64]) -> s
             interpolation type
 
     """
-    if np.any(scale_factor > 1.0):  # noqa: PLR2004
+    if np.any(scale_factor > 1.0):
         return "cubic"
     return "area"
 
@@ -992,7 +992,7 @@ def store_from_dat(
     scale_factor: tuple[float, float] = (1, 1),
     typedict: dict | None = None,
     origin: tuple[float, float] = (0, 0),
-    cls: AnnotationStore = SQLiteStore,
+    cls: type[AnnotationStore] = SQLiteStore,
 ) -> AnnotationStore:
     """Load annotations from a hovernet-style .dat file.
 
@@ -1027,7 +1027,8 @@ def store_from_dat(
     """
     store = cls()
     add_from_dat(store, fp, scale_factor, typedict=typedict, origin=origin)
-    store.create_index("area", '"area"')
+    if isinstance(store, SQLiteStore):
+        store.create_index("area", '"area"')
     return store
 
 
@@ -1099,9 +1100,11 @@ def anns_from_hoverdict(
                 origin,
             ),
             {
-                prop: typedict[ann[prop]]
-                if prop == "type" and typedict is not None
-                else ann[prop]
+                prop: (
+                    typedict[ann[prop]]
+                    if prop == "type" and typedict is not None
+                    else ann[prop]
+                )
                 for prop in props[3:]
                 if prop in ann
             },
@@ -1187,9 +1190,7 @@ def add_from_dat(
         anns = []
         for subcat in data:
             if (
-                subcat == "resolution"
-                or subcat == "proc_dimensions"
-                or subcat == "base_dimensions"
+                subcat in {"resolution", "proc_dimensions", "base_dimensions"}
                 or "resolution" in subcat
             ):
                 continue
@@ -1324,7 +1325,7 @@ def dict_to_zarr(
     compressor = (
         kwargs["compressor"] if "compressor" in kwargs else numcodecs.Zstd(level=1)
     )
-    chunks = kwargs["chunks"] if "chunks" in kwargs else 10000
+    chunks = kwargs.get("chunks", 10000)
 
     # ensure proper zarr extension
     save_path = save_path.parent.absolute() / (save_path.stem + ".zarr")

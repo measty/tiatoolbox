@@ -1,4 +1,5 @@
 """Main module for the tiatoolbox visualization bokeh app."""
+
 from __future__ import annotations
 
 import base64
@@ -35,11 +36,11 @@ from bokeh.models import (
     ColumnDataSource,
     CustomAction,
     CustomJS,
+    CustomJSTickFormatter,
     DataTable,
     Div,
     Dropdown,
     FreehandDrawTool,
-    FuncTickFormatter,
     Glyph,
     HoverTool,
     HTMLTemplateFormatter,
@@ -57,6 +58,7 @@ from bokeh.models import (
     Select,
     Slider,
     Spinner,
+    StringEditor,
     TableColumn,
     TabPanel,
     Tabs,
@@ -77,14 +79,14 @@ from requests.adapters import HTTPAdapter, Retry
 
 # GitHub actions seems unable to find TIAToolbox unless this is here
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
-from tiatoolbox import logger  # noqa: E402
-from tiatoolbox.models.engine.nucleus_instance_segmentor import (  # noqa: E402
+from tiatoolbox import logger
+from tiatoolbox.models.engine.nucleus_instance_segmentor import (
     NucleusInstanceSegmentor,
 )
-from tiatoolbox.tools.pyramid import ZoomifyGenerator  # noqa: E402
-from tiatoolbox.utils.visualization import random_colors  # noqa: E402
-from tiatoolbox.visualization.ui_utils import get_level_by_extent  # noqa: E402
-from tiatoolbox.wsicore.wsireader import WSIReader  # noqa: E402
+from tiatoolbox.tools.pyramid import ZoomifyGenerator
+from tiatoolbox.utils.visualization import random_colors
+from tiatoolbox.visualization.ui_utils import get_level_by_extent
+from tiatoolbox.wsicore.wsireader import WSIReader
 
 if TYPE_CHECKING:  # pragma: no cover
     from bokeh.document import Document
@@ -131,9 +133,9 @@ class GPTInterface:
         # some default gpt prompts
         self.sys_prompt = "You are an expert pathologist tasked with providing clear, concise answers to questions about provided H&E stained histological images, from advanced Pathology Students who are learning to accurately assess tissue samples and identify medically relevant features. Provided responses will be used for educational and research purposes only and so do not constitute medical advice."
         # prompt if just a plain region is sent
-        self.prompt_no_ann = "Provide a concise assesment of this image for the student. Comment on noteworthy histological features and structures, and any abnormalities present."
+        self.prompt_no_ann = "Provide a concise assessment of this image for the student. Comment on noteworthy histological features and structures, and any abnormalities present."
         # promt if a region with a user-drawn annotation is sent
-        self.prompt_ann = "Provide a concise assesment of this image for the student. Comment on noteworthy histological features and structures (paying particular attention to the regions indicated by green annotations), and any abnormalities present."
+        self.prompt_ann = "Provide a concise assessment of this image for the student. Comment on noteworthy histological features and structures (paying particular attention to the regions indicated by green annotations), and any abnormalities present."
 
     def update_api_key(self: GPTInterface, api_key: str) -> None:
         """Update the api key."""
@@ -291,6 +293,174 @@ def format_info(info: dict[str, Any]) -> str:
     return info_str
 
 
+def get_channel_info() -> dict[str, tuple[int, int, int]]:
+    """Get the colors for the channels."""
+    resp = UI["s"].get(f"http://{host2}:5000/tileserver/channels")
+    try:
+        resp = json.loads(resp.text)
+        return resp.get("channels", {}), resp.get("active", [])
+    except json.JSONDecodeError:
+        return {}, []
+
+
+def set_channel_info(
+    colors: dict[str, tuple[int, int, int]], active_channels: list
+) -> None:
+    """Set the colors for the channels."""
+    UI["s"].put(
+        f"http://{host2}:5000/tileserver/channels",
+        data={"channels": json.dumps(colors), "active": json.dumps(active_channels)},
+    )
+
+
+def create_channel_color_ui():
+    channel_source = ColumnDataSource(
+        data={
+            "channels": [],
+            "dummy": [],
+        }
+    )
+    color_source = ColumnDataSource(
+        data={
+            "colors": [],
+            "dummy": [],
+        }
+    )
+
+    color_formatter = HTMLTemplateFormatter(
+        template='<div style="background-color: <%= value %>; color: <%= value %>; border: 1px solid #ddd;"><%= value %></div>'
+    )
+
+    channel_table = DataTable(
+        source=channel_source,
+        columns=[
+            TableColumn(
+                field="channels",
+                title="Channel",
+                editor=StringEditor(),
+                sortable=False,
+                width=200,
+            )
+        ],
+        editable=True,
+        width=200,
+        height=260,
+        selectable="checkbox",
+        autosize_mode="none",
+        fit_columns=True,
+    )
+    color_table = DataTable(
+        source=color_source,
+        columns=[
+            TableColumn(
+                field="colors",
+                title="Color",
+                formatter=color_formatter,
+                editor=StringEditor(),
+                sortable=False,
+                width=130,
+            )
+        ],
+        editable=True,
+        width=130,
+        height=260,
+        selectable=True,
+        autosize_mode="none",
+        index_position=None,
+        fit_columns=True,
+    )
+
+    color_picker = ColorPicker(title="Channel Color", width=100)
+
+    def update_selected_color(attr, old, new):
+        selected = color_source.selected.indices
+        if selected:
+            color_source.patch({"colors": [(selected[0], new)]})
+
+    color_picker.on_change("color", update_selected_color)
+
+    apply_button = Button(
+        label="Apply Changes", button_type="success", margin=(20, 5, 5, 5)
+    )
+
+    def apply_changes() -> None:
+        """Apply the changes to the image."""
+        colors = dict(zip(channel_source.data["channels"], color_source.data["colors"]))
+        active_channels = channel_source.selected.indices
+
+        set_channel_info({ch: hex2rgb(colors[ch]) for ch in colors}, active_channels)
+        change_tiles("slide")
+
+    apply_button.on_click(apply_changes)
+
+    def update_color_picker(attr, old, new):
+        if new:
+            selected_color = color_source.data["colors"][new[0]]
+            color_picker.color = selected_color
+        else:
+            color_picker.color = None
+
+    color_source.selected.on_change("indices", update_color_picker)
+
+    enhance_slider = Slider(
+        start=0.1,
+        end=10,
+        value=1,
+        step=0.1,
+        title="Enhance",
+        width=200,
+    )
+
+    def enhance_cb(attr: str, old: str, new: str) -> None:  # noqa: ARG001 # skipcq: PYL-W0613
+        """Enhance slider callback."""
+        UI["s"].put(
+            f"http://{host2}:5000/tileserver/enhance",
+            data={"val": json.dumps(new)},
+        )
+        UI["vstate"].update_state = 1
+        UI["vstate"].to_update.update(["slide"])
+
+    enhance_slider.on_change("value", enhance_cb)
+
+    instructions = Div(
+        text="""
+        <p>Instructions:</p>
+        <ul>
+            <li>Select active channels using the checkboxes</li>
+            <li>Select a channel color and change using the picker below the table</li>
+            <li>Click 'Apply Changes' to update the image</li>
+        </ul>
+    """
+    )
+
+    return column(
+        instructions,
+        column(
+            row(channel_table, color_table),
+            row(color_picker, apply_button),
+            enhance_slider,
+        ),
+    )
+
+
+def populate_table() -> None:
+    """Populate the channel color table."""
+    # Access the ColumnDataSource from the UI dictionary
+    tables = UI["channel_select"].children[1].children[0].children
+    colors, active_channels = get_channel_info()
+
+    if colors is not None:
+        tables[0].source.data = {
+            "channels": list(colors.keys()),
+            "dummy": list(colors.keys()),
+        }
+        tables[1].source.data = {
+            "colors": [rgb2hex(color) for color in colors.values()],
+            "dummy": list(colors.keys()),
+        }
+        tables[0].source.selected.indices = active_channels
+
+
 def get_view_bounds(
     dims: tuple[float, float],
     plot_size: tuple[float, float],
@@ -423,7 +593,7 @@ def make_color_seq_from_cmap(cmap: str | None = None) -> list[str]:
 
 
 def make_safe_name(name: str) -> str:
-    """Helper to make a name safe for use in a url."""
+    """Helper to make a name safe for use in a URL."""
     return urllib.parse.quote(str(PureWindowsPath(name)), safe="")
 
 
@@ -806,7 +976,7 @@ class ViewerState:
         self.thickness = -1
         self.model_mpp = 0
         self.init = True
-        self.micron_formatter = FuncTickFormatter(
+        self.micron_formatter = CustomJSTickFormatter(
             args={"mpp": 0.1},
             code="""
                 return Math.round(tick*mpp)
@@ -867,7 +1037,7 @@ def slide_toggle_cb(attr: str) -> None:  # noqa: ARG001
         UI["p"].renderers[0].alpha = 0.0
 
 
-def node_select_cb(attr: str, old: int, new: int) -> None:  # noqa: ARG001
+def node_select_cb(attr: str, old: int, new: int) -> None:
     """Placeholder callback to do something on node selection."""
     # Do something on node select if desired
 
@@ -904,7 +1074,16 @@ def populate_slide_list(slide_folder: Path, search_txt: str | None = None) -> No
     """Populate the slide list with the available slides."""
     file_list = []
     len_slidepath = len(slide_folder.parts)
-    for ext in ["*.svs", "*ndpi", "*.tiff", "*.mrxs", "*.jpg", "*.png", "*.tif"]:
+    for ext in [
+        "*.svs",
+        "*.ndpi",
+        "*.tiff",
+        "*.mrxs",
+        "*.jpg",
+        "*.png",
+        "*.tif",
+        "*.qptiff",
+    ]:
         file_list.extend(list(Path(slide_folder).glob(str(Path("*") / ext))))
         file_list.extend(list(Path(slide_folder).glob(ext)))
     if search_txt is None:
@@ -918,6 +1097,18 @@ def populate_slide_list(slide_folder: Path, search_txt: str | None = None) -> No
             for p in sorted(file_list)
             if search_txt in str(p)
         ]
+    # filter by selected cohort if in config
+    cohorts = get_from_config(["cohorts"], {})
+    if len(cohorts) > 0:
+        if len(cohorts) == 1:
+            cats = iter(cohorts.keys())
+        else:
+            cats = UI["cohort_select"].value
+        cohort_slides = []
+        for c in cats:
+            cohort_slides.extend(cohorts[c])
+        if len(cohort_slides) > 0:
+            file_list = [p for p in file_list if Path(p[0]).name in cohort_slides]
 
     UI["slide_select"].options = file_list
 
@@ -961,7 +1152,7 @@ def overlay_alpha_cb(attr: str, old: float, new: float) -> None:  # noqa: ARG001
 
 def pt_size_cb(attr: str, old: float, new: float) -> None:  # noqa: ARG001
     """Callback to change the size of the points."""
-    UI["vstate"].graph_node.size = 2 * new
+    UI["vstate"].graph_node.radius = 2 * new
 
 
 def edge_size_cb(attr: str, old: float, new: float) -> None:  # noqa: ARG001
@@ -1027,7 +1218,7 @@ def scale_spinner_cb(attr: str, old: float, new: float) -> None:  # noqa: ARG001
 
 
 def slide_select_cb(attr: str, old: str, new: str) -> None:  # noqa: ARG001
-    """Setup the newly chosen slide."""
+    """Set up the newly chosen slide."""
     if len(new) == 0:
         return
     slide_path = Path(doc_config["slide_folder"]) / Path(new[0])
@@ -1059,12 +1250,18 @@ def slide_select_cb(attr: str, old: str, new: str) -> None:  # noqa: ARG001
     fname = make_safe_name(str(slide_path))
     UI["s"].put(f"http://{host2}:5000/tileserver/slide", data={"slide_path": fname})
     change_tiles("slide")
+    populate_table()
 
     # Load the overlay and graph automatically if set in config
     if doc_config["auto_load"]:
         for f in UI["layer_drop"].menu:
             dummy_attr = DummyAttr(f[0])
             layer_drop_cb(dummy_attr)
+
+
+def cohort_select_cb(attr: str, old: str, new: str) -> None:  # noqa: ARG001
+    """Callback to change the cohort selection."""
+    populate_slide_list(Path(doc_config["slide_folder"]))
 
 
 def range_slider_cb(attr: str, old: str, new: str) -> None:  # noqa: ARG001
@@ -1757,6 +1954,15 @@ def gather_ui_elements(  # noqa: PLR0915
         name=f"cprop{win_num}",
         description=cprop_tooltip,
     )
+    cohort_select = MultiChoice(
+        title="Select Cohort:",
+        max_items=3,
+        options=list(get_from_config(["cohorts"], {}).keys()),
+        value=list(get_from_config(["cohorts"], {"*": "*"}).keys())[0:1],
+        search_option_limit=5000,
+        sizing_mode="stretch_width",
+        name=f"cohort_select{win_num}",
+    )
     slide_tt = Tooltip(
         content=HTML(
             """Select a slide. Overlays whose filenames contain the slide stem
@@ -1776,7 +1982,6 @@ def gather_ui_elements(  # noqa: PLR0915
         name=f"slide_select{win_num}",
         description=slide_tt,
     )
-
     cmmenu = [
         ("jet", "jet"),
         ("coolwarm", "coolwarm"),
@@ -1953,6 +2158,7 @@ def gather_ui_elements(  # noqa: PLR0915
     pt_size_spinner.on_change("value", pt_size_cb)
     edge_size_spinner.on_change("value", edge_size_cb)
     slide_select.on_change("value", slide_select_cb)
+    cohort_select.on_change("value", cohort_select_cb)
     save_button.on_click(save_cb)
     cmap_select.on_change("value", cmap_select_cb)
     blur_spinner.on_change("value", blur_spinner_cb)
@@ -2011,6 +2217,7 @@ def gather_ui_elements(  # noqa: PLR0915
     ui_elements_1 = dict(
         zip(
             [
+                "cohort_select",
                 "slide_select",
                 "layer_drop",
                 "slide_row",
@@ -2023,6 +2230,7 @@ def gather_ui_elements(  # noqa: PLR0915
                 "type_select_row",
             ],
             [
+                cohort_select,
                 slide_select,
                 layer_drop,
                 slide_row,
@@ -2051,6 +2259,9 @@ def gather_ui_elements(  # noqa: PLR0915
             list(ui_elements_1.values()),
             sizing_mode="stretch_width",
         )
+    if len(get_from_config(["cohorts"], {})) < 2:
+        # if no cohorts, or only one, dont need cohort select
+        ui_elements_1.pop("cohort_select")
 
     # Elements in the secondary controls tab
     ui_elements_2 = dict(
@@ -2062,6 +2273,7 @@ def gather_ui_elements(  # noqa: PLR0915
                 "res_switch",
                 "range_row",
                 "range_slider",
+                "channel_select",
             ],
             [
                 opt_buttons,
@@ -2070,6 +2282,7 @@ def gather_ui_elements(  # noqa: PLR0915
                 res_switch,
                 range_row,
                 range_slider,
+                create_channel_color_ui(),
             ],
         ),
     )
@@ -2204,7 +2417,9 @@ def make_window(vstate: ViewerState) -> dict:  # noqa: PLR0915
         fill_alpha=0,
         line_width=3,
     )
-    c = p.circle("x", "y", source=pt_source, color="red", radius=5)
+    c = p.circle(
+        "x", "y", source=pt_source, color="red", radius=3, radius_units="screen"
+    )
     ml = p.multi_line("xs", "ys", source=ml_source, color="green", line_width=3)
     p.add_tools(BoxEditTool(renderers=[r], num_objects=1))
     p.add_tools(PointDrawTool(renderers=[c]))
@@ -2242,8 +2457,8 @@ def make_window(vstate: ViewerState) -> dict:  # noqa: PLR0915
         x="x_",
         y="y_",
         fill_color="node_color_",
-        radius=5,
-        line_width=0,
+        radius=3,
+        radius_units="screen",
     )
     vstate.graph_edge = Segment(x0="x0_", y0="y0_", x1="x1_", y1="y1_")
     p.add_glyph(node_source, vstate.graph_node)
@@ -2385,7 +2600,6 @@ def api_input_cb(attr: str, old: str, new: str) -> None:
     gpt_interface.update_api_key(new)
 
 
-#
 im_fig = figure(
     x_range=(0, 100),
     y_range=(0, 100),
@@ -2631,7 +2845,16 @@ class DocConfig:
         """
         # Set initial slide to first one in base folder
         slide_list = []
-        for ext in ["*.svs", "*ndpi", "*.tiff", "*.mrxs", "*.png", "*.jpg"]:
+        for ext in [
+            "*.svs",
+            "*.ndpi",
+            "*.tiff",
+            "*.tif",
+            "*.mrxs",
+            "*.png",
+            "*.jpg",
+            "*.qptiff",
+        ]:
             slide_list.extend(list(doc_config["slide_folder"].glob(ext)))
             slide_list.extend(
                 list(doc_config["slide_folder"].glob(str(Path("*") / ext))),

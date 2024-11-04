@@ -6,14 +6,14 @@ This visualization tool is in the process of being added to tiatoolbox, but for 
 
 If you already have a develop version of tiatoolbox set up, it should be sufficient to crete a new branch for your local tiatoolbox git from this repository, and switch to that when you want to do some visualization stuff.
 
-git remote add tiavis https://github.com/measty/tiatoolbox/  
-git fetch tiavis  
+git remote add tiavis https://github.com/measty/tiatoolbox/\
+git fetch tiavis\
 git checkout -b feature-add-gui tiafork/feature-add-gui
 
 You will also need to add a couple of extra packages to your environment:
 
-conda install bokeh -c bokeh  
-conda install flask-cors  
+conda install bokeh -c bokeh\
+conda install flask-cors
 
 ## From scratch
 
@@ -153,9 +153,32 @@ The buttons 'filled', 'mpp', 'grid', respectively toggle between filled and outl
       <img src="https://img.shields.io/conda/vn/conda-forge/tiatoolbox" />
     </a>
     <a href="https://anaconda.org/conda-forge/tiatoolbox">
-        <img src="https://anaconda.org/conda-forge/tiatoolbox/badges/downloads.svg" />
+            <img src="https://shields.io/conda/dn/conda-forge/tiatoolbox"  alt="conda-forge downloads"/>
     </a>
-
+  <br>
+  <a href="https://tia-toolbox.readthedocs.io/en/latest/?badge=latest">
+    <img src="https://readthedocs.org/projects/tia-toolbox/badge/?version=latest" alt="Documentation Status" />
+  </a>
+  <br>
+  <a href="#license">
+    <img alt="GitHub license" src="https://img.shields.io/static/v1?label=license&message=BSD-3-Clause&color=green"></a>
+  <br>
+  <br>
+  <a href="https://github.com/TissueImageAnalytics/tiatoolbox/actions/workflows/pip-install.yml">
+    <img src="https://img.shields.io/pypi/pyversions/tiatoolbox.svg"  alt="Supported Python versions"/>
+  </a>
+<br>
+<a href="https://github.com/TissueImageAnalytics/tiatoolbox/actions/workflows/python-package.yml">
+    <img src="https://github.com/TissueImageAnalytics/tiatoolbox/actions/workflows/python-package.yml/badge.svg"  alt="GitHub Workflow passing"/>
+  </a>
+  <a href="https://codecov.io/gh/TissueImageAnalytics/tiatoolbox">
+      <img src="https://codecov.io/gh/TissueImageAnalytics/tiatoolbox/branch/master/graph/badge.svg?token=7UZEMacQHm" alt="Code Coverage"/>
+  </a>
+<a href="https://github.com/astral-sh/ruff">
+      <img src="https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json" alt="Code Style black"/>
+    </a>
+  <br><br>
+  <a href="#cite-this-repository"><img src="https://img.shields.io/badge/Cite%20this%20repository-BibTeX-brightgreen" alt="DOI"></a> <a href="https://doi.org/10.1038/s43856-022-00186-5"><img src="https://img.shields.io/badge/DOI-10.1038%2Fs43856--022--00186--5-blue" alt="DOI"></a>
 <br>
     <br>
   <a href="https://doi.org/10.1101/2021.12.23.474029"><img src="https://img.shields.io/badge/bioRxiv-10.1101%2F2021.12.23.474029-blue" alt="DOI"></a>
@@ -229,7 +252,7 @@ Prepare a computer as a convenient platform for further development of the Pytho
 5. Create virtual environment for TIAToolbox using
 
 ```sh
-    $ conda env create -f requirements.dev.conda.yml # for linux/mac only.
+    $ conda create -n tiatoolbox-dev python=3.9 # select version of your choice
     $ conda activate tiatoolbox-dev
 ```
 

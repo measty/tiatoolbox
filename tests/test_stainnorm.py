@@ -108,6 +108,16 @@ def test_get_normalizer_assertion() -> None:
         _ = get_normalizer("ruifrok", stain_matrix)
 
 
+def test_get_custom_normalizer_assertion() -> None:
+    """Test get custom normalizer assertion error."""
+    stain_matrix = None
+    with pytest.raises(
+        ValueError,
+        match=r"`stain_matrix` is None when using `method_name`=\"custom\".",
+    ):
+        _ = get_normalizer("custom", stain_matrix)
+
+
 def test_ruifrok_normalize(source_image: Path, norm_ruifrok: Path) -> None:
     """Test for stain normalization with stain matrix from Ruifrok and Johnston."""
     source_img = imread(Path(source_image))
@@ -248,7 +258,7 @@ def test_cli_stainnorm_dir(source_image: Path, tmp_path: Path) -> None:
             "--output-path",
             str(tmp_path / "stainnorm_ouput"),
             "--method",
-            "vahadane",
+            "ruifrok",
         ],
     )
 
