@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Any, Callable, SupportsFloat
 
 import cv2
 import numpy as np
+import ollama
 import pandas as pd
 import requests
 import torch
@@ -73,7 +74,7 @@ from bokeh.models.tiles import WMTSTileSource
 from bokeh.plotting import figure
 from bokeh.util import token
 from matplotlib import colormaps
-from openai import InternalServerError, OpenAI
+from openai import OpenAI
 from PIL import Image
 from requests.adapters import HTTPAdapter, Retry
 
@@ -111,18 +112,9 @@ default_cm = "viridis"  # any valid matplotlib colormap string
 class GPTInterface:
     """Class to handle GPT requests."""
 
-    def __init__(self: GPTInterface) -> None:
+    def __init__(self: GPTInterface, model_name: str = "llama3.2-vision:11b") -> None:
         """Initialise the class."""
-        # client for openai reqs
-        self.api_key = os.environ.get("OPENAI_API_KEY")
-        if self.api_key is None:
-            logger.warning(
-                "OPENAI_API_KEY not set, GPT-Vision will not work. Add as a system environment variable on your machine, or in .env file.",
-            )
-            self.client = None
-        else:
-            # we have an api key, so set up the client
-            self.client = OpenAI(api_key=self.api_key)
+        self.set_client(model_name)
 
         # will store short history of prompts and responses
         self.gpt_images = []
@@ -136,6 +128,31 @@ class GPTInterface:
         self.prompt_no_ann = "Provide a concise assessment of this image for the student. Comment on noteworthy histological features and structures, and any abnormalities present."
         # promt if a region with a user-drawn annotation is sent
         self.prompt_ann = "Provide a concise assessment of this image for the student. Comment on noteworthy histological features and structures (paying particular attention to the regions indicated by green annotations), and any abnormalities present."
+
+    def set_client(self: GPTInterface, model_name) -> None:
+        # client for openai reqs
+        self.model_name = model_name
+        if self.model_name == "gpt-4o":
+            self.api_key = os.environ.get("OPENAI_API_KEY")
+            if self.api_key is None:
+                logger.warning(
+                    "OPENAI_API_KEY not set, GPT-Vision will not work. Add as a system environment variable on your machine, or in .env file.",
+                )
+                self.client = None
+            else:
+                # we have an api key, so set up the client
+                self.client = OpenAI(api_key=self.api_key)
+        else:
+            avail_models = ollama.list()
+            print(f"ollama models available: {avail_models}")
+            if self.model_name not in avail_models:
+                print(f"attempting to pull model {self.model_name}")
+                try:
+                    ollama.pull(self.model_name)
+                except Exception as e:
+                    print(f"Error: {e} when pulling the model.")
+            self.api_key = "local"
+            self.client = None
 
     def update_api_key(self: GPTInterface, api_key: str) -> None:
         """Update the api key."""
@@ -152,53 +169,75 @@ class GPTInterface:
         im_size = self.gpt_images[-1].size
         base64_image = encode_image(self.gpt_images[-1])
 
-        print(f"sending image size: {im_size} to gpt-vision.")
+        # Prepare the messages to send
+        if self.model_name == "gpt-4o":
+            messages = (
+                [
+                    {
+                        "role": "system",
+                        "content": self.sys_prompt,
+                    },
+                    {
+                        "role": "user",
+                        "content": [
+                            prompt,
+                            {"image": base64_image},
+                        ],
+                    },
+                ],
+            )
+        else:
+            messages = [
+                {
+                    "role": "user",
+                    "content": prompt,
+                    "images": [base64_image],
+                }
+            ]
+
+        print(f"sending image size: {im_size} to {self.model_name}")
         # send a message containing the image
-        prompt_input.value = "Sent to GPT-Vision. Waiting for response - this typically takes < 10 seconds, but may take longer if openAI server is busy. It may occasionally fail."
+        prompt_input.value = "Sent to model. Waiting for response - this typically takes < 10 seconds, but may take longer if server is busy. It may occasionally fail."
+
+        # Send the messages to the model
         tries = 0
-        text = "Failed to get response from GPT-Vision."
-        completion = None
+        response_text = "Failed to get response from the model."
+        responses = None
         while tries < 3:
             try:
-                completion = self.client.chat.completions.create(
-                    model="gpt-4o",
-                    messages=[
-                        {
-                            "role": "system",
-                            "content": self.sys_prompt,
-                        },
-                        {
-                            "role": "user",
-                            "content": [
-                                prompt,
-                                {"image": base64_image},
-                            ],
-                        },
-                    ],
-                    max_tokens=500,
-                )
+                if self.model_name == "gpt-4o":
+                    responses = self.client.chat.completions.create(
+                        model="gpt-4o",
+                        messages=messages,
+                        max_tokens=500,
+                    )
+                    # extract the text from the response
+                    if responses is not None:
+                        response_text = responses.choices[0].message.content
+                else:
+                    responses = ollama.chat(model=self.model_name, messages=messages)
+                    # Collect the response text
+                    response_text = responses["message"]["content"]
                 break
-            except InternalServerError as e:
+            except Exception as e:
                 print(
-                    f"error: {e} when sending to gpt-vision. trying again (try {tries} / 3)",
+                    f"Error: {e} when sending to the model. Trying again (try {tries + 1} / 3)"
                 )
                 tries += 1
                 time.sleep(1)
+        else:
+            response_text = "Failed to get response after 3 tries."
 
         print("response received.")
-        # extract the text from the response
-        if completion is not None:
-            print(completion)
-            text = completion.choices[0].message.content
 
         # add the prompt and response to the history
         if len(self.gpt_prompts) >= self.max_history:
             self.gpt_prompts.pop(0)
             self.gpt_responses.pop(0)
         self.gpt_prompts.append(prompt)
-        self.gpt_responses.append(text)
+        self.gpt_responses.append(response_text)
 
-        return text
+        return response_text
 
     def save_history(self: GPTInterface, path: Path, last_n=1) -> None:
         """Save the last n prompts, responses and images in the history
@@ -270,7 +309,7 @@ class UIWrapper:
 def encode_image(tile_image: Image.Image) -> str:
     """Encode an image as a base64 string."""
     image_io = io.BytesIO()
-    tile_image.save(image_io, format="webp")
+    tile_image.save(image_io, format="jpeg")
     image_io.seek(0)
     return base64.b64encode(image_io.read()).decode("utf-8")
 
@@ -2601,6 +2640,11 @@ def gpt_save_cb(event: ButtonClick) -> None:
     gpt_interface.save_history(get_from_config(["overlay_folder"]) / "gpt_prompts", 1)
 
 
+def model_choice_cb(attr: str, old: str, new: str) -> None:
+    """Callback to change the model used by gpt-vision."""
+    gpt_interface.set_client(new)
+
+
 def api_input_cb(attr: str, old: str, new: str) -> None:
     """Callback to update api key when input changes."""
     gpt_interface.update_api_key(new)
@@ -2625,6 +2669,10 @@ api_key_input = PasswordInput(
 prompt_input = TextAreaInput(value=".", rows=7, width=350, height=250)
 submit_button = Button(label="Submit", button_type="success")
 gpt_save_button = Button(label="Save", button_type="success")
+model_choice = Select(
+    title="Choose Model",
+    options=["llama3.2-vision:11b", "gpt-4o"],
+)
 close_button = Button(label="Close", button_type="success")
 js_popup_code = """
     var popupContent = document.getElementById('gpt-popup');
@@ -2634,27 +2682,18 @@ js_popup_code = """
 close_button.js_on_event(ButtonClick, CustomJS(code=js_popup_code))
 submit_button.on_click(submit_cb)
 gpt_save_button.on_click(gpt_save_cb)
+model_choice.on_change("value", model_choice_cb)
 api_key_input.on_change("value", api_input_cb)
-if gpt_interface.api_key is None:
-    # allow input for api key
-    dialog_content = Column(
-        children=[
-            api_key_input,
-            im_fig,
-            prompt_input,
-            Row(children=[submit_button, gpt_save_button, close_button]),
-        ],
-        name="dialog",
-    )
-else:
-    dialog_content = Column(
-        children=[
-            im_fig,
-            prompt_input,
-            Row(children=[submit_button, gpt_save_button, close_button]),
-        ],
-        name="dialog",
-    )
+
+dialog_content = Column(
+    children=[
+        api_key_input,
+        im_fig,
+        prompt_input,
+        Row(children=[model_choice, submit_button, gpt_save_button, close_button]),
+    ],
+    name="dialog",
+)
 # dialog = Dialog(visible=True, closable=True, content=im_fig, name="dialog", draggable=True)
 
 # some setup
