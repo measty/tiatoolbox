@@ -171,21 +171,19 @@ class GPTInterface:
 
         # Prepare the messages to send
         if self.model_name == "gpt-4o":
-            messages = (
-                [
-                    {
-                        "role": "system",
-                        "content": self.sys_prompt,
-                    },
-                    {
-                        "role": "user",
-                        "content": [
-                            prompt,
-                            {"image": base64_image},
-                        ],
-                    },
-                ],
-            )
+            messages = [
+                {
+                    "role": "system",
+                    "content": self.sys_prompt,
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        prompt,
+                        {"image": base64_image},
+                    ],
+                },
+            ]
         else:
             messages = [
                 {
@@ -1778,10 +1776,8 @@ def gpt_inference() -> None:
             (0, 255, 0),
             3,
         )
-    # import pdb; pdb.set_trace()
     # convert image to base64
     img_array = np.array(Image.fromarray(region).convert("RGBA"), dtype=np.uint8)
-    # import pdb; pdb.set_trace()
     img_array = img_array.view(dtype=np.uint32).reshape(img_array.shape[:-1])
     img_array = np.flipud(
         img_array,
