@@ -1126,7 +1126,7 @@ def populate_slide_list(slide_folder: Path, search_txt: str | None = None) -> No
         "*.tif",
         "*.qptiff",
     ]:
-        file_list.extend(list(Path(slide_folder).glob(str(Path("*") / ext))))
+        # file_list.extend(list(Path(slide_folder).glob(str(Path("*") / ext))))
         file_list.extend(list(Path(slide_folder).glob(ext)))
     if search_txt is None:
         file_list = [
@@ -2897,9 +2897,9 @@ class DocConfig:
             "*.qptiff",
         ]:
             slide_list.extend(list(doc_config["slide_folder"].glob(ext)))
-            slide_list.extend(
-                list(doc_config["slide_folder"].glob(str(Path("*") / ext))),
-            )
+            # slide_list.extend(
+            #    list(doc_config["slide_folder"].glob(str(Path("*") / ext))),
+            # )
         first_slide_path = slide_list[0]
         if "first_slide" in self.config:
             first_slide_path = self.config["slide_folder"] / self.config["first_slide"]
