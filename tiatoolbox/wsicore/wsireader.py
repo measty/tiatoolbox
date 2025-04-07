@@ -3505,6 +3505,8 @@ class ArrayView:
     @property
     def shape(self: ArrayView) -> tuple:
         """Return array shape."""
+        if "Z" in self._shape:
+            return tuple(self._shape[c] for c in "YXZ")
         try:
             return tuple(self._shape[c] for c in "YXC")
         except KeyError:
@@ -3518,9 +3520,9 @@ class ArrayView:
         while len(index) < len(self.axes):
             index = (*index, slice(None))
 
-        if self.axes in ("YXS", "YXC"):
+        if self.axes in ("YXS", "YXC", "YXZ"):
             return self.array[index]
-        if self.axes in ("SYX", "CYX"):
+        if self.axes in ("SYX", "CYX", "ZYX"):
             y, x, s = index
             index = (s, y, x)
             return np.rollaxis(self.array[index], 0, 3)
@@ -3647,9 +3649,9 @@ class TIFFWSIReader(WSIReader):
                 Shape in YXS or YXC order.
 
         """
-        if self._axes in ("YXS", "YXC"):
+        if self._axes in ("YXS", "YXC", "YXZ"):
             return shape
-        if self._axes in ("SYX", "CYX"):
+        if self._axes in ("SYX", "CYX", "ZYX"):
             return np.roll(shape, -1)
         msg = f"Unsupported axes `{self._axes}`."
         raise ValueError(msg)
@@ -3797,6 +3799,8 @@ class TIFFWSIReader(WSIReader):
 
         objective_settings = xml_series.find("ome:ObjectiveSettings", namespaces)
         instrument_ref_id = instrument_ref.attrib["ID"]
+        if objective_settings is None:
+            return None
         objective_settings_id = objective_settings.attrib["ID"]
         instruments = {
             instrument.attrib["ID"]: instrument
