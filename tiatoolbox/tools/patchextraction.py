@@ -10,7 +10,7 @@ from typing_extensions import Unpack
 
 from tiatoolbox import logger
 from tiatoolbox.utils import misc
-from tiatoolbox.utils.exceptions import MethodNotSupportedError
+from tiatoolbox.utils.exceptions import FileNotSupportedError, MethodNotSupportedError
 from tiatoolbox.utils.visualization import AnnotationRenderer
 from tiatoolbox.wsicore import wsireader
 
@@ -20,7 +20,7 @@ if TYPE_CHECKING:  # pragma: no cover
     from pandas import DataFrame
 
     from tiatoolbox.annotation.storage import AnnotationStore
-    from tiatoolbox.typing import Resolution, Units
+    from tiatoolbox.type_hints import Resolution, Units
 
 
 def validate_shape(shape: np.ndarray) -> bool:
@@ -772,7 +772,12 @@ class PointsPatchExtractor(PatchExtractor):
             pad_constant_values=pad_constant_values,
             within_bound=within_bound,
         )
-        self.locations_df = misc.read_locations(input_table=locations_list)
+        try:
+            self.locations_df = misc.read_locations(input_table=locations_list)
+        except (TypeError, FileNotSupportedError) as exc:
+            msg = "Please input correct locations_list. "
+            msg += "Supported types: np.ndarray, DataFrame, str, Path."
+            raise TypeError(msg) from exc
         self.locations_df["x"] = self.locations_df["x"] - int(
             (self.patch_size[1] - 1) / 2,
         )

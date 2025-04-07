@@ -108,7 +108,7 @@ class TileServer(Flask):
         if isinstance(layers, list):
             layers_dict = {"slide": layers[0]}
             for i, p in enumerate(layers[1:]):
-                layers_dict[f"layer-{i+1}"] = p
+                layers_dict[f"layer-{i + 1}"] = p
             layers = layers_dict
         # Set up the layer dict.
         meta = None
@@ -776,6 +776,10 @@ class TileServer(Flask):
         """Get the channels of the slide."""
         session_id = self._get_session_id()
         if isinstance(self.layers[session_id]["slide"].post_proc, MultichannelToRGB):
+            if self.layers[session_id]["slide"].post_proc.color_dict is None:
+                _ = self.layers[session_id]["slide"].slide_thumbnail(
+                    resolution=8.0, units="mpp"
+                )
             return jsonify(
                 {
                     "channels": self.layers[session_id]["slide"].post_proc.color_dict,

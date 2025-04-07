@@ -20,7 +20,7 @@ if TYPE_CHECKING:  # pragma: no cover
     import torch
     from PIL.Image import Image
 
-    from tiatoolbox.typing import IntPair, Resolution, Units
+    from tiatoolbox.type_hints import IntPair, Resolution, Units
 
 
 class _TorchPreprocCaller:
@@ -322,7 +322,7 @@ class WSIPatchDataset(dataset_abc.PatchDatasetABC):
             # mask on the fly
             try:
                 mask_reader = self.reader.tissue_mask(resolution=1.25, units="power")
-            except:
+            except ValueError:
                 # if power is None, try with mpp
                 mask_reader = self.reader.tissue_mask(resolution=6.0, units="mpp")
             # ? will this mess up  ?
@@ -352,7 +352,7 @@ class WSIPatchDataset(dataset_abc.PatchDatasetABC):
         """Get an item from the dataset."""
         coords = self.inputs[idx]
         # Read image patch from the whole-slide image
-        if not isinstance(self.reader, WSIReader):
+        if isinstance(self.reader, (Path, str)):
             self.reader = WSIReader.open(self.reader)
         patch = self.reader.read_bounds(
             coords,

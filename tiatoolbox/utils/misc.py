@@ -16,7 +16,6 @@ import numcodecs
 import numpy as np
 import pandas as pd
 import requests
-import torch
 import yaml
 import zarr
 from filelock import FileLock
@@ -221,8 +220,7 @@ def load_stain_matrix(stain_matrix_input: np.ndarray | PathLike) -> np.ndarray:
         _, __, suffixes = split_path_name_ext(stain_matrix_input)
         if suffixes[-1] not in [".csv", ".npy"]:
             msg = (
-                "If supplying a path to a stain matrix, "
-                "use either a npy or a csv file"
+                "If supplying a path to a stain matrix, use either a npy or a csv file"
             )
             raise FileNotSupportedError(
                 msg,
@@ -532,7 +530,7 @@ def read_locations(
             out_table = pd.read_json(input_table)
             return __assign_unknown_class(out_table)
 
-        msg = "File type not supported."
+        msg = "File type not supported. Supported types: .npy, .csv, .json"
         raise FileNotSupportedError(msg)
 
     if isinstance(input_table, np.ndarray):
@@ -541,7 +539,9 @@ def read_locations(
     if isinstance(input_table, pd.DataFrame):
         return __assign_unknown_class(input_table)
 
-    msg = "Please input correct image path or an ndarray image."
+    msg = "File type not supported. "
+    msg += "Supported types: str, Path, PathLike, np.ndarray, pd.DataFrame"
+
     raise TypeError(msg)
 
 
@@ -876,24 +876,6 @@ def select_device(*, on_gpu: bool) -> str:
         return "cuda"
 
     return "cpu"
-
-
-def model_to(model: torch.nn.Module, *, on_gpu: bool) -> torch.nn.Module:
-    """Transfers model to cpu/gpu.
-
-    Args:
-        model (torch.nn.Module): PyTorch defined model.
-        on_gpu (bool): Transfers model to gpu if True otherwise to cpu.
-
-    Returns:
-        torch.nn.Module:
-            The model after being moved to cpu/gpu.
-    """
-    if on_gpu:  # DataParallel work only for cuda
-        model = torch.nn.DataParallel(model)
-        return model.to("cuda")
-
-    return model.to("cpu")
 
 
 def get_bounding_box(img: np.ndarray) -> np.ndarray:
