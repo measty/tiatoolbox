@@ -86,9 +86,15 @@ class MultichannelToRGB:
             np.ndarray: RGB image of shape (H, W, 3)
 
         """
+        # convert 1-channel images to 3-channel grayscale
+        if len(image.shape) == 2:
+            image = np.stack([image] * 3, axis=-1)
         n = image.shape[2]
 
-        if n < 5:  # noqa: PLR2004
+        if image.dtype == np.uint16:
+            image = (image / 32).clip(0, 255).astype(np.uint8)  # 12-bit to 8-bit
+
+        if n in [3, 4]:  # noqa: PLR2004
             # assume already rgb(a) so just return image
             return image
 
@@ -97,9 +103,6 @@ class MultichannelToRGB:
 
         if not self.is_validated:
             self.validate(n)
-
-        if image.dtype == np.uint16:
-            image = (image / 256).astype(np.uint8)
 
         # Convert to RGB image
         rgb_image = (

@@ -3511,12 +3511,15 @@ class ArrayView:
 
         """
         self.array = array
+        shape = self.array.shape
         self.axes = axes
-        self._shape = dict(zip(self.axes, self.array.shape))
+        self._shape = dict(zip(self.axes, shape))
 
     @property
     def shape(self: ArrayView) -> tuple:
         """Return array shape."""
+        if len(self._shape) == 2:
+            return tuple(self._shape[c] for c in "YX")
         if "Z" in self._shape:
             return tuple(self._shape[c] for c in "YXZ")
         try:
@@ -3532,7 +3535,7 @@ class ArrayView:
         while len(index) < len(self.axes):
             index = (*index, slice(None))
 
-        if self.axes in ("YXS", "YXC", "YXZ"):
+        if self.axes in ("YXS", "YXC", "YXZ", "YX"):
             return self.array[index]
         if self.axes in ("SYX", "CYX", "ZYX"):
             y, x, s = index
@@ -3556,7 +3559,7 @@ class TIFFWSIReader(WSIReader):
     ) -> None:
         """Initialize :class:`TIFFWSIReader`."""
         super().__init__(input_img=input_img, mpp=mpp, power=power, post_proc=post_proc)
-        self.tiff = tifffile.TiffFile(self.input_path)
+        self.tiff = tifffile.TiffFile(self.input_path, _multifile=False)
         self._axes = self.tiff.series[0].axes
         # Flag which is True if the image is a simple single page tile TIFF
         is_single_page_tiled = all(
@@ -3598,6 +3601,7 @@ class TIFFWSIReader(WSIReader):
             self.input_path,
             series=self.series_n,
             aszarr=True,
+            _multifile=False,
         )
         # remove LRU cache for now as seems to cause issues on windows
         self._zarr_group = zarr.open(self._zarr_store)
@@ -3723,6 +3727,8 @@ class TIFFWSIReader(WSIReader):
             return shape
         if self._axes in ("SYX", "CYX", "ZYX"):
             return np.roll(shape, -1)
+        if self._axes in {"YX"}:
+            return shape  #  + (1,)
         msg = f"Unsupported axes `{self._axes}`."
         raise ValueError(msg)
 
