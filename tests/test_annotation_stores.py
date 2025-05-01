@@ -40,7 +40,7 @@ from tiatoolbox.enums import GeometryType
 if TYPE_CHECKING:  # pragma: no cover
     from numbers import Number
 
-    from tiatoolbox.typing import Geometry
+    from tiatoolbox.type_hints import Geometry
 
 
 sqlite3.enable_callback_tracebacks(True)  # noqa: FBT003
@@ -52,14 +52,6 @@ sqlite3.enable_callback_tracebacks(True)  # noqa: FBT003
 GRID_SIZE = (10, 10)
 FILLED_LEN = 2 * (GRID_SIZE[0] * GRID_SIZE[1])
 RNG = np.random.default_rng(0)  # Numpy Random Generator
-
-# ----------------------------------------------------------------------
-# Resets
-# ----------------------------------------------------------------------
-
-# Reset filters in logger.
-for filter_ in logger.filters:
-    logger.removeFilter(filter_)
 
 # ----------------------------------------------------------------------
 # Helper Functions
@@ -546,6 +538,9 @@ def test_sqlite_store_compile_options_missing_math(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     """Test that a warning is shown if the sqlite math module is missing."""
+    # Reset filters in logger.
+    for filter_ in logger.filters[:]:
+        logger.removeFilter(filter_)
     monkeypatch.setattr(
         SQLiteStore,
         "compile_options",
