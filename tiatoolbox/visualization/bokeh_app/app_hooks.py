@@ -5,7 +5,6 @@ import sys
 from contextlib import suppress
 
 import requests
-
 from bokeh.application.application import SessionContext
 
 
@@ -13,6 +12,7 @@ def on_session_destroyed(session_context: SessionContext) -> None:
     """Hook to be executed when a session is destroyed."""
     user = session_context.request.arguments["user"]
     host = os.environ.get("HOST2")
+    print(host)
     if host is None:
         host = "127.0.0.1"
         sys.exit()
