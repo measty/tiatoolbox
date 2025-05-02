@@ -22,6 +22,12 @@ import ollama
 import pandas as pd
 import requests
 import torch
+from matplotlib import colormaps
+from openai import OpenAI
+from PIL import Image
+from requests.adapters import HTTPAdapter, Retry
+from sklearn.preprocessing import MinMaxScaler
+
 from bokeh.events import ButtonClick, DoubleTap, MenuItemClick
 from bokeh.io import curdoc
 from bokeh.layouts import column, row
@@ -73,10 +79,6 @@ from bokeh.models.dom import HTML
 from bokeh.models.tiles import WMTSTileSource
 from bokeh.plotting import figure
 from bokeh.util import token
-from matplotlib import colormaps
-from openai import OpenAI
-from PIL import Image
-from requests.adapters import HTTPAdapter, Retry
 
 # GitHub actions seems unable to find TIAToolbox unless this is here
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
@@ -1337,6 +1339,25 @@ def range_checkbox_cb(attr: str, old: list, new: list) -> None:  # noqa: ARG001
         UI["range_slider"].value = (UI["vstate"].min_val, UI["vstate"].max_val)
 
 
+def range_checkbox_graph_cb(attr: str, old: list, new: list) -> None:  # noqa: ARG001
+    """Callback to toggle range slider endpoints behaviour.
+
+    Toggles if range slider endpoints are fixed or adaptively set to
+      the min/max of the data.
+
+    """
+    if len(new) == 1:
+        # its on, fix range to user specified values
+        UI["range_slider"].start = UI["range_min"].value
+        UI["range_slider"].end = UI["range_max"].value
+        UI["range_slider"].value = (UI["range_min"].value, UI["range_max"].value)
+    else:
+        # its off, set range to min/max of data
+        UI["range_slider"].start = UI["vstate"].min_val
+        UI["range_slider"].end = UI["vstate"].max_val
+        UI["range_slider"].value = (UI["vstate"].min_val, UI["vstate"].max_val)
+
+
 def range_min_cb(attr: str, old: float, new: float) -> None:  # noqa: ARG001
     """Callback to change the minimum of the range slider."""
     UI["range_slider"].start = new
@@ -1349,6 +1370,33 @@ def range_max_cb(attr: str, old: float, new: float) -> None:  # noqa: ARG001
     UI["range_slider"].end = new
     if UI["range_slider"].value[1] > new:
         UI["range_slider"].value = (UI["range_slider"].value[0], new)
+
+
+def scale_nodes_cb(attr: str) -> None:  # noqa: ARG001
+    """Callback to toggle node scaling on and off."""
+    if len(UI["node_source"].data["x_"]) == 0:
+        return
+    node_cm = colormaps[default_cm]
+    color_prop = UI["vstate"].node_color_prop
+    if UI["scale_nodes"].active == True:
+        vals = node_cm(
+            np.squeeze(
+                UI["vstate"].node_scaler.transform(
+                    np.array(
+                        [to_num(v) for v in UI["node_source"].data[color_prop]]
+                    ).reshape(-1, 1)
+                )
+            )
+        )
+    else:
+        vals = node_cm(
+            np.squeeze(
+                np.array(
+                    [to_num(v) for v in UI["node_source"].data[color_prop]]
+                ).reshape(-1, 1)
+            )
+        )
+    UI["node_source"].data["node_color_"] = [rgb2hex(v) for v in vals]
 
 
 def handle_graph_layer(attr: MenuItemClick) -> None:  # skipcq: PY-R1000
@@ -1635,13 +1683,30 @@ def type_cmap_cb(attr: str, old: list[str], new: list[str]) -> None:  # noqa: AR
         if new[0] == "graph_overlay":
             # Adjust the node color in source if prop exists
             if new[1] in UI["node_source"].data:
+                UI["vstate"].node_color_prop = new[1]
                 node_cm = colormaps[default_cm]
-                # UI["node_source"].data["node_color_"] = [
-                #     rgb2hex(node_cm((to_num(v) - minv) / (maxv - minv)))
-                # for v in UI["node_source"].data[new[1]]]
-                UI["node_source"].data["node_color_"] = [
-                    rgb2hex(node_cm(to_num(v))) for v in UI["node_source"].data[new[1]]
-                ]
+                UI["vstate"].node_scaler = MinMaxScaler().fit(
+                    np.array(UI["node_source"].data[new[1]]).reshape(-1, 1),
+                )
+                if UI["scale_nodes"].active == True:
+                    vals = node_cm(
+                        np.squeeze(
+                            UI["vstate"].node_scaler.transform(
+                                np.array(
+                                    [to_num(v) for v in UI["node_source"].data[new[1]]]
+                                ).reshape(-1, 1)
+                            )
+                        )
+                    )
+                else:
+                    vals = node_cm(
+                        np.squeeze(
+                            np.array(
+                                [to_num(v) for v in UI["node_source"].data[new[1]]]
+                            ).reshape(-1, 1)
+                        )
+                    )
+                UI["node_source"].data["node_color_"] = [rgb2hex(v) for v in vals]
             return
         cmap = get_mapper_for_prop(new[1])  # separate cmap select ?
         UI["s"].put(
@@ -2190,6 +2255,13 @@ def gather_ui_elements(  # noqa: PLR0915
         sizing_mode="stretch_width",
         name=f"range_slider{win_num}",
     )
+    scale_nodes_switch = Toggle(
+        label="Scale Nodes",
+        active=True,
+        width=90,
+        sizing_mode="stretch_width",
+        name=f"scale_nodes{win_num}",
+    )
 
     # Associate callback functions to the widgets
     slide_alpha.on_change("value", slide_alpha_cb)
@@ -2224,6 +2296,7 @@ def gather_ui_elements(  # noqa: PLR0915
     range_checkbox.on_change("active", range_checkbox_cb)
     range_min.on_change("value", range_min_cb)
     range_max.on_change("value", range_max_cb)
+    scale_nodes_switch.on_click(scale_nodes_cb)
 
     # Create some layouts
     type_column = column(children=layer_boxes, name=f"type_column{win_num}")
@@ -2248,7 +2321,7 @@ def gather_ui_elements(  # noqa: PLR0915
         sizing_mode="stretch_width",
     )
     range_row = row(
-        [range_checkbox, range_min, range_max],
+        [range_checkbox, range_min, range_max, scale_nodes_switch],
         sizing_mode="stretch_width",
         name=f"range_row{win_num}",
     )
@@ -2284,6 +2357,9 @@ def gather_ui_elements(  # noqa: PLR0915
             ],
         ),
     )
+    if len(get_from_config(["cohorts"], {})) < 2:
+        # if no cohorts, or only one, dont need cohort select
+        ui_elements_1.pop("cohort_select")
     if "ui_elements_1" in doc_config:
         # Only add the elements specified in config file
         ui_layout = column(
@@ -2299,9 +2375,6 @@ def gather_ui_elements(  # noqa: PLR0915
             list(ui_elements_1.values()),
             sizing_mode="stretch_width",
         )
-    if len(get_from_config(["cohorts"], {})) < 2:
-        # if no cohorts, or only one, dont need cohort select
-        ui_elements_1.pop("cohort_select")
 
     # Elements in the secondary controls tab
     ui_elements_2 = dict(
@@ -2351,6 +2424,7 @@ def gather_ui_elements(  # noqa: PLR0915
         "range_min": range_min,
         "range_max": range_max,
         "range_checkbox": range_checkbox,
+        "scale_nodes": scale_nodes_switch,
     }
 
     return ui_layout, extra_options, elements_dict

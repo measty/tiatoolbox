@@ -4,7 +4,7 @@ services:
 
   # Proxies requests to internal services
   reverse-proxy-demo:
-    image: nginx:1.23.0
+    image: nginx:1.26.0
     container_name: reverse-proxy-demo
     depends_on:
         - demo-app
