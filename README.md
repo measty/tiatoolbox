@@ -270,7 +270,7 @@ or
 
 ### License
 
-The source code TIA Toolbox (tiatoolbox) as hosted on GitHub is released under the [The 3-Clause BSD License].
+The source code TIAToolbox (tiatoolbox) as hosted on GitHub is released under the [BSD-3-Clause license](https://github.com/TissueImageAnalytics/tiatoolbox/blob/develop/LICENSE). The full text of the licence is included in [LICENSE](https://raw.githubusercontent.com/TissueImageAnalytics/tiatoolbox/develop/LICENSE).
 
 The full text of the licence is included in [LICENSE](https://raw.githubusercontent.com/TissueImageAnalytics/tiatoolbox/develop/LICENSE).
 
@@ -281,5 +281,3 @@ Auxiliary files, such as pre-trained model weights downloaded from the TIA Centr
 ### Dual License
 
 If you would like to use any of the source code or auxiliary files (e.g. pre-trained model weights) under a different license agreement please contact the Tissue Image Analytics (TIA) Centre at the University of Warwick (tia@dcs.warwick.ac.uk).
-
-[the 3-clause bsd license]: https://opensource.org/licenses/BSD-3-Clause
