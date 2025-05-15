@@ -150,12 +150,7 @@
     {% endif %}
   </div>
 </div>
-<div class="description">
-  <iframe
-    src="bokeh_app/static/{{ demo_name }}/description.html"
-    style="border:none; width:100%; height:100%;"
-    onerror="this.style.display='none';"
-  ></iframe>
+<div class="description" id="description-container">
   <!-- Progress bar container -->
   <div style="width: 100%; background-color: #ddd;">
     <!-- Progress bar -->
@@ -304,6 +299,27 @@
       xhr.open('POST', 'https://tiademos.dcs.warwick.ac.uk/tileserver/upload', true);
       xhr.send(formData);
   }
+
+  const demoName = "{{ demo_name }}";
+  const iframeSrc = `bokeh_app/static/${demoName}/description.html`;
+
+  fetch(iframeSrc, { method: 'HEAD' })
+    .then(response => {
+      if (response.ok) {
+        const iframe = document.createElement('iframe');
+        iframe.src = iframeSrc;
+        iframe.style.border = 'none';
+        iframe.style.width = '100%';
+        iframe.style.height = '100%';
+        document.getElementById('description-container').appendChild(iframe);
+      } else {
+        // Optionally handle missing file (e.g., insert a fallback message)
+        console.warn('Description HTML file not found.');
+      }
+    })
+    .catch(error => {
+      console.error('Error checking description HTML file:', error);
+    });
 
 </script>
 
