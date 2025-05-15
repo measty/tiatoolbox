@@ -22,10 +22,9 @@ import pandas as pd
 import requests
 import torch
 from matplotlib import colormaps
-from openai import InternalServerError, OpenAI
+from openai import OpenAI
 from PIL import Image
 from requests.adapters import HTTPAdapter, Retry
-from sklearn.preprocessing import MinMaxScaler
 
 from bokeh.events import ButtonClick, DoubleTap, MenuItemClick
 from bokeh.io import curdoc
@@ -86,9 +85,16 @@ from tiatoolbox.models.engine.nucleus_instance_segmentor import (
     NucleusInstanceSegmentor,
 )
 from tiatoolbox.tools.pyramid import ZoomifyGenerator
+from tiatoolbox.utils.misc import select_device
 from tiatoolbox.utils.visualization import random_colors
 from tiatoolbox.visualization.ui_utils import get_level_by_extent
 from tiatoolbox.wsicore.wsireader import WSIReader
+
+# try to import ollama if its available
+try:
+    import ollama
+except ImportError:
+    print("Ollama not available, using gpt-4o instead.")
 
 if TYPE_CHECKING:  # pragma: no cover
     from bokeh.document import Document
@@ -113,18 +119,9 @@ default_cm = "viridis"  # any valid matplotlib colormap string
 class GPTInterface:
     """Class to handle GPT requests."""
 
-    def __init__(self: GPTInterface) -> None:
+    def __init__(self: GPTInterface, model_name: str = "gpt-4o") -> None:
         """Initialise the class."""
-        # client for openai reqs
-        self.api_key = os.environ.get("OPENAI_API_KEY")
-        if self.api_key is None:
-            logger.warning(
-                "OPENAI_API_KEY not set, GPT-Vision will not work. Add as a system environment variable on your machine, or in .env file.",
-            )
-            self.client = None
-        else:
-            # we have an api key, so set up the client
-            self.client = OpenAI(api_key=self.api_key)
+        self.set_client(model_name)
 
         # will store short history of prompts and responses
         self.gpt_images = []
@@ -138,6 +135,31 @@ class GPTInterface:
         self.prompt_no_ann = "Provide a concise assessment of this image for the student. Comment on noteworthy histological features and structures, and any abnormalities present."
         # promt if a region with a user-drawn annotation is sent
         self.prompt_ann = "Provide a concise assessment of this image for the student. Comment on noteworthy histological features and structures (paying particular attention to the regions indicated by green annotations), and any abnormalities present."
+
+    def set_client(self: GPTInterface, model_name) -> None:
+        # client for openai reqs
+        self.model_name = model_name
+        if self.model_name == "gpt-4o":
+            self.api_key = os.environ.get("OPENAI_API_KEY")
+            if self.api_key is None:
+                logger.warning(
+                    "OPENAI_API_KEY not set, GPT-Vision will not work. Add as a system environment variable on your machine, or in .env file.",
+                )
+                self.client = None
+            else:
+                # we have an api key, so set up the client
+                self.client = OpenAI(api_key=self.api_key)
+        else:
+            avail_models = ollama.list()
+            print(f"ollama models available: {avail_models}")
+            if self.model_name not in avail_models:
+                print(f"attempting to pull model {self.model_name}")
+                try:
+                    ollama.pull(self.model_name)
+                except Exception as e:
+                    print(f"Error: {e} when pulling the model.")
+            self.api_key = "local"
+            self.client = None
 
     def update_api_key(self: GPTInterface, api_key: str) -> None:
         """Update the api key."""
@@ -154,53 +176,73 @@ class GPTInterface:
         im_size = self.gpt_images[-1].size
         base64_image = encode_image(self.gpt_images[-1])
 
-        print(f"sending image size: {im_size} to gpt-vision.")
+        # Prepare the messages to send
+        if self.model_name == "gpt-4o":
+            messages = [
+                {
+                    "role": "system",
+                    "content": self.sys_prompt,
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        prompt,
+                        {"image": base64_image},
+                    ],
+                },
+            ]
+        else:
+            messages = [
+                {
+                    "role": "user",
+                    "content": prompt,
+                    "images": [base64_image],
+                }
+            ]
+
+        print(f"sending image size: {im_size} to {self.model_name}")
         # send a message containing the image
-        prompt_input.value = "Sent to GPT-Vision. Waiting for response - this typically takes < 10 seconds, but may take longer if openAI server is busy. It may occasionally fail."
+        prompt_input.value = "Sent to model. Waiting for response - this typically takes < 10 seconds, but may take longer if server is busy. It may occasionally fail."
+
+        # Send the messages to the model
         tries = 0
-        text = "Failed to get response from GPT-Vision."
-        completion = None
+        response_text = "Failed to get response from the model."
+        responses = None
         while tries < 3:
             try:
-                completion = self.client.chat.completions.create(
-                    model="gpt-4o",
-                    messages=[
-                        {
-                            "role": "system",
-                            "content": self.sys_prompt,
-                        },
-                        {
-                            "role": "user",
-                            "content": [
-                                prompt,
-                                {"image": base64_image},
-                            ],
-                        },
-                    ],
-                    max_tokens=500,
-                )
+                if self.model_name == "gpt-4o":
+                    responses = self.client.chat.completions.create(
+                        model="gpt-4o",
+                        messages=messages,
+                        max_tokens=500,
+                    )
+                    # extract the text from the response
+                    if responses is not None:
+                        response_text = responses.choices[0].message.content
+                else:
+                    responses = ollama.chat(model=self.model_name, messages=messages)
+                    # Collect the response text
+                    response_text = responses["message"]["content"]
                 break
-            except InternalServerError as e:
+            except Exception as e:
                 print(
-                    f"error: {e} when sending to gpt-vision. trying again (try {tries} / 3)",
+                    f"Error: {e} when sending to the model. Trying again (try {tries + 1} / 3)"
                 )
                 tries += 1
                 time.sleep(1)
+        else:
+            response_text = "Failed to get response after 3 tries."
 
         print("response received.")
-        # extract the text from the response
-        if completion is not None:
-            print(completion)
-            text = completion.choices[0].message.content
 
         # add the prompt and response to the history
         if len(self.gpt_prompts) >= self.max_history:
             self.gpt_prompts.pop(0)
             self.gpt_responses.pop(0)
         self.gpt_prompts.append(prompt)
-        self.gpt_responses.append(text)
+        self.gpt_responses.append(response_text)
 
-        return text
+        return response_text
 
     def save_history(self: GPTInterface, path: Path, last_n=1) -> None:
         """Save the last n prompts, responses and images in the history
@@ -269,10 +311,34 @@ class UIWrapper:
         return win_dicts[self.active][key]
 
 
+class NodeScaler:
+    """Class to scale node scores in range (min, max) to (0, 1)."""
+
+    def __init__(self: NodeScaler, range=(0.0, 1.0)) -> None:
+        """Initialize the class."""
+        self.min_val = range[0]
+        self.max_val = range[1]
+
+    def transform(self: NodeScaler, x: float) -> float:
+        """Scale the value."""
+        return (x - self.min_val) / (self.max_val - self.min_val)
+
+    def set_minmax(self: NodeScaler, range) -> None:
+        """Set the min and max values."""
+        self.min_val = range[0]
+        self.max_val = range[1]
+
+    def fit(self: NodeScaler, x: np.ndarray) -> None:
+        """Fit the scaler to the data."""
+        self.min_val = np.min(x)
+        self.max_val = np.max(x)
+        return self
+
+
 def encode_image(tile_image: Image.Image) -> str:
     """Encode an image as a base64 string."""
     image_io = io.BytesIO()
-    tile_image.save(image_io, format="webp")
+    tile_image.save(image_io, format="jpeg")
     image_io.seek(0)
     return base64.b64encode(image_io.read()).decode("utf-8")
 
@@ -426,7 +492,7 @@ def create_channel_color_ui():
 
     instructions = Div(
         text="""
-        <p>Multi-channel slides:</p>
+        <p>Instructions:</p>
         <ul>
             <li>Select active channels using the checkboxes</li>
             <li>Select a channel color and change using the picker below the table</li>
@@ -461,6 +527,36 @@ def populate_table() -> None:
             "dummy": list(colors.keys()),
         }
         tables[0].source.selected.indices = active_channels
+
+
+def update_node_colors(new) -> None:
+    if new[1] in UI["node_source"].data:
+        node_data = np.array(UI["node_source"].data[new[1]]).reshape(-1, 1)
+        UI["vstate"].min_val_gr = np.min(node_data)
+        UI["vstate"].max_val_gr = np.max(node_data)
+        UI["vstate"].node_color_prop = new[1]
+        node_cm = colormaps[default_cm]
+        if len(UI["range_checkbox_gr"].active) == 1:
+            UI["vstate"].node_scaler = NodeScaler(UI["range_slider_gr"].value)
+            vals = node_cm(
+                np.squeeze(
+                    UI["vstate"].node_scaler.transform(
+                        np.array(
+                            [to_num(v) for v in UI["node_source"].data[new[1]]]
+                        ).reshape(-1, 1)
+                    )
+                )
+            )
+            UI["node_source"].data["node_color_"] = [rgb2hex(v) for v in vals]
+        else:
+            new_value = (UI["vstate"].min_val_gr, UI["vstate"].max_val_gr)
+            if UI["range_slider_gr"].value != new_value:
+                UI["range_slider_gr"].value = new_value
+            else:
+                # trigger cb directly
+                range_slider_graph_cb(None, None, new_value)
+            UI["range_slider_gr"].end = UI["vstate"].max_val_gr
+            UI["range_slider_gr"].start = UI["vstate"].min_val_gr
 
 
 def get_view_bounds(
@@ -637,11 +733,8 @@ def get_mapper_for_prop(
     prop_vals = json.loads(resp.text)
     # If auto, guess what cmap should be
     if (
-        (len(prop_vals) > MAX_CAT or len(prop_vals) == 0)
-        and mapper_type == "auto"
-        or mapper_type == "continuous"
-    ):
-        # use a continuous mapper
+        (len(prop_vals) > MAX_CAT or len(prop_vals) == 0) and mapper_type == "auto"
+    ) or mapper_type == "continuous":
         cmap = (
             default_cm if UI["cmap_select"].value == "dict" else UI["cmap_select"].value
         )
@@ -924,7 +1017,7 @@ def change_tiles(layer_name: str = "overlay") -> None:
         return
 
     ts = make_ts(
-        f"https://{host}/tileserver/layer/{layer_name}/{UI['user']}/"
+        f"//{host}:{port}/tileserver/layer/{layer_name}/{UI['user']}/"
         f"zoomify/TileGroup{grp}"
         r"/{z}-{x}-{y}"
         f"@{UI['vstate'].res}x.jpg",
@@ -945,7 +1038,7 @@ def change_tiles(layer_name: str = "overlay") -> None:
                 continue
             grp = tg.get_grp()
             ts = make_ts(
-                f"https://{host}/tileserver/layer/{layer_key}/{UI['user']}/"
+                f"//{host}:{port}/tileserver/layer/{layer_key}/{UI['user']}/"
                 f"zoomify/TileGroup{grp}"
                 r"/{z}-{x}-{y}"
                 f"@{UI['vstate'].res}x.jpg",
@@ -993,27 +1086,29 @@ class ViewerState:
         self.max_val = 1
         self.min_val = 0
         self.is_categorical = True
+        self.node_color_prop = "score"
 
     def __setattr__(
         self: ViewerState,
-        __name: str,
-        __value: Any,  # noqa: ANN401
+        name: str,
+        value: Any,  # noqa: ANN401
+        /,
     ) -> None:
         """Set an attribute of the viewer state."""
-        if __name == "types":
-            self.__dict__["mapper"] = make_color_dict(__value)
+        if name == "types":
+            self.__dict__["mapper"] = make_color_dict(value)
             self.__dict__["colors"] = list(self.mapper.values())
             if self.cprop == "type":
                 update_mapper()
             # We will standardise the types to strings, keep dict of originals
-            self.__dict__["orig_types"] = {str(x): x for x in __value}
-            __value = [str(x) for x in __value]
+            self.__dict__["orig_types"] = {str(x): x for x in value}
+            value = [str(x) for x in value]
 
-        if __name == "wsi":
-            z = ZoomifyGenerator(__value, tile_size=256)
+        if name == "wsi":
+            z = ZoomifyGenerator(value, tile_size=256)
             self.__dict__["num_zoom_levels"] = z.level_count
 
-        self.__dict__[__name] = __value
+        self.__dict__[name] = value
 
 
 # endregion
@@ -1065,8 +1160,13 @@ def populate_layer_list(slide_name: str, overlay_path: Path) -> None:
         "*.json",
         "*.tiff",
         "*.pkl",
+        "*.mrxs",
+        "*.ndpi",
+        "*.svs",
+        "*.tif",
+        "*.npy",
+        "*.mha",
     ]:
-        file_list.extend(list(overlay_path.glob(str(Path("*") / ext))))
         file_list.extend(list(overlay_path.glob(ext)))
     file_list = [(str(p), str(p)) for p in sorted(file_list) if slide_name in str(p)]
     UI["layer_drop"].menu = file_list
@@ -1086,7 +1186,7 @@ def populate_slide_list(slide_folder: Path, search_txt: str | None = None) -> No
         "*.tif",
         "*.qptiff",
     ]:
-        file_list.extend(list(Path(slide_folder).glob(str(Path("*") / ext))))
+        # file_list.extend(list(Path(slide_folder).glob(str(Path("*") / ext))))
         file_list.extend(list(Path(slide_folder).glob(ext)))
     if search_txt is None:
         file_list = [
@@ -1154,7 +1254,7 @@ def overlay_alpha_cb(attr: str, old: float, new: float) -> None:  # noqa: ARG001
 
 def pt_size_cb(attr: str, old: float, new: float) -> None:  # noqa: ARG001
     """Callback to change the size of the points."""
-    UI["vstate"].graph_node.radius = new
+    UI["vstate"].graph_node.radius = 2 * new
 
 
 def edge_size_cb(attr: str, old: float, new: float) -> None:  # noqa: ARG001
@@ -1239,8 +1339,8 @@ def slide_select_cb(attr: str, old: str, new: str) -> None:  # noqa: ARG001
         "rect": 1,
         "pts": 2,
         "line": 3,
-        "nodes": 4,
-        "edges": 5,
+        "edges": 4,
+        "nodes": 5,
     }
     UI["vstate"].slide_path = slide_path
     UI["color_column"].children = []
@@ -1298,25 +1398,6 @@ def range_checkbox_cb(attr: str, old: list, new: list) -> None:  # noqa: ARG001
         UI["range_slider"].value = (UI["vstate"].min_val, UI["vstate"].max_val)
 
 
-def range_checkbox_graph_cb(attr: str, old: list, new: list) -> None:  # noqa: ARG001
-    """Callback to toggle range slider endpoints behaviour.
-
-    Toggles if range slider endpoints are fixed or adaptively set to
-      the min/max of the data.
-
-    """
-    if len(new) == 1:
-        # its on, fix range to user specified values
-        UI["range_slider"].start = UI["range_min"].value
-        UI["range_slider"].end = UI["range_max"].value
-        UI["range_slider"].value = (UI["range_min"].value, UI["range_max"].value)
-    else:
-        # its off, set range to min/max of data
-        UI["range_slider"].start = UI["vstate"].min_val
-        UI["range_slider"].end = UI["vstate"].max_val
-        UI["range_slider"].value = (UI["vstate"].min_val, UI["vstate"].max_val)
-
-
 def range_min_cb(attr: str, old: float, new: float) -> None:  # noqa: ARG001
     """Callback to change the minimum of the range slider."""
     UI["range_slider"].start = new
@@ -1331,31 +1412,59 @@ def range_max_cb(attr: str, old: float, new: float) -> None:  # noqa: ARG001
         UI["range_slider"].value = (UI["range_slider"].value[0], new)
 
 
-def scale_nodes_cb(attr: str) -> None:  # noqa: ARG001
-    """Callback to toggle node scaling on and off."""
+def range_slider_graph_cb(attr: str, old: str, new: str) -> None:  # noqa: ARG001
+    """Callback to change the range of the color mapper."""
+    UI["vstate"].node_scaler.set_minmax(new)
     if len(UI["node_source"].data["x_"]) == 0:
         return
     node_cm = colormaps[default_cm]
     color_prop = UI["vstate"].node_color_prop
-    if UI["scale_nodes"].active == True:
-        vals = node_cm(
-            np.squeeze(
-                UI["vstate"].node_scaler.transform(
-                    np.array(
-                        [to_num(v) for v in UI["node_source"].data[color_prop]]
-                    ).reshape(-1, 1)
-                )
-            )
-        )
-    else:
-        vals = node_cm(
-            np.squeeze(
+    vals = node_cm(
+        np.squeeze(
+            UI["vstate"].node_scaler.transform(
                 np.array(
                     [to_num(v) for v in UI["node_source"].data[color_prop]]
                 ).reshape(-1, 1)
             )
         )
+    )
     UI["node_source"].data["node_color_"] = [rgb2hex(v) for v in vals]
+
+
+def range_checkbox_graph_cb(attr: str, old: list, new: list) -> None:  # noqa: ARG001
+    """Callback to toggle range slider endpoints behaviour.
+
+    Toggles if range slider endpoints are fixed or adaptively set to
+      the min/max of the data.
+
+    """
+    if len(new) == 1:
+        # its on, fix range to user specified values
+        UI["range_slider_gr"].start = UI["range_min_gr"].value
+        UI["range_slider_gr"].end = UI["range_max_gr"].value
+        UI["range_slider_gr"].value = (
+            UI["range_min_gr"].value,
+            UI["range_max_gr"].value,
+        )
+    else:
+        # its off, set range to min/max of data
+        UI["range_slider_gr"].start = UI["vstate"].min_val_gr
+        UI["range_slider_gr"].end = UI["vstate"].max_val_gr
+        UI["range_slider_gr"].value = (UI["vstate"].min_val_gr, UI["vstate"].max_val_gr)
+
+
+def range_min_graph_cb(attr: str, old: float, new: float) -> None:  # noqa: ARG001
+    """Callback to change the minimum of the range slider."""
+    UI["range_slider_gr"].start = new
+    if UI["range_slider_gr"].value[0] < new:
+        UI["range_slider_gr"].value = (new, UI["range_slider_gr"].value[1])
+
+
+def range_max_graph_cb(attr: str, old: float, new: float) -> None:  # noqa: ARG001
+    """Callback to change the maximum of the range slider."""
+    UI["range_slider_gr"].end = new
+    if UI["range_slider_gr"].value[1] > new:
+        UI["range_slider_gr"].value = (UI["range_slider_gr"].value[0], new)
 
 
 def handle_graph_layer(attr: MenuItemClick) -> None:  # skipcq: PY-R1000
@@ -1372,19 +1481,14 @@ def handle_graph_layer(attr: MenuItemClick) -> None:  # skipcq: PY-R1000
             graph_dict[k] = np.array(v)
     node_cm = colormaps[default_cm]
     num_nodes = graph_dict["coordinates"].shape[0]
-    if "score" in graph_dict:
-        UI["node_source"].data = {
-            "x_": graph_dict["coordinates"][:, 0],
-            "y_": -graph_dict["coordinates"][:, 1],
-            "node_color_": [rgb2hex(node_cm(to_num(v))) for v in graph_dict["score"]],
-        }
-    else:
-        # Default to green
-        UI["node_source"].data = {
-            "x_": graph_dict["coordinates"][:, 0],
-            "y_": -graph_dict["coordinates"][:, 1],
-            "node_color_": [rgb2hex((0, 1, 0))] * num_nodes,
-        }
+
+    # Default to green
+    UI["node_source"].data = {
+        "x_": graph_dict["coordinates"][:, 0],
+        "y_": -graph_dict["coordinates"][:, 1],
+        "node_color_": [rgb2hex((0, 1, 0))] * num_nodes,
+    }
+
     UI["edge_source"].data = {
         "x0_": [
             graph_dict["coordinates"][i, 0] for i in graph_dict["edge_index"][0, :]
@@ -1441,6 +1545,9 @@ def handle_graph_layer(attr: MenuItemClick) -> None:  # skipcq: PY-R1000
         )
         UI["hover"].tooltips = tooltips
 
+    # update node colors if needed
+    update_node_colors(["", UI["vstate"].node_color_prop])
+
 
 def update_ui_on_new_annotations(ann_types: list[str]) -> None:
     """Update the UI when new annotations are added."""
@@ -1496,7 +1603,8 @@ def layer_drop_cb(attr: MenuItemClick) -> None:
     if Path(attr.item).suffix in [".db", ".dat", ".geojson"]:
         update_ui_on_new_annotations(resp)
     else:
-        add_layer(resp)
+        if resp != "slide":
+            add_layer(resp)
         change_tiles(resp)
 
 
@@ -1640,31 +1748,7 @@ def type_cmap_cb(attr: str, old: list[str], new: list[str]) -> None:  # noqa: AR
             return
         if new[0] == "graph_overlay":
             # Adjust the node color in source if prop exists
-            if new[1] in UI["node_source"].data:
-                UI["vstate"].node_color_prop = new[1]
-                node_cm = colormaps[default_cm]
-                UI["vstate"].node_scaler = MinMaxScaler().fit(
-                    np.array(UI["node_source"].data[new[1]]).reshape(-1, 1),
-                )
-                if UI["scale_nodes"].active == True:
-                    vals = node_cm(
-                        np.squeeze(
-                            UI["vstate"].node_scaler.transform(
-                                np.array(
-                                    [to_num(v) for v in UI["node_source"].data[new[1]]]
-                                ).reshape(-1, 1)
-                            )
-                        )
-                    )
-                else:
-                    vals = node_cm(
-                        np.squeeze(
-                            np.array(
-                                [to_num(v) for v in UI["node_source"].data[new[1]]]
-                            ).reshape(-1, 1)
-                        )
-                    )
-                UI["node_source"].data["node_color_"] = [rgb2hex(v) for v in vals]
+            update_node_colors(new)
             return
         cmap = get_mapper_for_prop(new[1])  # separate cmap select ?
         UI["s"].put(
@@ -1798,10 +1882,8 @@ def gpt_inference() -> None:
             (0, 255, 0),
             3,
         )
-    # import pdb; pdb.set_trace()
     # convert image to base64
     img_array = np.array(Image.fromarray(region).convert("RGBA"), dtype=np.uint8)
-    # import pdb; pdb.set_trace()
     img_array = img_array.view(dtype=np.uint32).reshape(img_array.shape[:-1])
     img_array = np.flipud(
         img_array,
@@ -1834,7 +1916,7 @@ def segment_on_box() -> None:
     # Make a mask defining the box
     thumb = UI["vstate"].wsi.slide_thumbnail()
     conv_mpp = UI["vstate"].dims[0] / thumb.shape[1]
-    msg = f'box tl: {UI["box_source"].data["x"][0]}, {UI["box_source"].data["y"][0]}'
+    msg = f"box tl: {UI['box_source'].data['x'][0]}, {UI['box_source'].data['y'][0]}"
     logger.info(msg)
     x = round(
         (UI["box_source"].data["x"][0] - 0.5 * UI["box_source"].data["width"][0])
@@ -1867,7 +1949,7 @@ def segment_on_box() -> None:
         [tmp_mask_dir / "mask.png"],
         save_dir=tmp_save_dir / "hover_out",
         mode="wsi",
-        on_gpu=torch.cuda.is_available(),
+        device=select_device(on_gpu=torch.cuda.is_available()),
         crash_on_exception=True,
     )
 
@@ -1962,9 +2044,9 @@ def gather_ui_elements(  # noqa: PLR0915
     pt_size_spinner = Spinner(
         title="Pt. Size:",
         low=0,
-        high=40,
-        step=2,
-        value=4,
+        high=20,
+        step=1,
+        value=2,
         width=60,
         height=50,
         sizing_mode="stretch_width",
@@ -2215,12 +2297,36 @@ def gather_ui_elements(  # noqa: PLR0915
         sizing_mode="stretch_width",
         name=f"range_slider{win_num}",
     )
-    scale_nodes_switch = Toggle(
-        label="Scale Nodes",
-        active=True,
-        width=90,
+    range_checkbox_gr = CheckboxButtonGroup(
+        labels=["Fixed Range:"],
+        active=[0],
+        max_width=100,
         sizing_mode="stretch_width",
-        name=f"scale_nodes{win_num}",
+        name=f"range_checkbox_gr{win_num}",
+    )
+    range_min_gr = NumericInput(
+        value=0,
+        max_width=60,
+        sizing_mode="stretch_width",
+        name=f"range_min_gr{win_num}",
+        mode="float",
+    )
+    range_max_gr = NumericInput(
+        value=1,
+        max_width=60,
+        sizing_mode="stretch_width",
+        name=f"range_max_gr{win_num}",
+        mode="float",
+    )
+    range_slider_gr = RangeSlider(
+        start=0,
+        end=1,
+        value=(0, 1),
+        step=0.05,
+        title="prop range",
+        width=200,
+        sizing_mode="stretch_width",
+        name=f"range_slider_gr{win_num}",
     )
 
     # Associate callback functions to the widgets
@@ -2256,7 +2362,10 @@ def gather_ui_elements(  # noqa: PLR0915
     range_checkbox.on_change("active", range_checkbox_cb)
     range_min.on_change("value", range_min_cb)
     range_max.on_change("value", range_max_cb)
-    scale_nodes_switch.on_click(scale_nodes_cb)
+    range_slider_gr.on_change("value", range_slider_graph_cb)
+    range_checkbox_gr.on_change("active", range_checkbox_graph_cb)
+    range_min_gr.on_change("value", range_min_graph_cb)
+    range_max_gr.on_change("value", range_max_graph_cb)
 
     # Create some layouts
     type_column = column(children=layer_boxes, name=f"type_column{win_num}")
@@ -2281,9 +2390,34 @@ def gather_ui_elements(  # noqa: PLR0915
         sizing_mode="stretch_width",
     )
     range_row = row(
-        [range_checkbox, range_min, range_max, scale_nodes_switch],
+        [range_checkbox, range_min, range_max],
         sizing_mode="stretch_width",
         name=f"range_row{win_num}",
+    )
+    range_row_gr = row(
+        [range_checkbox_gr, range_min_gr, range_max_gr],
+        sizing_mode="stretch_width",
+        name=f"range_row_gr{win_num}",
+    )
+    # put range_row and range_slider in one tab (named Annotations), and range_row_gr and
+    # range_slider_gr in another tab (named Graph)
+    scale_tabs = Tabs(
+        tabs=[
+            TabPanel(
+                title="Graph",
+                child=column(
+                    [range_row_gr, range_slider_gr],
+                    sizing_mode="stretch_width",
+                ),
+            ),
+            TabPanel(
+                title="Annotations",
+                child=column(
+                    [range_row, range_slider],
+                    sizing_mode="stretch_width",
+                ),
+            ),
+        ],
     )
 
     # Make element dictionaries
@@ -2344,8 +2478,7 @@ def gather_ui_elements(  # noqa: PLR0915
                 "pt_size_spinner",
                 "edge_size_spinner",
                 "res_switch",
-                "range_row",
-                "range_slider",
+                "scale_tabs",
                 "channel_select",
             ],
             [
@@ -2353,8 +2486,7 @@ def gather_ui_elements(  # noqa: PLR0915
                 pt_size_spinner,
                 edge_size_spinner,
                 res_switch,
-                range_row,
-                range_slider,
+                scale_tabs,
                 create_channel_color_ui(),
             ],
         ),
@@ -2384,7 +2516,11 @@ def gather_ui_elements(  # noqa: PLR0915
         "range_min": range_min,
         "range_max": range_max,
         "range_checkbox": range_checkbox,
-        "scale_nodes": scale_nodes_switch,
+        "range_slider": range_slider,
+        "range_min_gr": range_min_gr,
+        "range_max_gr": range_max_gr,
+        "range_checkbox_gr": range_checkbox_gr,
+        "range_slider_gr": range_slider_gr,
     }
 
     return ui_layout, extra_options, elements_dict
@@ -2471,7 +2607,7 @@ def make_window(vstate: ViewerState) -> dict:  # noqa: PLR0915
     # Set up the main slide window
     vstate.init_z = init_z
     ts1 = make_ts(
-        f"https://{host}/tileserver/layer/slide/{user}/zoomify/TileGroup1"
+        f"//{host}:{port}/tileserver/layer/slide/{user}/zoomify/TileGroup1"
         r"/{z}-{x}-{y}"
         f"@{vstate.res}x.jpg",
         vstate.num_zoom_levels,
@@ -2492,7 +2628,7 @@ def make_window(vstate: ViewerState) -> dict:  # noqa: PLR0915
         line_width=3,
     )
     c = p.circle(
-        "x", "y", source=pt_source, color="red", radius=4, radius_units="screen"
+        "x", "y", source=pt_source, color="red", radius=3, radius_units="screen"
     )
     ml = p.multi_line("xs", "ys", source=ml_source, color="green", line_width=3)
     p.add_tools(BoxEditTool(renderers=[r], num_objects=1))
@@ -2535,17 +2671,17 @@ def make_window(vstate: ViewerState) -> dict:  # noqa: PLR0915
         radius_units="screen",
     )
     vstate.graph_edge = Segment(x0="x0_", y0="y0_", x1="x1_", y1="y1_")
+    p.add_glyph(edge_source, vstate.graph_edge)
+    if not get_from_config(["opts", "edges_on"], default=False):
+        p.renderers[-1].visible = False
     p.add_glyph(node_source, vstate.graph_node)
     node_source.selected.on_change("indices", node_select_cb)
     if not get_from_config(["opts", "nodes_on"], default=True):
         p.renderers[-1].glyph.fill_alpha = 0
         p.renderers[-1].glyph.line_alpha = 0
-    p.add_glyph(edge_source, vstate.graph_edge)
-    if not get_from_config(["opts", "edges_on"], default=False):
-        p.renderers[-1].visible = False
-    vstate.layer_dict["nodes"] = len(p.renderers) - 2
-    vstate.layer_dict["edges"] = len(p.renderers) - 1
-    hover = HoverTool(renderers=[p.renderers[-2]])
+    vstate.layer_dict["nodes"] = len(p.renderers) - 1
+    vstate.layer_dict["edges"] = len(p.renderers) - 2
+    hover = HoverTool(renderers=[p.renderers[-1]])
     p.add_tools(hover)
 
     color_bar = ColorBar(
@@ -2669,6 +2805,11 @@ def gpt_save_cb(event: ButtonClick) -> None:
     gpt_interface.save_history(get_from_config(["overlay_folder"]) / "gpt_prompts", 1)
 
 
+def model_choice_cb(attr: str, old: str, new: str) -> None:
+    """Callback to change the model used by gpt-vision."""
+    gpt_interface.set_client(new)
+
+
 def api_input_cb(attr: str, old: str, new: str) -> None:
     """Callback to update api key when input changes."""
     gpt_interface.update_api_key(new)
@@ -2693,6 +2834,10 @@ api_key_input = PasswordInput(
 prompt_input = TextAreaInput(value=".", rows=7, width=350, height=250)
 submit_button = Button(label="Submit", button_type="success")
 gpt_save_button = Button(label="Save", button_type="success")
+model_choice = Select(
+    title="Choose Model",
+    options=["llama3.2-vision:11b", "gpt-4o"],
+)
 close_button = Button(label="Close", button_type="success")
 js_popup_code = """
     var popupContent = document.getElementById('gpt-popup');
@@ -2702,27 +2847,18 @@ js_popup_code = """
 close_button.js_on_event(ButtonClick, CustomJS(code=js_popup_code))
 submit_button.on_click(submit_cb)
 gpt_save_button.on_click(gpt_save_cb)
+model_choice.on_change("value", model_choice_cb)
 api_key_input.on_change("value", api_input_cb)
-if gpt_interface.api_key is None:
-    # allow input for api key
-    dialog_content = Column(
-        children=[
-            api_key_input,
-            im_fig,
-            prompt_input,
-            Row(children=[submit_button, gpt_save_button, close_button]),
-        ],
-        name="dialog",
-    )
-else:
-    dialog_content = Column(
-        children=[
-            im_fig,
-            prompt_input,
-            Row(children=[submit_button, gpt_save_button, close_button]),
-        ],
-        name="dialog",
-    )
+
+dialog_content = Column(
+    children=[
+        api_key_input,
+        im_fig,
+        prompt_input,
+        Row(children=[model_choice, submit_button, gpt_save_button, close_button]),
+    ],
+    name="dialog",
+)
 # dialog = Dialog(visible=True, closable=True, content=im_fig, name="dialog", draggable=True)
 
 # some setup
@@ -2930,9 +3066,9 @@ class DocConfig:
             "*.qptiff",
         ]:
             slide_list.extend(list(doc_config["slide_folder"].glob(ext)))
-            slide_list.extend(
-                list(doc_config["slide_folder"].glob(str(Path("*") / ext))),
-            )
+            # slide_list.extend(
+            #    list(doc_config["slide_folder"].glob(str(Path("*") / ext))),
+            # )
         first_slide_path = slide_list[0]
         if "first_slide" in self.config:
             first_slide_path = self.config["slide_folder"] / self.config["first_slide"]
