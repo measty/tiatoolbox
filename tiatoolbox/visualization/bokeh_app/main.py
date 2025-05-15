@@ -538,20 +538,25 @@ def update_node_colors(new) -> None:
         node_cm = colormaps[default_cm]
         if len(UI["range_checkbox_gr"].active) == 1:
             UI["vstate"].node_scaler = NodeScaler(UI["range_slider_gr"].value)
-        else:
-            UI["vstate"].node_scaler = NodeScaler(
-                (UI["vstate"].min_val_gr, UI["vstate"].max_val_gr)
-            )
-        vals = node_cm(
-            np.squeeze(
-                UI["vstate"].node_scaler.transform(
-                    np.array(
-                        [to_num(v) for v in UI["node_source"].data[new[1]]]
-                    ).reshape(-1, 1)
+            vals = node_cm(
+                np.squeeze(
+                    UI["vstate"].node_scaler.transform(
+                        np.array(
+                            [to_num(v) for v in UI["node_source"].data[new[1]]]
+                        ).reshape(-1, 1)
+                    )
                 )
             )
-        )
-        UI["node_source"].data["node_color_"] = [rgb2hex(v) for v in vals]
+            UI["node_source"].data["node_color_"] = [rgb2hex(v) for v in vals]
+        else:
+            new_value = (UI["vstate"].min_val_gr, UI["vstate"].max_val_gr)
+            if UI["range_slider_gr"].value != new_value:
+                UI["range_slider_gr"].value = new_value
+            else:
+                # trigger cb directly
+                range_slider_graph_cb(None, None, new_value)
+            UI["range_slider_gr"].end = UI["vstate"].max_val_gr
+            UI["range_slider_gr"].start = UI["vstate"].min_val_gr
 
 
 def get_view_bounds(
@@ -1409,15 +1414,6 @@ def range_max_cb(attr: str, old: float, new: float) -> None:  # noqa: ARG001
 
 def range_slider_graph_cb(attr: str, old: str, new: str) -> None:  # noqa: ARG001
     """Callback to change the range of the color mapper."""
-    # if UI["vstate"].cprop != "type" and UI["cmap_select"].value != "dict":
-    #    UI["s"].put(
-    #        f"http://{host2}:5000/tileserver/prop_range",
-    #        data={"range": json.dumps(new)},
-    #    )
-    #    UI["vstate"].update_state = 1
-    #    UI["vstate"].to_update.update(["overlay"])
-    # UI["color_bar"].color_mapper.low = new[0]
-    # UI["color_bar"].color_mapper.high = new[1]
     UI["vstate"].node_scaler.set_minmax(new)
     if len(UI["node_source"].data["x_"]) == 0:
         return
@@ -2050,7 +2046,7 @@ def gather_ui_elements(  # noqa: PLR0915
         low=0,
         high=20,
         step=1,
-        value=4,
+        value=2,
         width=60,
         height=50,
         sizing_mode="stretch_width",
@@ -2671,7 +2667,7 @@ def make_window(vstate: ViewerState) -> dict:  # noqa: PLR0915
         x="x_",
         y="y_",
         fill_color="node_color_",
-        radius=3,
+        radius=4,
         radius_units="screen",
     )
     vstate.graph_edge = Segment(x0="x0_", y0="y0_", x1="x1_", y1="y1_")
