@@ -18,7 +18,6 @@ from typing import TYPE_CHECKING, Any, Callable, SupportsFloat
 
 import cv2
 import numpy as np
-import ollama
 import pandas as pd
 import requests
 import torch
@@ -26,7 +25,6 @@ from matplotlib import colormaps
 from openai import OpenAI
 from PIL import Image
 from requests.adapters import HTTPAdapter, Retry
-from sklearn.preprocessing import MinMaxScaler
 
 from bokeh.events import ButtonClick, DoubleTap, MenuItemClick
 from bokeh.io import curdoc
@@ -92,6 +90,12 @@ from tiatoolbox.utils.visualization import random_colors
 from tiatoolbox.visualization.ui_utils import get_level_by_extent
 from tiatoolbox.wsicore.wsireader import WSIReader
 
+# try to import ollama if its available
+try:
+    import ollama
+except ImportError:
+    print("Ollama not available, using gpt-4o instead.")
+
 if TYPE_CHECKING:  # pragma: no cover
     from bokeh.document import Document
 
@@ -115,7 +119,7 @@ default_cm = "viridis"  # any valid matplotlib colormap string
 class GPTInterface:
     """Class to handle GPT requests."""
 
-    def __init__(self: GPTInterface, model_name: str = "llama3.2-vision:11b") -> None:
+    def __init__(self: GPTInterface, model_name: str = "gpt-4o") -> None:
         """Initialise the class."""
         self.set_client(model_name)
 
@@ -305,6 +309,30 @@ class UIWrapper:
     def __getitem__(self: UIWrapper, key: str) -> Any:  # noqa: ANN401
         """Gets ui element for the active window."""
         return win_dicts[self.active][key]
+
+
+class NodeScaler:
+    """Class to scale node scores in range (min, max) to (0, 1)."""
+
+    def __init__(self: NodeScaler, range=(0.0, 1.0)) -> None:
+        """Initialize the class."""
+        self.min_val = range[0]
+        self.max_val = range[1]
+
+    def transform(self: NodeScaler, x: float) -> float:
+        """Scale the value."""
+        return (x - self.min_val) / (self.max_val - self.min_val)
+
+    def set_minmax(self: NodeScaler, range) -> None:
+        """Set the min and max values."""
+        self.min_val = range[0]
+        self.max_val = range[1]
+
+    def fit(self: NodeScaler, x: np.ndarray) -> None:
+        """Fit the scaler to the data."""
+        self.min_val = np.min(x)
+        self.max_val = np.max(x)
+        return self
 
 
 def encode_image(tile_image: Image.Image) -> str:
@@ -499,6 +527,31 @@ def populate_table() -> None:
             "dummy": list(colors.keys()),
         }
         tables[0].source.selected.indices = active_channels
+
+
+def update_node_colors(new) -> None:
+    if new[1] in UI["node_source"].data:
+        node_data = np.array(UI["node_source"].data[new[1]]).reshape(-1, 1)
+        UI["vstate"].min_val_gr = np.min(node_data)
+        UI["vstate"].max_val_gr = np.max(node_data)
+        UI["vstate"].node_color_prop = new[1]
+        node_cm = colormaps[default_cm]
+        if len(UI["range_checkbox_gr"].active) == 1:
+            UI["vstate"].node_scaler = NodeScaler(UI["range_slider_gr"].value)
+        else:
+            UI["vstate"].node_scaler = NodeScaler(
+                (UI["vstate"].min_val_gr, UI["vstate"].max_val_gr)
+            )
+        vals = node_cm(
+            np.squeeze(
+                UI["vstate"].node_scaler.transform(
+                    np.array(
+                        [to_num(v) for v in UI["node_source"].data[new[1]]]
+                    ).reshape(-1, 1)
+                )
+            )
+        )
+        UI["node_source"].data["node_color_"] = [rgb2hex(v) for v in vals]
 
 
 def get_view_bounds(
@@ -1028,6 +1081,7 @@ class ViewerState:
         self.max_val = 1
         self.min_val = 0
         self.is_categorical = True
+        self.node_color_prop = "score"
 
     def __setattr__(
         self: ViewerState,
@@ -1280,8 +1334,8 @@ def slide_select_cb(attr: str, old: str, new: str) -> None:  # noqa: ARG001
         "rect": 1,
         "pts": 2,
         "line": 3,
-        "nodes": 4,
-        "edges": 5,
+        "edges": 4,
+        "nodes": 5,
     }
     UI["vstate"].slide_path = slide_path
     UI["color_column"].children = []
@@ -1339,25 +1393,6 @@ def range_checkbox_cb(attr: str, old: list, new: list) -> None:  # noqa: ARG001
         UI["range_slider"].value = (UI["vstate"].min_val, UI["vstate"].max_val)
 
 
-def range_checkbox_graph_cb(attr: str, old: list, new: list) -> None:  # noqa: ARG001
-    """Callback to toggle range slider endpoints behaviour.
-
-    Toggles if range slider endpoints are fixed or adaptively set to
-      the min/max of the data.
-
-    """
-    if len(new) == 1:
-        # its on, fix range to user specified values
-        UI["range_slider"].start = UI["range_min"].value
-        UI["range_slider"].end = UI["range_max"].value
-        UI["range_slider"].value = (UI["range_min"].value, UI["range_max"].value)
-    else:
-        # its off, set range to min/max of data
-        UI["range_slider"].start = UI["vstate"].min_val
-        UI["range_slider"].end = UI["vstate"].max_val
-        UI["range_slider"].value = (UI["vstate"].min_val, UI["vstate"].max_val)
-
-
 def range_min_cb(attr: str, old: float, new: float) -> None:  # noqa: ARG001
     """Callback to change the minimum of the range slider."""
     UI["range_slider"].start = new
@@ -1372,31 +1407,68 @@ def range_max_cb(attr: str, old: float, new: float) -> None:  # noqa: ARG001
         UI["range_slider"].value = (UI["range_slider"].value[0], new)
 
 
-def scale_nodes_cb(attr: str) -> None:  # noqa: ARG001
-    """Callback to toggle node scaling on and off."""
+def range_slider_graph_cb(attr: str, old: str, new: str) -> None:  # noqa: ARG001
+    """Callback to change the range of the color mapper."""
+    # if UI["vstate"].cprop != "type" and UI["cmap_select"].value != "dict":
+    #    UI["s"].put(
+    #        f"http://{host2}:5000/tileserver/prop_range",
+    #        data={"range": json.dumps(new)},
+    #    )
+    #    UI["vstate"].update_state = 1
+    #    UI["vstate"].to_update.update(["overlay"])
+    # UI["color_bar"].color_mapper.low = new[0]
+    # UI["color_bar"].color_mapper.high = new[1]
+    UI["vstate"].node_scaler.set_minmax(new)
     if len(UI["node_source"].data["x_"]) == 0:
         return
     node_cm = colormaps[default_cm]
     color_prop = UI["vstate"].node_color_prop
-    if UI["scale_nodes"].active == True:
-        vals = node_cm(
-            np.squeeze(
-                UI["vstate"].node_scaler.transform(
-                    np.array(
-                        [to_num(v) for v in UI["node_source"].data[color_prop]]
-                    ).reshape(-1, 1)
-                )
-            )
-        )
-    else:
-        vals = node_cm(
-            np.squeeze(
+    vals = node_cm(
+        np.squeeze(
+            UI["vstate"].node_scaler.transform(
                 np.array(
                     [to_num(v) for v in UI["node_source"].data[color_prop]]
                 ).reshape(-1, 1)
             )
         )
+    )
     UI["node_source"].data["node_color_"] = [rgb2hex(v) for v in vals]
+
+
+def range_checkbox_graph_cb(attr: str, old: list, new: list) -> None:  # noqa: ARG001
+    """Callback to toggle range slider endpoints behaviour.
+
+    Toggles if range slider endpoints are fixed or adaptively set to
+      the min/max of the data.
+
+    """
+    if len(new) == 1:
+        # its on, fix range to user specified values
+        UI["range_slider_gr"].start = UI["range_min_gr"].value
+        UI["range_slider_gr"].end = UI["range_max_gr"].value
+        UI["range_slider_gr"].value = (
+            UI["range_min_gr"].value,
+            UI["range_max_gr"].value,
+        )
+    else:
+        # its off, set range to min/max of data
+        UI["range_slider_gr"].start = UI["vstate"].min_val_gr
+        UI["range_slider_gr"].end = UI["vstate"].max_val_gr
+        UI["range_slider_gr"].value = (UI["vstate"].min_val_gr, UI["vstate"].max_val_gr)
+
+
+def range_min_graph_cb(attr: str, old: float, new: float) -> None:  # noqa: ARG001
+    """Callback to change the minimum of the range slider."""
+    UI["range_slider_gr"].start = new
+    if UI["range_slider_gr"].value[0] < new:
+        UI["range_slider_gr"].value = (new, UI["range_slider_gr"].value[1])
+
+
+def range_max_graph_cb(attr: str, old: float, new: float) -> None:  # noqa: ARG001
+    """Callback to change the maximum of the range slider."""
+    UI["range_slider_gr"].end = new
+    if UI["range_slider_gr"].value[1] > new:
+        UI["range_slider_gr"].value = (UI["range_slider_gr"].value[0], new)
 
 
 def handle_graph_layer(attr: MenuItemClick) -> None:  # skipcq: PY-R1000
@@ -1413,19 +1485,14 @@ def handle_graph_layer(attr: MenuItemClick) -> None:  # skipcq: PY-R1000
             graph_dict[k] = np.array(v)
     node_cm = colormaps[default_cm]
     num_nodes = graph_dict["coordinates"].shape[0]
-    if "score" in graph_dict:
-        UI["node_source"].data = {
-            "x_": graph_dict["coordinates"][:, 0],
-            "y_": -graph_dict["coordinates"][:, 1],
-            "node_color_": [rgb2hex(node_cm(to_num(v))) for v in graph_dict["score"]],
-        }
-    else:
-        # Default to green
-        UI["node_source"].data = {
-            "x_": graph_dict["coordinates"][:, 0],
-            "y_": -graph_dict["coordinates"][:, 1],
-            "node_color_": [rgb2hex((0, 1, 0))] * num_nodes,
-        }
+
+    # Default to green
+    UI["node_source"].data = {
+        "x_": graph_dict["coordinates"][:, 0],
+        "y_": -graph_dict["coordinates"][:, 1],
+        "node_color_": [rgb2hex((0, 1, 0))] * num_nodes,
+    }
+
     UI["edge_source"].data = {
         "x0_": [
             graph_dict["coordinates"][i, 0] for i in graph_dict["edge_index"][0, :]
@@ -1481,6 +1548,9 @@ def handle_graph_layer(attr: MenuItemClick) -> None:  # skipcq: PY-R1000
             ],
         )
         UI["hover"].tooltips = tooltips
+
+    # update node colors if needed
+    update_node_colors(["", UI["vstate"].node_color_prop])
 
 
 def update_ui_on_new_annotations(ann_types: list[str]) -> None:
@@ -1682,31 +1752,7 @@ def type_cmap_cb(attr: str, old: list[str], new: list[str]) -> None:  # noqa: AR
             return
         if new[0] == "graph_overlay":
             # Adjust the node color in source if prop exists
-            if new[1] in UI["node_source"].data:
-                UI["vstate"].node_color_prop = new[1]
-                node_cm = colormaps[default_cm]
-                UI["vstate"].node_scaler = MinMaxScaler().fit(
-                    np.array(UI["node_source"].data[new[1]]).reshape(-1, 1),
-                )
-                if UI["scale_nodes"].active == True:
-                    vals = node_cm(
-                        np.squeeze(
-                            UI["vstate"].node_scaler.transform(
-                                np.array(
-                                    [to_num(v) for v in UI["node_source"].data[new[1]]]
-                                ).reshape(-1, 1)
-                            )
-                        )
-                    )
-                else:
-                    vals = node_cm(
-                        np.squeeze(
-                            np.array(
-                                [to_num(v) for v in UI["node_source"].data[new[1]]]
-                            ).reshape(-1, 1)
-                        )
-                    )
-                UI["node_source"].data["node_color_"] = [rgb2hex(v) for v in vals]
+            update_node_colors(new)
             return
         cmap = get_mapper_for_prop(new[1])  # separate cmap select ?
         UI["s"].put(
@@ -2255,12 +2301,36 @@ def gather_ui_elements(  # noqa: PLR0915
         sizing_mode="stretch_width",
         name=f"range_slider{win_num}",
     )
-    scale_nodes_switch = Toggle(
-        label="Scale Nodes",
-        active=True,
-        width=90,
+    range_checkbox_gr = CheckboxButtonGroup(
+        labels=["Fixed Range:"],
+        active=[0],
+        max_width=100,
         sizing_mode="stretch_width",
-        name=f"scale_nodes{win_num}",
+        name=f"range_checkbox_gr{win_num}",
+    )
+    range_min_gr = NumericInput(
+        value=0,
+        max_width=60,
+        sizing_mode="stretch_width",
+        name=f"range_min_gr{win_num}",
+        mode="float",
+    )
+    range_max_gr = NumericInput(
+        value=1,
+        max_width=60,
+        sizing_mode="stretch_width",
+        name=f"range_max_gr{win_num}",
+        mode="float",
+    )
+    range_slider_gr = RangeSlider(
+        start=0,
+        end=1,
+        value=(0, 1),
+        step=0.05,
+        title="prop range",
+        width=200,
+        sizing_mode="stretch_width",
+        name=f"range_slider_gr{win_num}",
     )
 
     # Associate callback functions to the widgets
@@ -2296,7 +2366,10 @@ def gather_ui_elements(  # noqa: PLR0915
     range_checkbox.on_change("active", range_checkbox_cb)
     range_min.on_change("value", range_min_cb)
     range_max.on_change("value", range_max_cb)
-    scale_nodes_switch.on_click(scale_nodes_cb)
+    range_slider_gr.on_change("value", range_slider_graph_cb)
+    range_checkbox_gr.on_change("active", range_checkbox_graph_cb)
+    range_min_gr.on_change("value", range_min_graph_cb)
+    range_max_gr.on_change("value", range_max_graph_cb)
 
     # Create some layouts
     type_column = column(children=layer_boxes, name=f"type_column{win_num}")
@@ -2321,9 +2394,34 @@ def gather_ui_elements(  # noqa: PLR0915
         sizing_mode="stretch_width",
     )
     range_row = row(
-        [range_checkbox, range_min, range_max, scale_nodes_switch],
+        [range_checkbox, range_min, range_max],
         sizing_mode="stretch_width",
         name=f"range_row{win_num}",
+    )
+    range_row_gr = row(
+        [range_checkbox_gr, range_min_gr, range_max_gr],
+        sizing_mode="stretch_width",
+        name=f"range_row_gr{win_num}",
+    )
+    # put range_row and range_slider in one tab (named Annotations), and range_row_gr and
+    # range_slider_gr in another tab (named Graph)
+    scale_tabs = Tabs(
+        tabs=[
+            TabPanel(
+                title="Graph",
+                child=column(
+                    [range_row_gr, range_slider_gr],
+                    sizing_mode="stretch_width",
+                ),
+            ),
+            TabPanel(
+                title="Annotations",
+                child=column(
+                    [range_row, range_slider],
+                    sizing_mode="stretch_width",
+                ),
+            ),
+        ],
     )
 
     # Make element dictionaries
@@ -2384,8 +2482,7 @@ def gather_ui_elements(  # noqa: PLR0915
                 "pt_size_spinner",
                 "edge_size_spinner",
                 "res_switch",
-                "range_row",
-                "range_slider",
+                "scale_tabs",
                 "channel_select",
             ],
             [
@@ -2393,8 +2490,7 @@ def gather_ui_elements(  # noqa: PLR0915
                 pt_size_spinner,
                 edge_size_spinner,
                 res_switch,
-                range_row,
-                range_slider,
+                scale_tabs,
                 create_channel_color_ui(),
             ],
         ),
@@ -2424,7 +2520,11 @@ def gather_ui_elements(  # noqa: PLR0915
         "range_min": range_min,
         "range_max": range_max,
         "range_checkbox": range_checkbox,
-        "scale_nodes": scale_nodes_switch,
+        "range_slider": range_slider,
+        "range_min_gr": range_min_gr,
+        "range_max_gr": range_max_gr,
+        "range_checkbox_gr": range_checkbox_gr,
+        "range_slider_gr": range_slider_gr,
     }
 
     return ui_layout, extra_options, elements_dict
@@ -2575,17 +2675,17 @@ def make_window(vstate: ViewerState) -> dict:  # noqa: PLR0915
         radius_units="screen",
     )
     vstate.graph_edge = Segment(x0="x0_", y0="y0_", x1="x1_", y1="y1_")
+    p.add_glyph(edge_source, vstate.graph_edge)
+    if not get_from_config(["opts", "edges_on"], default=False):
+        p.renderers[-1].visible = False
     p.add_glyph(node_source, vstate.graph_node)
     node_source.selected.on_change("indices", node_select_cb)
     if not get_from_config(["opts", "nodes_on"], default=True):
         p.renderers[-1].glyph.fill_alpha = 0
         p.renderers[-1].glyph.line_alpha = 0
-    p.add_glyph(edge_source, vstate.graph_edge)
-    if not get_from_config(["opts", "edges_on"], default=False):
-        p.renderers[-1].visible = False
-    vstate.layer_dict["nodes"] = len(p.renderers) - 2
-    vstate.layer_dict["edges"] = len(p.renderers) - 1
-    hover = HoverTool(renderers=[p.renderers[-2]])
+    vstate.layer_dict["nodes"] = len(p.renderers) - 1
+    vstate.layer_dict["edges"] = len(p.renderers) - 2
+    hover = HoverTool(renderers=[p.renderers[-1]])
     p.add_tools(hover)
 
     color_bar = ColorBar(
