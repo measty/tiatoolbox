@@ -59,6 +59,15 @@ def test_tile_grid_size_invalid_level() -> None:
     dz.tile_grid_size(level=0)
 
 
+def test_tile_grid_size_too_high_level() -> None:
+    """Test tile_grid_size raises IndexError when level == level_count."""
+    array = np.ones((1024, 1024))
+    wsi = wsireader.VirtualWSIReader(array)
+    dz = pyramid.ZoomifyGenerator(wsi, tile_size=256)
+    with pytest.raises(IndexError):
+        dz.tile_grid_size(dz.level_count)
+
+
 def test_get_tile_negative_level() -> None:
     """Test for IndexError on negative levels."""
     array = np.ones((1024, 1024))
@@ -75,6 +84,15 @@ def test_get_tile_large_level() -> None:
     dz = pyramid.ZoomifyGenerator(wsi, tile_size=256)
     with pytest.raises(IndexError):
         dz.get_tile(100, 0, 0)
+
+
+def test_get_tile_level_count() -> None:
+    """Test for IndexError when level == level_count."""
+    array = np.ones((1024, 1024))
+    wsi = wsireader.VirtualWSIReader(array)
+    dz = pyramid.ZoomifyGenerator(wsi, tile_size=256)
+    with pytest.raises(IndexError):
+        dz.get_tile(dz.level_count, 0, 0)
 
 
 def test_get_tile_large_xy() -> None:

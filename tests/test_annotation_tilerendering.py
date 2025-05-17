@@ -95,6 +95,16 @@ def test_tile_generator_len(fill_store: Callable, tmp_path: Path) -> None:
     assert len(tg) == (4 * 4) + (2 * 2) + 1
 
 
+def test_tile_grid_size_too_high_level(fill_store: Callable, tmp_path: Path) -> None:
+    """Expect IndexError when requesting tile grid for out of range level."""
+    array = np.ones((1024, 1024))
+    wsi = wsireader.VirtualWSIReader(array, mpp=(1, 1))
+    _, store = fill_store(SQLiteStore, tmp_path / "test.db")
+    tg = AnnotationTileGenerator(wsi.info, store, tile_size=256)
+    with pytest.raises(IndexError):
+        tg.tile_grid_size(tg.level_count)
+
+
 def test_tile_generator_iter(fill_store: Callable, tmp_path: Path) -> None:
     """Test __iter__ for AnnotationTileGenerator."""
     array = np.ones((1024, 1024))
@@ -229,6 +239,17 @@ def test_get_tile_large_level(fill_store: Callable, tmp_path: Path) -> None:
     tg = AnnotationTileGenerator(wsi.info, store, renderer, tile_size=256)
     with pytest.raises(IndexError):
         tg.get_tile(100, 0, 0)
+
+
+def test_get_tile_level_count(fill_store: Callable, tmp_path: Path) -> None:
+    """Expect IndexError when level == level_count."""
+    array = np.ones((1024, 1024))
+    wsi = wsireader.VirtualWSIReader(array)
+    _, store = fill_store(SQLiteStore, tmp_path / "test.db")
+    renderer = AnnotationRenderer(max_scale=1, edge_thickness=0)
+    tg = AnnotationTileGenerator(wsi.info, store, renderer, tile_size=256)
+    with pytest.raises(IndexError):
+        tg.get_tile(tg.level_count, 0, 0)
 
 
 def test_get_tile_large_xy(fill_store: Callable, tmp_path: Path) -> None:
