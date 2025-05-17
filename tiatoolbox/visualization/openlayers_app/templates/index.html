@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <link rel="stylesheet" href="/css/ol.css" />
+    <script src="/js/ol.js"></script>
+    <script src="/js/ol-ext.min.js"></script>
+    <style>
+        html, body { height: 100%; margin: 0; }
+        #map { width: 100%; height: calc(100% - 40px); }
+        #controls { height: 40px; padding: 5px; background: #eee; }
+    </style>
+    <title>TIAToolbox OpenLayers</title>
+</head>
+<body>
+<div id="controls">
+    <label>Slide:
+        <select id="slideSelect">
+            {% for s in slide_options %}
+            <option value="{{ s }}">{{ s }}</option>
+            {% endfor %}
+        </select>
+    </label>
+    <label>Overlay:
+        <select id="overlaySelect">
+            <option value="">None</option>
+            {% for o in overlay_options %}
+            <option value="{{ o }}">{{ o }}</option>
+            {% endfor %}
+        </select>
+    </label>
+</div>
+<div id="map" data-layers="{{ layers }}"></div>
+<script src="main.js"></script>
+</body>
+</html>
