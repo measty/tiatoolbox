@@ -1,3 +1,5 @@
+"""OpenLayers based tile server application."""
+
 from __future__ import annotations
 
 import json
@@ -19,6 +21,7 @@ class OpenLayersServer(TileServer):
         slide_folder: str | None = None,
         overlay_folder: str | None = None,
     ) -> None:
+        """Create an :class:`OpenLayersServer` instance."""
         self.slide_folder = Path(slide_folder) if slide_folder else None
         self.overlay_folder = Path(overlay_folder) if overlay_folder else None
         super().__init__(title=title, layers=layers)
@@ -26,16 +29,22 @@ class OpenLayersServer(TileServer):
     def index(self) -> str:  # type: ignore[override]
         """Serve the index page with slide and overlay lists."""
         session_id = self._get_session_id()
-        layers = [
-            {
-                "name": name,
-                "url": f"/tileserver/layer/{name}/default/zoomify/"
-                "{TileGroup}/{z}-{x}-{y}@1x.jpg",
-                "size": [int(x) for x in layer.info.slide_dimensions],
-                "mpp": float(np.mean(layer.info.mpp)),
-            }
-            for name, layer in self.layers[session_id].items()
-        ]
+        resp = None
+        if (session_id is None) or (session_id not in self.layers):
+            resp = self.session_id()
+            # no layers loaded yet for a new session
+            layers: list[dict] = []
+        else:
+            layers = [
+                {
+                    "name": name,
+                    "url": f"/tileserver/layer/{name}/default/zoomify/"
+                    "{TileGroup}/{z}-{x}-{y}@1x.jpg",
+                    "size": [int(x) for x in layer.info.slide_dimensions],
+                    "mpp": float(np.mean(layer.info.mpp)),
+                }
+                for name, layer in self.layers[session_id].items()
+            ]
 
         slide_opts: list[str] = []
         overlay_opts: list[str] = []
@@ -70,13 +79,17 @@ class OpenLayersServer(TileServer):
             ]:
                 overlay_opts.extend(sorted(map(str, self.overlay_folder.glob(ext))))
 
-        return render_template(
+        rendered = render_template(
             "index.html",
             title=self.title,
             layers=json.dumps(layers),
             slide_options=slide_opts,
             overlay_options=overlay_opts,
         )
+        if resp is None:
+            return rendered
+        resp.set_data(rendered)
+        return resp
 
 
 def create_app(
@@ -84,6 +97,7 @@ def create_app(
     slide_folder: str | None = None,
     overlay_folder: str | None = None,
 ) -> TileServer:
+    """Return a ready-to-run :class:`TileServer` instance."""
     layers: dict[str, str] = {}
     if slide is not None:
         layers = {"slide": slide}
@@ -101,4 +115,4 @@ def create_app(
 
 
 if __name__ == "__main__":
-    create_app().run(host="0.0.0.0", threaded=True)
+    create_app().run(host="0.0.0.0", threaded=True)  # noqa: S104
