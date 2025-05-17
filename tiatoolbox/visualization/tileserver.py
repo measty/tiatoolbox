@@ -163,6 +163,10 @@ class TileServer(Flask):
         self.route("/tileserver/slide", methods=["GET"])(self.get_slide)
         self.route("/tileserver/cmap", methods=["GET"])(self.get_mapper)
         self.route("/tileserver/annotations", methods=["GET"])(self.get_annotations)
+        self.route(
+            "/tileserver/vector_annotations",
+            methods=["GET"],
+        )(self.get_vector_annotations)
         self.route("/tileserver/overlay", methods=["GET"])(self.get_overlay)
         self.route("/tileserver/renderer/<prop>", methods=["GET"])(self.get_renderer)
         self.route("/tileserver/secondary_cmap", methods=["GET"])(
@@ -688,6 +692,25 @@ class TileServer(Flask):
             for ann in annotations.values()
         ]
         return jsonify(annotations)
+
+    def get_vector_annotations(self: TileServer) -> Response:
+        """Return annotations as GeoJSON features."""
+        session_id = self._get_session_id()
+        bounds = json.loads(request.args.get("bounds"))
+        where = json.loads(request.args.get("where"))
+        anns = self.get_ann_layer(session_id).store.query(
+            geometry=bounds,
+            where=where,
+        )
+        features = [
+            {
+                "type": "Feature",
+                "geometry": ann.geometry.__geo_interface__,
+                "properties": ann.properties,
+            }
+            for ann in anns.values()
+        ]
+        return jsonify({"type": "FeatureCollection", "features": features})
 
     def get_overlay(self: TileServer) -> Response:
         """Get the overlay info."""
