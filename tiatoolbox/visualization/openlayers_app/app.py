@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 
 import numpy as np
+from flask import send_from_directory
 from flask.templating import render_template
 
 from tiatoolbox.visualization.tileserver import TileServer
@@ -110,7 +111,11 @@ def create_app(
     tpl = Path(__file__).parent / "templates"
     static = Path(__file__).parent / "static"
     app.jinja_loader.searchpath.insert(0, str(tpl))
-    app.static_folder = str(static)
+    app.add_url_rule(
+        "/main.js",
+        endpoint="openlayers_main_js",
+        view_func=lambda: send_from_directory(static, "main.js"),
+    )
     return app
 
 
