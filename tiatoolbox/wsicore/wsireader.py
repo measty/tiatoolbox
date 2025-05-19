@@ -19,7 +19,7 @@ import matplotlib.colors as mcolors
 import numpy as np
 import openslide
 import pandas as pd
-import SimpleITK as sitk
+import SimpleITK as sitk  # noqa: N813
 import tifffile
 import zarr
 from defusedxml import ElementTree
@@ -6367,7 +6367,10 @@ class TransformedWSIReader(WSIReader):
     Example:
         >>> from tiatoolbox.wsicore.wsireader import TransformedWSIReader
         >>> transform_level0 = np.eye(3)
-        >>> tfm = TransformedWSIReader(input_img=sample_ome_tiff, transform=transform_level0)
+        >>> tfm = TransformedWSIReader(
+        ...     input_img=sample_ome_tiff, target_img=sample_ome_tiff,
+        ...     transform=transform_level0
+        ... )
         >>> output = tfm.read_rect(location, size, resolution=resolution, units="level")
 
     """
@@ -6375,9 +6378,10 @@ class TransformedWSIReader(WSIReader):
     def __init__(
         self: TransformedWSIReader,
         input_img: str | Path | np.ndarray,
+        target_img: str | Path | np.ndarray,
         mpp: tuple[Number, Number] | None = None,
         power: Number | None = None,
-        transform: np.ndarray | Path = np.eye(3),
+        transform: np.ndarray | str | Path = None,  # Default to None
         fixed_info: WSIMeta = None,
     ) -> None:
         """Initialize object.
@@ -6385,11 +6389,13 @@ class TransformedWSIReader(WSIReader):
         Args:
             input_img (str | Path | np.ndarray):
                 Path to the input image or the image array.
+            target_img (str | Path | np.ndarray):
+                Path to the input target image or the image array.
             mpp (tuple(Number, Number)):
                 Microns per pixel in x and y directions.
             power (Number):
                 Objective power of the image.
-            transform (np.ndarray | Path):
+            transform (str | Path | np.ndarray):
                 Transformation matrix or path to a transformation file (.npy or .mha).
             fixed_info (WSIMeta):
                 Fixed metadata to use for the transformed image.
@@ -6397,6 +6403,11 @@ class TransformedWSIReader(WSIReader):
         """
         super().__init__(input_img=input_img, mpp=mpp, power=power)
         self.wsi_reader = WSIReader.open(input_img=input_img, mpp=mpp, power=power)
+        self.target_wsi_reader = WSIReader.open(
+            input_img=target_img, mpp=mpp, power=power
+        )
+        if transform is None:
+            transform = np.eye(3)  # Ensures a new array instance for each call
         # we need to set the info to be the fixed image info
         if fixed_info is not None:
             self.wsi_reader.info = fixed_info
@@ -6408,20 +6419,34 @@ class TransformedWSIReader(WSIReader):
         elif transform.suffix == ".mha":
             displacement_field = sitk.ReadImage(transform, sitk.sitkVectorFloat64)
             disp_array = sitk.GetArrayFromImage(displacement_field)  # (2, H, W)
-            if disp_array.shape[-1] != 2:
+            displacement_field_channels = 2
+            if disp_array.shape[-1] != displacement_field_channels:
                 # maybe in torch format with channel first
                 disp_array = np.moveaxis(disp_array, 0, -1)
             self.df_dims = np.array((disp_array.shape[1], disp_array.shape[0]))
+            # scale factors are actually in relation to the largest dimension
+            # from source and target image (so add offset and then scale)
             self.level_scale_factors = [
-                np.array(level_dims) / np.array(self.df_dims)
-                for level_dims in self.wsi_reader.info.level_dimensions
+                np.asarray([s_dims, t_dims]).max(axis=0) / np.array(self.df_dims)
+                for s_dims, t_dims in zip(
+                    self.wsi_reader.info.level_dimensions,
+                    self.target_wsi_reader.info.level_dimensions,
+                )
+            ]
+            self.level_pads = [
+                (((t_dims[0] - s_dims[0]) // 2), ((t_dims[1] - s_dims[1]) // 2))
+                for s_dims, t_dims in zip(
+                    self.wsi_reader.info.level_dimensions,
+                    self.target_wsi_reader.info.level_dimensions,
+                )
             ]
             self.get_location_array(disp_array)
             self.transform_type = "displacement"
         else:
-            raise ValueError("Unsupported transformation file format")
+            error_message = "Unsupported transformation file format"
+            raise ValueError(error_message)
 
-    def get_location_array(self, disp_array):
+    def get_location_array(self, disp_array: np.ndarray) -> None:
         """Transform an array of locations using the displacement field.
 
         Gives an inverse showing, for a given pixel in a transformed image, where it
@@ -6434,11 +6459,24 @@ class TransformedWSIReader(WSIReader):
         transformed_image = self.transform_using_disp_array(location_array, disp_array)
 
         # make a reader for convenient reading at desired locations/resolutions
+        wsimeta = self.wsi_reader.info
+        wsimeta.level_dimensions = tuple(
+            tuple(np.asarray([s_dims, t_dims]).max(axis=0))
+            for s_dims, t_dims in zip(
+                self.wsi_reader.info.level_dimensions,
+                self.target_wsi_reader.info.level_dimensions,
+            )
+        )
+        wsimeta.slide_dimensions = wsimeta.level_dimensions[0]
         self.inverse_loc_reader = VirtualWSIReader(
-            transformed_image, info=self.wsi_reader.info, mode="feature"
+            transformed_image, info=wsimeta, mode="feature"
         )
 
-    def transform_using_disp_array(self, input_array, disp_array):
+    @staticmethod
+    def transform_using_disp_array(
+        input_array: np.ndarray, disp_array: np.ndarray
+    ) -> np.ndarray:
+        """Transform an array of locations using the displacement field."""
         input_image = sitk.GetImageFromArray(input_array, isVector=True)
 
         # Convert displacement field numpy array to SimpleITK image
@@ -6583,32 +6621,34 @@ class TransformedWSIReader(WSIReader):
         )
         return transformed_location, transformed_size
 
-    def sample_image_opencv(self, A, B):
-        """Samples image A at positions specified by B using OpenCV's remap function.
+    @staticmethod
+    def sample_image_opencv(
+        a: np.ndarray,
+        b: np.ndarray,
+    ) -> np.ndarray:
+        """Samples image a at positions specified by b using OpenCV's remap function.
 
         Parameters:
-        - A: numpy array of shape (H, W, 3), the source image.
-        - B: numpy array of shape (M, N, 2), the array of x, y positions.
+        - a: numpy array of shape (H, W, 3), the source image.
+        - b: numpy array of shape (M, N, 2), the array of x, y positions.
 
         Returns:
         - output: numpy array of shape (M, N, 3), the sampled image.
         """
-        # Convert B to float32 and split into x and y maps
-        B_float = B.astype(np.float32)
-        map_x = B_float[..., 0]
-        map_y = B_float[..., 1]
+        # Convert b to float32 and split into x and y maps
+        b_float = b.astype(np.float32)
+        map_x = b_float[..., 0]
+        map_y = b_float[..., 1]
 
         # Use cv2.remap to sample the image
-        output = cv2.remap(
-            A,
+        return cv2.remap(
+            a,
             map_x,
             map_y,
             interpolation=cv2.INTER_LANCZOS4,
             borderMode=cv2.BORDER_CONSTANT,
             borderValue=0,
         )
-
-        return output
 
     def get_transformed_location_df(
         self: TransformedWSIReader,
@@ -6625,7 +6665,7 @@ class TransformedWSIReader(WSIReader):
 
         Args:
             location (tuple(int)):
-                (x, y) tuple giving the top left pixel in the baseline (level 0)
+                (x, y) tuple giving the top left pixel in the read resolution
                 reference frame.
             size (tuple(int)):
                 (width, height) tuple giving the desired output image size.
@@ -6651,14 +6691,22 @@ class TransformedWSIReader(WSIReader):
 
         # Find bounding box of transformed grid + padding
         pad = 2
-        min_x = np.min(transformed_grid[:, :, 0]) - pad
+        min_x = max(np.min(transformed_grid[:, :, 0]) - pad, 0)
         max_x = np.max(transformed_grid[:, :, 0]) + pad
-        min_y = np.min(transformed_grid[:, :, 1]) - pad
+        min_y = max(np.min(transformed_grid[:, :, 1]) - pad, 0)
         max_y = np.max(transformed_grid[:, :, 1]) + pad
         # shift the grid into this coordinate space
         transformed_grid = transformed_grid - np.array([min_x, min_y]) + pad
         location = (int(min_x), int(min_y))
-        size = (int(max_x - min_x), int(max_y - min_y))
+        # Unpad
+        location = (
+            location[0] - self.level_pads[level][0],
+            location[1] - self.level_pads[level][1],
+        )
+        size = (
+            int(max_x - min_x + self.level_pads[level][0]),
+            int(max_y - min_y + self.level_pads[level][1]),
+        )
         return location, size, transformed_grid
 
     def transform_patch(
@@ -6700,7 +6748,7 @@ class TransformedWSIReader(WSIReader):
         pad_mode: str = "constant",
         pad_constant_values: int | IntPair = 0,
         coord_space: str = "baseline",
-        **kwargs: dict,  # noqa: ARG002
+        **kwargs: dict,
     ) -> np.ndarray:
         """Read a transformed region of the transformed whole slide image.
 
@@ -6708,21 +6756,85 @@ class TransformedWSIReader(WSIReader):
         and size is the output image size.
 
         Args:
-            location (tuple(int)):
-                (x, y) tuple giving the top left pixel in the baseline (level 0)
-                reference frame.
-            size (tuple(int)):
-                (width, height) tuple giving the desired output image size.
+            location (IntPair):
+                (x, y) tuple giving the top left pixel in the baseline
+                (level 0) reference frame.
+            size (IntPair):
+                (width, height) tuple giving the desired output image
+                size.
             resolution (Resolution):
-                Resolution used for reading the image.
+                Resolution at which to read the image, default = 0.
+                Either a single number or a sequence of two numbers for
+                x and y are valid. This value is in terms of the
+                corresponding units. For example: resolution=0.5 and
+                units="mpp" will read the slide at 0.5 microns
+                per-pixel, and resolution=3, units="level" will read at
+                level at pyramid level / resolution layer 3.
             units (Units):
-                Units of resolution used for reading the image.
+                The units of resolution, default = "level". Supported
+                units are: microns per pixel (mpp), objective power
+                (power), pyramid / resolution level (level), pixels per
+                baseline pixel (baseline).
+            interpolation (str):
+                Method to use when resampling the output image. Possible
+                values are "linear", "cubic", "lanczos", "area", and
+                "optimise". Defaults to 'optimise' which will use cubic
+                interpolation for upscaling and area interpolation for
+                downscaling to avoid moiré patterns.
+            pad_mode (str):
+                Method to use when padding at the edges of the image.
+                Defaults to 'constant'. See :func:`numpy.pad` for
+                available modes.
+            pad_constant_values (int, tuple(int)):
+                Constant values to use when padding with constant pad mode.
+                Passed to the :func:`numpy.pad` `constant_values` argument.
+                Default is 0.
+            coord_space (str):
+                Defaults to "baseline". This is a flag to indicate if
+                the input `location` is in the baseline coordinate system
+                ("baseline") or is in the requested resolution system
+                ("resolution").
+            **kwargs:
+                Extra key-word arguments for reader specific parameters.
+                Currently only used by :obj:`VirtualWSIReader`. See
+                class docstrings for more information.
 
         Returns:
             :class:`numpy.ndarray`:
                 A transformed region/patch.
 
+        Example:
+            >>> from tiatoolbox.wsicore.wsireader import TransformedWSIReader
+            >>> transform_level0 = np.eye(3)
+            >>> tfm = TransformedWSIReader(
+            ...     input_img=sample_ome_tiff, target_img=sample_ome_tiff,
+            ...     transform=transform_level0
+            ... )
+            >>> output = tfm.read_rect(
+            ...     location, size, resolution=resolution, units="level"
+            ... )
+
         """
+        if coord_space == "resolution":
+            # In actuality, `read_rect` at resolution is synonymous with
+            # calling `read_bound` at resolution because `size` has always
+            # been within the resolution system.
+
+            tl = np.array(location)
+            br = location + np.array(size)
+            bounds = np.concatenate([tl, br])
+
+            return self.read_bounds(
+                bounds,
+                resolution=resolution,
+                units=units,
+                interpolation=interpolation,
+                pad_mode=pad_mode,
+                pad_constant_values=pad_constant_values,
+                coord_space="resolution",
+                **kwargs,
+            )
+
         pad = 2
         (
             read_level,
@@ -6736,6 +6848,7 @@ class TransformedWSIReader(WSIReader):
             resolution=resolution,
             units=units,
         )
+
         if self.transform_type == "displacement":
             transformed_location, max_size, transformed_grid = (
                 self.get_transformed_location_df(
@@ -6751,13 +6864,27 @@ class TransformedWSIReader(WSIReader):
         else:
             transformed_location, max_size = self.get_transformed_location(
                 location,
-                level_size,
+                size,
                 read_level,
             )
             patch = self.wsi_reader.read_region(
                 transformed_location, read_level, max_size
             )
+            # convert location to read resolution
+            transformed_location = (
+                int(transformed_location[0] / (2**read_level)),
+                int(transformed_location[1] / (2**read_level)),
+            )
         patch = np.array(patch)
+
+        # Apply padding outside the slide area
+        patch = utils.image.crop_and_pad_edges(
+            bounds=utils.transforms.locsize2bounds(transformed_location, max_size),
+            max_dimensions=self.info.level_dimensions[read_level],
+            region=patch,
+            pad_mode=pad_mode,
+            pad_constant_values=pad_constant_values,
+        )
 
         # Apply transformation
         if self.transform_type == "displacement":
@@ -6766,21 +6893,194 @@ class TransformedWSIReader(WSIReader):
         else:
             transformed_patch = self.transform_patch(patch, max_size)
 
-        # Crop to get rid of black borders due to rotation
-        if self.transform_type == "affine":
-            start_row = int(max_size[1] / 2) - int(level_size[1] / 2)
-            end_row = int(max_size[1] / 2) + int(level_size[1] / 2)
-            start_col = int(max_size[0] / 2) - int(level_size[0] / 2)
-            end_col = int(max_size[0] / 2) + int(level_size[0] / 2)
-            transformed_patch = transformed_patch[
-                start_row:end_row, start_col:end_col, :
-            ]
-
         # Resize to desired size
         post_read_scale = float(post_read_scale[0]), float(post_read_scale[1])
         return utils.transforms.imresize(
             img=transformed_patch,
             scale_factor=post_read_scale,
             output_size=size,
-            interpolation="optimise",
+            interpolation=interpolation,
+        )
+
+    def read_bounds(
+        self: TransformedWSIReader,
+        bounds: Bounds,
+        resolution: Resolution = 0,
+        units: Units = "level",
+        interpolation: str = "optimise",
+        pad_mode: str = "constant",
+        pad_constant_values: int | IntPair = 0,
+        coord_space: str = "baseline",
+        **kwargs: dict,  # noqa: ARG002
+    ) -> np.ndarray:
+        """Read a transformed region of the transformed whole slide image within bounds.
+
+        Bounds are in terms of the baseline image (level 0 / maximum resolution),
+        and size is the output image size.
+
+        Reads can be performed at different resolutions by supplying a
+        pair of arguments for the resolution and the units of
+        resolution. If metadata does not specify `mpp` or
+        `objective_power` then `baseline` units should be selected with
+        resolution 1.0
+
+        The output image size may be different to the width and height
+        of the bounds as the resolution will affect this. To read a
+        region with a fixed output image size see :func:`read_rect`.
+
+        Args:
+            bounds (IntBounds):
+                By default, this is a tuple of (start_x, start_y, end_x,
+                end_y) i.e. (left, top, right, bottom) of the region in
+                baseline reference frame. However, with
+                `coord_space="resolution"`, the bound is expected to be
+                at the requested resolution system.
+            resolution (Resolution):
+                Resolution at which to read the image, default = 0.
+                Either a single number or a sequence of two numbers for
+                x and y are valid. This value is in terms of the
+                corresponding units. For example: resolution=0.5 and
+                units="mpp" will read the slide at 0.5 microns
+                per-pixel, and resolution=3, units="level" will read at
+                level at pyramid level / resolution layer 3.
+            units (Units):
+                The units of resolution, default = "level". Supported
+                units are: microns per pixel (mpp), objective power
+                (power), pyramid / resolution level (level), pixels per
+                baseline pixel (baseline).
+            coord_space (str):
+                Coordinate space of the bounds. By default, the bounds
+                are in the baseline reference frame. If
+                `coord_space="resolution"` then the bounds are expected
+                to be at the requested resolution system.
+            interpolation (str):
+                Method to use when resampling the output image. Possible
+                values are "linear", "cubic", "lanczos", "area", and
+                "optimise". Defaults to 'optimise' which will use cubic
+                interpolation for upscaling and area interpolation for
+                downscaling to avoid moiré patterns.
+            pad_mode (str):
+                Method to use when padding at the edges of the image.
+                Defaults to 'constant'. See :func:`numpy.pad` for
+                available modes.
+            pad_constant_values (int | tuple(int)):
+                Constant values to use when padding with constant pad mode.
+                Passed to the :func:`numpy.pad` `constant_values` argument.
+                Default is 0.
+            coord_space (str):
+                Defaults to "baseline". This is a flag to indicate if
+                the input `bounds` is in the baseline coordinate system
+                ("baseline") or is in the requested resolution system
+                ("resolution").
+            **kwargs:
+                Extra key-word arguments for reader specific parameters.
+                Currently only used by :obj:`VirtualWSIReader`. See
+                class docstrings for more information.
+
+        Returns:
+            :class:`numpy.ndarray`:
+                A transformed region/patch.
+
+        Example:
+            >>> from tiatoolbox.wsicore import TransformedWSIReader
+            >>> wsi = TransformedWSIReader(
+            ...    input_img="cmu-1.ndpi", target_img="cmu-1.ndpi",
+            ...    transform="transform.mha"
+            ... )
+            >>> # read a region of size 1000x1000 at 1.25x scale
+            >>> # from (10000, 10000) at level 0
+            >>> img = wsi.read_bounds(25000,25000,27000,27000)
+
+        """
+        pad = 2
+        # convert from requested to `baseline`
+        bounds_at_baseline = bounds
+        if coord_space == "resolution":
+            bounds_at_baseline = self.bounds_at_resolution_to_baseline(
+                bounds,
+                resolution,
+                units,
+            )
+            _, size_at_requested = utils.transforms.bounds2locsize(bounds)
+            # don't use the `output_size` (`size_at_requested`) here
+            # because the rounding error at `bounds_at_baseline` leads to
+            # different `size_at_requested` (keeping same read resolution
+            # but base image is of different scale)
+            (
+                read_level,
+                bounds_at_read_level,
+                _,
+                post_read_scale,
+            ) = self.find_read_bounds_params(
+                bounds_at_baseline,
+                resolution=resolution,
+                units=units,
+            )
+        else:  # duplicated portion with VirtualReader, factoring out ?
+            # Find parameters for optimal read
+            (
+                read_level,
+                bounds_at_read_level,
+                size_at_requested,
+                post_read_scale,
+            ) = self.find_read_bounds_params(
+                bounds_at_baseline,
+                resolution=resolution,
+                units=units,
+            )
+
+        # Read at optimal level and corrected read size
+        location_at_baseline = np.array(bounds_at_baseline[:2])
+        _, size_at_read_level = utils.transforms.bounds2locsize(bounds_at_read_level)
+
+        # Transform bounds and read untransformed image
+        if self.transform_type == "displacement":
+            transformed_location, max_size, transformed_grid = (
+                self.get_transformed_location_df(
+                    location=np.array(bounds_at_read_level[:2]) - pad,
+                    size=size_at_read_level + pad * 2,
+                    level=read_level,
+                )
+            )
+            # Read at optimal level and corrected read size
+            patch = self.wsi_reader.read_rect(
+                location=transformed_location,
+                size=max_size,
+                resolution=read_level,
+                coord_space="resolution",
+            )
+        else:
+            transformed_location, max_size = self.get_transformed_location(
+                location=location_at_baseline,
+                size=size_at_read_level,
+                level=read_level,
+            )
+            patch = self.wsi_reader.read_region(
+                location=transformed_location, level=read_level, size=max_size
+            )
+        patch = np.array(patch)
+
+        # Apply padding outside the slide area.
+        patch = utils.image.crop_and_pad_edges(
+            bounds=bounds_at_read_level,
+            max_dimensions=self.info.level_dimensions[read_level],
+            region=patch,
+            pad_mode=pad_mode,
+            pad_constant_values=pad_constant_values,
+        )
+
+        # Apply transformation.
+        if self.transform_type == "displacement":
+            transformed_patch = self.sample_image_opencv(patch, transformed_grid)
+            transformed_patch = transformed_patch[pad:-pad, pad:-pad, :]
+        else:
+            transformed_patch = self.transform_patch(patch, max_size)
+
+        # Resize to desired size
+        post_read_scale = float(post_read_scale[0]), float(post_read_scale[1])
+        return utils.transforms.imresize(
+            img=transformed_patch,
+            scale_factor=post_read_scale,
+            output_size=size_at_requested,
+            interpolation=interpolation,
         )
