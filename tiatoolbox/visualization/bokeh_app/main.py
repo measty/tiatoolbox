@@ -21,11 +21,6 @@ import numpy as np
 import pandas as pd
 import requests
 import torch
-from matplotlib import colormaps
-from openai import OpenAI
-from PIL import Image
-from requests.adapters import HTTPAdapter, Retry
-
 from bokeh.events import ButtonClick, DoubleTap, MenuItemClick
 from bokeh.io import curdoc
 from bokeh.layouts import column, row
@@ -77,6 +72,10 @@ from bokeh.models.dom import HTML
 from bokeh.models.tiles import WMTSTileSource
 from bokeh.plotting import figure
 from bokeh.util import token
+from matplotlib import colormaps
+from openai import OpenAI
+from PIL import Image
+from requests.adapters import HTTPAdapter, Retry
 
 # GitHub actions seems unable to find TIAToolbox unless this is here
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
@@ -3118,7 +3117,7 @@ if do_doc:
     doc_config.set_sys_args(sys.argv)
     doc_config.get_config()
     # see if there's a metadata .csv file in slides folder
-    metadata_file = list(doc_config["slide_folder"].glob("*.csv"))
+    metadata_file = list(doc_config["overlay_folder"].glob("*metadata.csv"))
     if len(metadata_file) > 0:
         metadata_file = metadata_file[0]
         with metadata_file.open() as f:
