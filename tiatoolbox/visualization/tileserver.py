@@ -89,6 +89,7 @@ class TileServer(Flask):
         if renderer is None:  # pragma: no branch
             self.renderer = AnnotationRenderer(
                 score_prop="type",
+                mapper="coolwarm",
                 thickness=-1,
                 edge_thickness=1,
                 zoomed_out_strat="scale",
