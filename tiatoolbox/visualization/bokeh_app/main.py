@@ -1167,7 +1167,9 @@ def populate_layer_list(slide_name: str, overlay_path: Path) -> None:
         "*.mha",
     ]:
         file_list.extend(list(overlay_path.glob(ext)))
-    file_list = [(str(p.name), str(p)) for p in sorted(file_list) if slide_name in str(p.name)]
+    file_list = [
+        (str(p.name), str(p)) for p in sorted(file_list) if slide_name in str(p.name)
+    ]
     UI["layer_drop"].menu = file_list
 
 
@@ -1356,7 +1358,7 @@ def slide_select_cb(attr: str, old: str, new: str) -> None:  # noqa: ARG001
     # Load the overlay and graph automatically if set in config
     if doc_config["auto_load"]:
         for f in UI["layer_drop"].menu:
-            dummy_attr = DummyAttr(f[0])
+            dummy_attr = DummyAttr(f[1])
             layer_drop_cb(dummy_attr)
 
 
