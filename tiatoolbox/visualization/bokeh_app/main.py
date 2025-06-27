@@ -1168,7 +1168,7 @@ def populate_layer_list(slide_name: str, overlay_path: Path) -> None:
         "*.mha",
     ]:
         file_list.extend(list(overlay_path.glob(ext)))
-    file_list = [(str(p), str(p)) for p in sorted(file_list) if slide_name in str(p)]
+    file_list = [(str(p.name), str(p)) for p in sorted(file_list) if slide_name in str(p.name)]
     UI["layer_drop"].menu = file_list
 
 
