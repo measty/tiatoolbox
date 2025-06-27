@@ -111,7 +111,7 @@ NO_UPDATE = 0
 PENDING_UPDATE = 1
 DO_UPDATE = 2
 
-default_cm = "viridis"  # any valid matplotlib colormap string
+default_cm = "coolwarm"  # any valid matplotlib colormap string
 
 
 # ---- GPT stuff ----
