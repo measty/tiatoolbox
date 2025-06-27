@@ -1653,7 +1653,9 @@ def layer_slider_cb(
             UI["vstate"].layer_dict[obj.name.split("_")[0]]
         ].glyph.line_alpha = new
     else:
-        UI["p"].renderers[UI["vstate"].layer_dict[obj.name.split("_")[0]]].alpha = new
+        UI["p"].renderers[
+            UI["vstate"].layer_dict["_".join(obj.name.split("_")[0:-1])]
+        ].alpha = new
 
 
 def color_input_cb(
