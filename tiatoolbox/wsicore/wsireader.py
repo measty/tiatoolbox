@@ -427,14 +427,9 @@ class WSIReader:
             return TIFFWSIReader(input_path, mpp=mpp, power=power, post_proc=post_proc)
 
         if last_suffix in (".tif", ".tiff"):
-            tiff_wsi = TIFFWSIReader(
-                input_path, mpp=mpp, power=power, post_proc=post_proc
+            tiff_wsi = _handle_tiff_wsi(
+              input_path, mpp=mpp, power=power, post_proc=post_proc
             )
-            # temporary force to use TIFFWSIReader for tiffs as openslide doesnt work with comet
-            # remove before merging
-            # tiff_wsi = _handle_tiff_wsi(
-            #    input_path, mpp=mpp, power=power, post_proc=post_proc
-            # )
             if tiff_wsi is not None:
                 return tiff_wsi
 
