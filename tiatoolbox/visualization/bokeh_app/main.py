@@ -367,7 +367,8 @@ def get_channel_info() -> dict[str, tuple[int, int, int]]:
     try:
         resp = json.loads(resp.text)
         return resp.get("channels", {}), resp.get("active", [])
-    except json.JSONDecodeError:
+    except json.JSONDecodeError as e:
+        logger.warning("Error decoding JSON: %s", e)
         return {}, []
 
 
@@ -381,7 +382,8 @@ def set_channel_info(
     )
 
 
-def create_channel_color_ui():
+def create_channel_color_ui() -> Column:
+    """Create the multi-channel UI controls."""
     channel_source = ColumnDataSource(
         data={
             "channels": [],
@@ -396,7 +398,8 @@ def create_channel_color_ui():
     )
 
     color_formatter = HTMLTemplateFormatter(
-        template='<div style="background-color: <%= value %>; color: <%= value %>; border: 1px solid #ddd;"><%= value %></div>'
+        template="""<div style='background-color: <%= value %>; color:
+          <%= value %>; border: 1px solid #ddd;'><%= value %></div>"""
     )
 
     channel_table = DataTable(
@@ -440,7 +443,12 @@ def create_channel_color_ui():
 
     color_picker = ColorPicker(title="Channel Color", width=100)
 
-    def update_selected_color(attr, old, new):
+    def update_selected_color(
+        attr: str,  # noqa: ARG001 # skipcq: PYL-W0613
+        old: str,  # noqa: ARG001 # skipcq: PYL-W0613
+        new: str,
+    ) -> None:
+        """Update the selected color in multichannel ui."""
         selected = color_source.selected.indices
         if selected:
             color_source.patch({"colors": [(selected[0], new)]})
@@ -461,7 +469,12 @@ def create_channel_color_ui():
 
     apply_button.on_click(apply_changes)
 
-    def update_color_picker(attr, old, new):
+    def update_color_picker(
+        attr: str,  # noqa: ARG001 # skipcq: PYL-W0613
+        old: str,  # noqa: ARG001 # skipcq: PYL-W0613
+        new: str,
+    ) -> None:
+        """Update the color picker when a new channel is selected."""
         if new:
             selected_color = color_source.data["colors"][new[0]]
             color_picker.color = selected_color
@@ -479,7 +492,11 @@ def create_channel_color_ui():
         width=200,
     )
 
-    def enhance_cb(attr: str, old: str, new: str) -> None:  # noqa: ARG001 # skipcq: PYL-W0613
+    def enhance_cb(
+        attr: str,  # noqa: ARG001 # skipcq: PYL-W0613
+        old: str,  # noqa: ARG001 # skipcq: PYL-W0613
+        new: str,
+    ) -> None:
         """Enhance slider callback."""
         UI["s"].put(
             f"http://{host2}:5000/tileserver/enhance",
@@ -518,6 +535,8 @@ def populate_table() -> None:
     colors, active_channels = get_channel_info()
 
     if colors is not None:
+        if active_channels:
+            tables[0].source.selected.indices = active_channels
         tables[0].source.data = {
             "channels": list(colors.keys()),
             "dummy": list(colors.keys()),
@@ -526,7 +545,6 @@ def populate_table() -> None:
             "colors": [rgb2hex(color) for color in colors.values()],
             "dummy": list(colors.keys()),
         }
-        tables[0].source.selected.indices = active_channels
 
 
 def update_node_colors(new) -> None:
@@ -1185,6 +1203,7 @@ def populate_slide_list(slide_folder: Path, search_txt: str | None = None) -> No
         "*.png",
         "*.tif",
         "*.qptiff",
+        "*.dcm",
     ]:
         # file_list.extend(list(Path(slide_folder).glob(str(Path("*") / ext))))
         file_list.extend(list(Path(slide_folder).glob(ext)))
@@ -1215,14 +1234,22 @@ def populate_slide_list(slide_folder: Path, search_txt: str | None = None) -> No
     UI["slide_select"].options = file_list
 
 
-def filter_input_cb(attr: str, old: str, new: str) -> None:  # noqa: ARG001
+def filter_input_cb(
+    attr: str,  # noqa: ARG001 # skipcq: PYL-W0613
+    old: str,  # noqa: ARG001 # skipcq: PYL-W0613
+    new: str,  # noqa: ARG001 # skipcq: PYL-W0613
+) -> None:
     """Change predicate to be used to filter annotations."""
     build_predicate()
     UI["vstate"].update_state = 1
     UI["vstate"].to_update.update(["overlay"])
 
 
-def cprop_input_cb(attr: str, old: str, new: list[str]) -> None:  # noqa: ARG001
+def cprop_input_cb(
+    attr: str,  # noqa: ARG001 # skipcq: PYL-W0613
+    old: str,  # noqa: ARG001 # skipcq: PYL-W0613
+    new: list[str],
+) -> None:
     """Change property to color by."""
     if len(new) == 0:
         return
@@ -3064,6 +3091,7 @@ class DocConfig:
             "*.png",
             "*.jpg",
             "*.qptiff",
+            "*.dcm",
         ]:
             slide_list.extend(list(doc_config["slide_folder"].glob(ext)))
             # slide_list.extend(

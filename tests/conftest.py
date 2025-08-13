@@ -113,6 +113,16 @@ def sample_svs(remote_sample: Callable) -> Path:
 
 
 @pytest.fixture(scope="session")
+def sample_qptiff(remote_sample: Callable) -> Path:
+    """Sample pytest fixture for qptiff images.
+
+    Download qptiff image for pytest.
+
+    """
+    return remote_sample("qptiff_sample")
+
+
+@pytest.fixture(scope="session")
 def sample_ome_tiff(remote_sample: Callable) -> Path:
     """Sample pytest fixture for ome-tiff (brightfield pyramid) images.
 
@@ -160,6 +170,17 @@ def sample_jp2(remote_sample: Callable) -> Path:
 
     """
     return remote_sample("jp2-omnyx-small")
+
+
+@pytest.fixture(scope="session")
+def sample_dicom(remote_sample: Callable) -> Path:
+    """Sample pytest fixture for DICOM images.
+
+    This fixture downloads a sample DICOM file in a standard format for testing.
+    The file represents a single DICOM image and is stored in a temporary directory.
+
+    """
+    return remote_sample("dicom-1")
 
 
 @pytest.fixture(scope="session")
@@ -578,9 +599,9 @@ def chdir() -> Callable:
 
     """
     try:
-        from contextlib import chdir
+        from contextlib import chdir  # noqa: PLC0415
     except ImportError:
-        from contextlib import AbstractContextManager
+        from contextlib import AbstractContextManager  # noqa: PLC0415
 
         class chdir(AbstractContextManager):  # noqa: N801
             """Non thread-safe context manager to change the current working directory.

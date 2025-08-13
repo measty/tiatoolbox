@@ -16,6 +16,8 @@ import cv2
 import glymur
 import numpy as np
 import pytest
+import SimpleITK as sitk  # noqa: N813
+import tifffile
 import zarr
 from click.testing import CliRunner
 from packaging.version import Version
@@ -41,6 +43,7 @@ from tiatoolbox.wsicore.wsireader import (
     NGFFWSIReader,
     OpenSlideWSIReader,
     TIFFWSIReader,
+    TransformedWSIReader,
     VirtualWSIReader,
     is_ngff,
     is_zarr,
@@ -85,6 +88,41 @@ RNG = np.random.default_rng()  # Numpy Random Generator
 # -------------------------------------------------------------------------------------
 # Utility Test Functions
 # -------------------------------------------------------------------------------------
+def get_tissue_com_tile(reader: WSIReader, size: int) -> IntBounds:
+    """Returns bounds of a tile located approximately at COM of the tissue.
+
+    Uses reader.tissue_mask() to find the center of mass of the tissue
+    and returns a tile centered at that point, at requested size. Used
+    to ensure we are looking at a tissue region when doing level consistency
+     tests etc.
+
+    Args:
+        reader (WSIReader): WSIReader instance.
+        size (int): Size at baseline of the tile to return.
+
+    Returns:
+        IntBounds: Baseline bounds of the tile centered at COM of the tissue.
+
+    """
+    mask = reader.tissue_mask(resolution=8.0, units="mpp").img
+
+    # Find the center of mass of the tissue
+    ys, xs = np.nonzero(mask)
+    com_y = int(ys.mean())
+    com_x = int(xs.mean())
+    # convert to baseline coordinates
+    com_x = int(com_x * (8.0 / reader.info.mpp[0]))
+    com_y = int(com_y * (8.0 / reader.info.mpp[1]))
+
+    # Calculate bounds for the tile centered at COM
+    half_size = size // 2
+    bounds = (
+        max(0, com_x - half_size),
+        max(0, com_y - half_size),
+        min(reader.info.slide_dimensions[0], com_x + half_size),
+        min(reader.info.slide_dimensions[1], com_y + half_size),
+    )
+    return np.array(bounds)
 
 
 def strictly_increasing(sequence: Iterable) -> bool:
@@ -733,6 +771,17 @@ def test_is_tiled_tiff(source_image: Path) -> None:
     source_image.replace(source_image.with_suffix(".tiff"))
     assert wsireader.is_tiled_tiff(source_image.with_suffix(".tiff")) is False
     source_image.with_suffix(".tiff").replace(source_image)
+
+
+def test_is_not_tiled_tiff(tmp_samples_path: Path) -> None:
+    """Test if source_image is not a tiled tiff."""
+    temp_tiff_path = tmp_samples_path / "not_tiled.tiff"
+    images = [np.zeros(shape=(4, 4)) for _ in range(3)]
+    # Write multi-page TIFF with all pages not tiled
+    with tifffile.TiffWriter(temp_tiff_path) as tif:
+        for image in images:
+            tif.write(image, compression=None, tile=None)
+    assert wsireader.is_tiled_tiff(temp_tiff_path) is False
 
 
 def test_read_rect_openslide_levels(sample_ndpi: Path) -> None:
@@ -1589,6 +1638,9 @@ def test_read_rect_at_resolution(sample_wsi_dict: dict) -> None:
         VirtualWSIReader(mini_wsi2_jpg),
         OpenSlideWSIReader(mini_wsi2_svs),
         JP2WSIReader(mini_wsi2_jp2),
+        TransformedWSIReader(
+            mini_wsi2_svs, target_img=mini_wsi2_svs, transform=np.eye(3)
+        ),
     ]
 
     for reader_idx, reader in enumerate(reader_list):
@@ -2700,7 +2752,8 @@ def test_read_rect_level_consistency(wsi: WSIReader) -> None:
     they are aligned.
 
     """
-    location = (0, 0)
+    bounds = get_tissue_com_tile(wsi, 1024)
+    location = bounds[:2]
     size = np.array([1024, 1024])
     # Avoid testing very small levels (e.g. as in Omnyx JP2) because
     # MSE for very small levels is noisy.
@@ -2735,7 +2788,7 @@ def test_read_bounds_level_consistency(wsi: WSIReader) -> None:
     they are aligned.
 
     """
-    bounds = (0, 0, 1024, 1024)
+    bounds = get_tissue_com_tile(wsi, 1024)
     # This logic can be moved from the helper to here when other
     # reader classes have been parameterised into scenarios also.
     read_bounds_level_consistency(wsi, bounds)
@@ -2780,15 +2833,17 @@ def test_read_rect_coord_space_consistency(wsi: WSIReader) -> None:
     will not be of the same size, but the field of view will match.
 
     """
+    bounds = get_tissue_com_tile(wsi, 2000)
+    location = (bounds[:2] // 2) * 2  # ensure even coordinates
     roi1 = wsi.read_rect(
-        np.array([500, 500]),
+        location,
         np.array([2000, 2000]),
         coord_space="baseline",
         resolution=1.00,
         units="baseline",
     )
     roi2 = wsi.read_rect(
-        np.array([250, 250]),
+        location // 2,
         np.array([1000, 1000]),
         coord_space="resolution",
         resolution=0.5,
@@ -2823,6 +2878,9 @@ def test_file_path_does_not_exist() -> None:
     ]:
         with pytest.raises(FileNotFoundError):
             _ = reader_class("./foo.bar")
+
+    with pytest.raises(FileNotFoundError):
+        _ = TransformedWSIReader("./foo.bar", target_img="./foo.bar")
 
 
 def test_read_mpp(wsi: WSIReader) -> None:
@@ -3001,3 +3059,148 @@ def test_fsspec_reader_open_pass_empty_json(tmp_path: Path) -> None:
     json_path.write_text("{}")
 
     assert not FsspecJsonWSIReader.is_valid_zarr_fsspec(str(json_path))
+
+
+def test_oob_read_dicom(sample_dicom: Path) -> None:
+    """Test that out of bounds returns background value.
+
+    For consistency with openslide, our readers should return a
+    background tile when reading out of bounds.
+
+    """
+    wsi = DICOMWSIReader(sample_dicom)
+    # Read a region that is out of bounds
+    region = wsi.read_rect(
+        location=(200000, 200),
+        size=(100, 100),
+    )
+    # Check that the region is the same size as the requested size
+    assert region.shape == (100, 100, 3)
+    # Check that the region is white (255)
+    assert np.all(region == 255)
+
+
+def test_read_rect_transformedreader_svs_baseline(
+    sample_svs: Path, remote_sample: Callable, tmp_path: Path
+) -> None:
+    """Test TransformedWSIReader.read_rect with an SVS file at baseline."""
+    wsi = wsireader.TransformedWSIReader(
+        sample_svs, target_img=sample_svs, transform=np.eye(3)
+    )
+    location = SVS_TEST_TISSUE_LOCATION
+    size = SVS_TEST_TISSUE_SIZE
+    im_region = wsi.read_rect(location, size, resolution=0, units="level")
+
+    assert isinstance(im_region, np.ndarray)
+    assert im_region.dtype == "uint8"
+    assert im_region.shape == (*size[::-1], 3)
+
+    fixed_info = wsi.info
+    wsi2 = wsireader.TransformedWSIReader(
+        sample_svs, target_img=sample_svs, transform=np.eye(3), fixed_info=fixed_info
+    )
+    im_region_2 = wsi2.read_rect(location, size, resolution=0, units="level")
+
+    assert np.array_equal(im_region, im_region_2)
+
+    with pytest.raises(
+        ValueError,
+        match="Transform cannot be None. Please provide a valid transformation",
+    ):
+        wsi2 = wsireader.TransformedWSIReader(
+            sample_svs, target_img=sample_svs, transform=None
+        )
+
+    # Now test MHA displacement field
+    wsi3 = wsireader.TransformedWSIReader(
+        sample_svs,
+        target_img=sample_svs,
+        transform=remote_sample("reg_disp_mha_example"),
+    )
+    im_region_3 = wsi3.read_rect(location, size, resolution=0, units="level")
+
+    # We don't expect arrays to be the same, but dimensions should be
+    assert im_region.shape == im_region_3.shape
+
+    # Now test NPY affine transformation
+    wsi4 = wsireader.TransformedWSIReader(
+        sample_svs,
+        target_img=sample_svs,
+        transform=remote_sample("reg_affine_npy_example"),
+    )
+    im_region_4 = wsi4.read_rect(location, size, resolution=0, units="level")
+
+    # We don't expect arrays to be the same, but dimensions should be
+    assert im_region.shape == im_region_4.shape
+
+    # Now test MHA file with correct shape
+    transform = remote_sample("reg_disp_mha_example")
+    displacement_field = sitk.ReadImage(transform, sitk.sitkVectorFloat64)
+    disp_array = sitk.GetArrayFromImage(displacement_field)  # (2, H, W)
+    disp_array = np.moveaxis(disp_array, 0, -1)
+    disp_image = sitk.GetImageFromArray(disp_array, isVector=True)
+
+    # Save it to a new .mha file in tmp_path
+    transform_path = tmp_path / "new_disp.mha"
+    sitk.WriteImage(disp_image, str(transform_path))
+
+    wsi5 = wsireader.TransformedWSIReader(
+        sample_svs,
+        target_img=sample_svs,
+        transform=transform_path,
+    )
+    im_region_5 = wsi5.read_rect(location, size, resolution=0, units="level")
+
+    # We don't expect arrays to be the same, but dimensions should be
+    assert im_region.shape == im_region_5.shape
+
+    # Test wrong file type
+    with pytest.raises(ValueError, match="Unsupported transformation file format"):
+        wsireader.TransformedWSIReader(
+            sample_svs,
+            target_img=sample_svs,
+            transform=sample_svs,
+        )
+
+
+def test_read_bounds_transformedreader_baseline(
+    sample_svs: Path, remote_sample: Callable
+) -> None:
+    """Test TransformedWSIReader read bounds at baseline.
+
+    Location coordinate is in baseline (level 0) reference frame.
+
+    """
+    wsi = wsireader.TransformedWSIReader(
+        sample_svs, target_img=sample_svs, transform=np.eye(3)
+    )
+
+    bounds = SVS_TEST_TISSUE_BOUNDS
+    size = SVS_TEST_TISSUE_SIZE
+    im_region = wsi.read_bounds(bounds, resolution=0, units="level")
+
+    assert isinstance(im_region, np.ndarray)
+    assert im_region.dtype == "uint8"
+    assert im_region.shape == (*size[::-1], 3)
+
+    # Now test MHA displacement field
+    wsi3 = wsireader.TransformedWSIReader(
+        sample_svs,
+        target_img=sample_svs,
+        transform=remote_sample("reg_disp_mha_example"),
+    )
+    im_region_3 = wsi3.read_bounds(bounds, resolution=0, units="level")
+
+    # We don't expect arrays to be the same, but dimensions should be
+    assert im_region.shape == im_region_3.shape
+
+    # Now test NPY affine transformation
+    wsi4 = wsireader.TransformedWSIReader(
+        sample_svs,
+        target_img=sample_svs,
+        transform=remote_sample("reg_affine_npy_example"),
+    )
+    im_region_4 = wsi4.read_bounds(bounds, resolution=0, units="level")
+
+    # We don't expect arrays to be the same, but dimensions should be
+    assert im_region.shape == im_region_4.shape

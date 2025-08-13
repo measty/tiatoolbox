@@ -10,6 +10,7 @@ import numpy as np
 import torch
 
 # import umap
+from matplotlib import collections as mc
 from matplotlib import pyplot as plt
 from scipy.cluster import hierarchy
 from scipy.spatial import Delaunay, cKDTree
@@ -480,8 +481,6 @@ class SlideGraphConstructor:
             >>> plt.show()
 
         """
-        from matplotlib import collections as mc
-
         # Check that the graph is valid
         if "x" not in graph:
             msg = "Graph must contain key `x`."
