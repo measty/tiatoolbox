@@ -261,8 +261,8 @@ class PatchExtractor(PatchExtractorABC):
             else:
                 self.mask = self.wsi.tissue_mask(
                     method=input_mask,
-                    resolution=1.25,
-                    units="power",
+                    resolution=6.0,
+                    units="mpp",
                 )
         elif isinstance(input_mask, wsireader.VirtualWSIReader):
             self.mask = input_mask
