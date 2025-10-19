@@ -12,7 +12,7 @@ def on_session_destroyed(session_context: SessionContext) -> None:
     """Hook to be executed when a session is destroyed."""
     user = session_context.request.arguments["user"]
     host = os.environ.get("HOST2")
-    port = os.environ.get("PORT") or "5000"
+    port = os.environ.get("PORT") or "7300"
     print(host)
     if host is None:
         host = "127.0.0.1"
