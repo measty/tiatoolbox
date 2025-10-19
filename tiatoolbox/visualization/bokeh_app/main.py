@@ -777,7 +777,7 @@ def get_mapper_for_prop(
             default_cm if UI["cmap_select"].value == "dict" else UI["cmap_select"].value
         )
         UI["vstate"].is_categorical = False
-        if slider is not None:
+        if slider is not None and len(prop_vals) > 0:
             # update passed sliders min and max values
             max_val = max(prop_vals)
             min_val = min(prop_vals)
@@ -1405,7 +1405,7 @@ def slide_select_cb(attr: str, old: str, new: str) -> None:  # noqa: ARG001
     # Load the overlay and graph automatically if set in config
     if doc_config["auto_load"]:
         for f in UI["layer_drop"].menu:
-            dummy_attr = DummyAttr(f[0])
+            dummy_attr = DummyAttr(f[1])
             layer_drop_cb(dummy_attr)
 
 
