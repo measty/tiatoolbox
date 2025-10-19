@@ -312,6 +312,19 @@ class UIWrapper:
         return win_dicts[self.active][key]
 
 
+def override_config_from_url(config: dict, req_args: dict) -> None:
+    """Override the config from the URL."""
+    if "slide" in req_args:
+        config["first_slide"] = str(req_args["slide"][0], "utf-8")
+        if "window" in req_args:
+            config["initial_views"][Path(config["first_slide"]).stem] = [
+                int(s) for s in str(req_args["window"][0], "utf-8")[1:-1].split(",")
+            ]
+    for k, v in req_args.items():
+        if f not in ["slide", "window"]:
+            config[k] = json.loads(v)
+
+
 class NodeScaler:
     """Class to scale node scores in range (min, max) to (0, 1)."""
 
@@ -3060,6 +3073,8 @@ class DocConfig:
 
         # Load a color_dict and/or slide initial view windows from a json file
         config_file = list(overlay_folder.glob("*config.json"))
+        if len(config_file) == 0:
+            config_file = list(slide_folder.glob("*config.json"))
         config = self.config
         if len(config_file) > 0:
             config_file = config_file[0]
@@ -3075,12 +3090,10 @@ class DocConfig:
             config["initial_views"] = {}
 
         # Get any extra info from query url
-        if "slide" in req_args:
-            config["first_slide"] = str(req_args["slide"][0], "utf-8")
-            if "window" in req_args:
-                config["initial_views"][Path(config["first_slide"]).stem] = [
-                    int(s) for s in str(req_args["window"][0], "utf-8")[1:-1].split(",")
-                ]
+        override_config_from_url(
+            config,
+            req_args,
+        )
         self.config = config
         self.config["auto_load"] = get_from_config(["auto_load"], 0) == 1
 
