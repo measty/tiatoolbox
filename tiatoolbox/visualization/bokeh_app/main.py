@@ -14,18 +14,13 @@ import urllib
 from cmath import pi
 from pathlib import Path, PureWindowsPath
 from shutil import rmtree
-from typing import TYPE_CHECKING, Any, Callable, SupportsFloat
+from typing import TYPE_CHECKING, Any, SupportsFloat
 
 import cv2
 import numpy as np
 import pandas as pd
 import requests
 import torch
-from matplotlib import colormaps
-from openai import OpenAI
-from PIL import Image
-from requests.adapters import HTTPAdapter, Retry
-
 from bokeh.events import ButtonClick, DoubleTap, MenuItemClick
 from bokeh.io import curdoc
 from bokeh.layouts import column, row
@@ -77,6 +72,10 @@ from bokeh.models.dom import HTML
 from bokeh.models.tiles import WMTSTileSource
 from bokeh.plotting import figure
 from bokeh.util import token
+from matplotlib import colormaps
+from openai import OpenAI
+from PIL import Image
+from requests.adapters import HTTPAdapter, Retry
 
 # GitHub actions seems unable to find TIAToolbox unless this is here
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
@@ -97,6 +96,8 @@ except ImportError:
     print("Ollama not available, using gpt-4o instead.")
 
 if TYPE_CHECKING:  # pragma: no cover
+    from collections.abc import Callable
+
     from bokeh.document import Document
 
 rng = np.random.default_rng()
@@ -461,7 +462,13 @@ def create_channel_color_ui() -> Column:
 
     def apply_changes() -> None:
         """Apply the changes to the image."""
-        colors = dict(zip(channel_source.data["channels"], color_source.data["colors"]))
+        colors = dict(
+            zip(
+                channel_source.data["channels"],
+                color_source.data["colors"],
+                strict=False,
+            )
+        )
         active_channels = channel_source.selected.indices
 
         set_channel_info({ch: hex2rgb(colors[ch]) for ch in colors}, active_channels)
@@ -970,7 +977,6 @@ def add_layer(lname: str) -> None:
             end=1,
             value=0.75,
             step=0.01,
-            title=lname,
             height=40,
             width=100,
             max_width=90,
@@ -1186,7 +1192,9 @@ def populate_layer_list(slide_name: str, overlay_path: Path) -> None:
         "*.mha",
     ]:
         file_list.extend(list(overlay_path.glob(ext)))
-    file_list = [(str(p.name), str(p)) for p in sorted(file_list) if slide_name in str(p.name)]
+    file_list = [
+        (str(p.name), str(p)) for p in sorted(file_list) if slide_name in str(p.name)
+    ]
     UI["layer_drop"].menu = file_list
 
 
@@ -1681,7 +1689,9 @@ def layer_slider_cb(
             UI["vstate"].layer_dict[obj.name.split("_")[0]]
         ].glyph.line_alpha = new
     else:
-        UI["p"].renderers[UI["vstate"].layer_dict[obj.name.split("_")[0]]].alpha = new
+        UI["p"].renderers[
+            UI["vstate"].layer_dict["_".join(obj.name.split("_")[0:-1])]
+        ].alpha = new
 
 
 def color_input_cb(
@@ -2476,6 +2486,7 @@ def gather_ui_elements(  # noqa: PLR0915
                 model_row,
                 type_select_row,
             ],
+            strict=False,
         ),
     )
     if len(get_from_config(["cohorts"], {})) < 2:
@@ -2516,6 +2527,7 @@ def gather_ui_elements(  # noqa: PLR0915
                 scale_tabs,
                 create_channel_color_ui(),
             ],
+            strict=False,
         ),
     )
     if "ui_elements_2" in doc_config:

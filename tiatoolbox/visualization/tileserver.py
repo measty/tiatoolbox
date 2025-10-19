@@ -36,6 +36,7 @@ from tiatoolbox.wsicore.wsireader import (
 if TYPE_CHECKING:  # pragma: no cover
     from matplotlib.colors import Colormap
 
+    from tiatoolbox.annotation.storage import Annotation
     from tiatoolbox.wsicore import WSIMeta
 
 
@@ -426,7 +427,7 @@ class TileServer(Flask):
         session_id = self._get_session_id()
         cmap = json.loads(request.form["cmap"])
         if isinstance(cmap, dict):
-            cmap = dict(zip(cmap["keys"], cmap["values"]))
+            cmap = dict(zip(cmap["keys"], cmap["values"], strict=False))
             self.renderers[session_id].score_fn = lambda x: x
         self.renderers[session_id].mapper = cmap
         self.renderers[session_id].function_mapper = None
@@ -543,7 +544,7 @@ class TileServer(Flask):
         self,
         session_id: str,
         overlay_path: Path,
-        other_session_id: str,
+        other_session_id: str | None,
     ) -> str:
         def _apply_transform(source_fp: str, target_fp: str) -> None:
             # loading a registration transformation
@@ -564,10 +565,11 @@ class TileServer(Flask):
             )
             return json.dumps("slide")
 
-        layer_keys = [k for k in self.layers[session_id] if "layer" in k]
-        for key in sorted(
-            layer_keys, key=lambda x: int(x.replace("layer", "")), reverse=True
-        ):
+        layer_keys = [
+            k for k in self.layers[session_id] if k not in ["slide", "overlay"]
+        ]
+        layer_keys.reverse()  # try newest first
+        for key in layer_keys:
             target_fp = self.layers[session_id][key].info.file_path
             if Path(target_fp).suffix in [".tiff", ".svs", ".ndpi", ".mrxs"]:
                 logger.warning(
@@ -590,7 +592,10 @@ class TileServer(Flask):
         return json.dumps("slide")
 
     def _add_image_overlay(self, session_id: str, overlay_path: Path) -> str:
-        layer = f"layer{len(self.pyramids[session_id])}"
+        layer = overlay_path.stem
+        if layer in self.layers[session_id]:
+            # use full file name to disambiguate
+            layer = overlay_path.name
         if overlay_path.suffix == ".tiff":
             self.layers[session_id][layer] = OpenSlideWSIReader(
                 overlay_path,
@@ -613,7 +618,19 @@ class TileServer(Flask):
 
     def _add_annotation_overlay(self, session_id: str, overlay_path: Path) -> str:
         if overlay_path.suffix == ".geojson":
-            sq = SQLiteStore.from_geojson(overlay_path)
+
+            def unpack_qupath(ann: Annotation) -> Annotation:
+                # Helper function to unpack QuPath measurements if present.
+                props = ann.properties
+                if "measurements" in props:
+                    measurements = props.pop("measurements")
+                    for k, v in measurements.items():
+                        props[k] = v
+                if "objectType" in props:
+                    props["type"] = props.pop("objectType")
+                return ann
+
+            sq = SQLiteStore.from_geojson(overlay_path, transform=unpack_qupath)
         elif overlay_path.suffix == ".dat":
             sq = store_from_dat(overlay_path)
         if overlay_path.suffix == ".db":
