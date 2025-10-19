@@ -6,6 +6,7 @@ import importlib.resources as importlib_resources
 import io
 import json
 import multiprocessing
+import os
 import re
 import time
 from pathlib import Path
@@ -39,6 +40,7 @@ BOKEH_PATH = importlib_resources.files("tiatoolbox.visualization.bokeh_app")
 FILLED = 0
 MICRON_FORMATTER = 1
 GRIDLINES = 2
+TILESERVER_PORT = os.environ.get("PORT", "5000")
 
 
 # helper functions and fixtures
@@ -77,7 +79,9 @@ def get_renderer_prop(prop: str) -> json:
             The property to get.
 
     """
-    resp = main.UI["s"].get(f"http://{main.host2}:5000/tileserver/renderer/{prop}")
+    resp = main.UI["s"].get(
+        f"http://{main.host2}:{TILESERVER_PORT}/tileserver/renderer/{prop}"
+    )
     return resp.json()
 
 
@@ -377,13 +381,17 @@ def test_type_cmap_select(doc: Document) -> None:
 
     # remove the type cmap
     cmap_select.value = []
-    resp = main.UI["s"].get(f"http://{main.host2}:5000/tileserver/secondary_cmap")
+    resp = main.UI["s"].get(
+        f"http://{main.host2}:{TILESERVER_PORT}/tileserver/secondary_cmap"
+    )
     assert resp.json()["score_prop"] == "None"
 
     # check callback works regardless of order
     cmap_select.value = ["0"]
     cmap_select.value = ["0", "prob"]
-    resp = main.UI["s"].get(f"http://{main.host2}:5000/tileserver/secondary_cmap")
+    resp = main.UI["s"].get(
+        f"http://{main.host2}:{TILESERVER_PORT}/tileserver/secondary_cmap"
+    )
     assert resp.json()["score_prop"] == "prob"
 
 
@@ -754,16 +762,16 @@ def test_cmap_select(doc: Document) -> None:
     main.UI["cprop_input"].value = ["prob"]
     # set to jet
     cmap_select.value = "jet"
-    resp = main.UI["s"].get(f"http://{main.host2}:5000/tileserver/cmap")
+    resp = main.UI["s"].get(f"http://{main.host2}:{TILESERVER_PORT}/tileserver/cmap")
     assert resp.json() == "jet"
     # set to dict
     cmap_select.value = "dict"
-    resp = main.UI["s"].get(f"http://{main.host2}:5000/tileserver/cmap")
+    resp = main.UI["s"].get(f"http://{main.host2}:{TILESERVER_PORT}/tileserver/cmap")
     assert isinstance(resp.json(), dict)
 
     main.UI["cprop_input"].value = ["type"]
     # should now be the type mapping
-    resp = main.UI["s"].get(f"http://{main.host2}:5000/tileserver/cmap")
+    resp = main.UI["s"].get(f"http://{main.host2}:{TILESERVER_PORT}/tileserver/cmap")
     for key in main.UI["vstate"].mapper:
         assert str(key) in resp.json()
         assert np.all(
@@ -771,7 +779,7 @@ def test_cmap_select(doc: Document) -> None:
         )
     # set the cmap to "coolwarm"
     cmap_select.value = "coolwarm"
-    resp = main.UI["s"].get(f"http://{main.host2}:5000/tileserver/cmap")
+    resp = main.UI["s"].get(f"http://{main.host2}:{TILESERVER_PORT}/tileserver/cmap")
     # as cprop is type (categorical), it should have had no effect
     for key in main.UI["vstate"].mapper:
         assert str(key) in resp.json()
@@ -780,7 +788,7 @@ def test_cmap_select(doc: Document) -> None:
         )
 
     main.UI["cprop_input"].value = ["prob"]
-    resp = main.UI["s"].get(f"http://{main.host2}:5000/tileserver/cmap")
+    resp = main.UI["s"].get(f"http://{main.host2}:{TILESERVER_PORT}/tileserver/cmap")
     # should be coolwarm as that is the last cmap we set, and prob is continuous
     assert resp.json() == "coolwarm"
 
