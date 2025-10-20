@@ -7,31 +7,32 @@
 
 {% block postamble %}
   <style>
+    /* ---------------------------------- */
+    /* Existing modal / popup styles      */
+    /* ---------------------------------- */
     #modalBackdrop {
         position: fixed;
         top: 0;
         left: 0;
         width: 100vw;
         height: 100vh;
-        background: rgba(0, 0, 0, 0.5); /* Semi-transparent backdrop */
-        z-index: 1000; /* High z-index to ensure it's on top */
+        background: rgba(0, 0, 0, 0.5);
+        z-index: 1000;
     }
 
     #uploadModal {
-        position: fixed; /* Stay in place */
-        z-index: 1001; /* Sits on top of the backdrop */
-        left: 50%; /* Half of the viewport width */
-        top: 50%; /* Half of the viewport height */
-        transform: translate(-50%, -50%); /* Offset by half of the modal's width and height */
+        position: fixed;
+        z-index: 1001;
+        left: 50%;
+        top: 50%;
+        transform: translate(-50%, -50%);
         background: white;
         padding: 20px;
         border-radius: 5px;
         box-shadow: 0 5px 15px rgba(0, 0, 0, 0.3);
     }
 
-    .modal-content {
-        text-align: center;
-    }
+    .modal-content { text-align: center; }
 
     .slide {
         width: 80%;
@@ -48,19 +49,10 @@
         top: 0;
         right: 0;
     }
-    .description {
-        width: 78%;
-        height: 100%;
-        position: absolute;
-        top: 100%;
-        left: 2%;
-        margin: 10px 0;
-    }
-    .hidden {
-      display: none;
-    }
 
-    .popup {
+    .hidden { display: none; }
+
+    .popup { /* generic draggable pop‑up shell */
       position: absolute;
       top: 30%;
       left: 20%;
@@ -83,7 +75,6 @@
       overflow: auto;
     }
 
-
     .popup-content {
       background-color: white;
       padding: 10px;
@@ -97,51 +88,119 @@
       height: 75%;
       overflow: auto;
     }
-
     .popup-header {
       cursor: move;
       user-select: none;
-      -webkit-user-select: none;
-      -moz-user-select: none;
-      -ms-user-select: none;
     }
 
+    /* ─────────────*/
+    /*  HELP CIRCLE */
+    /* ──────────── */
+    #helpButton {
+      position: fixed;
+      top: 50px;           /* ≈ 60 px from top ⇒ “near, but not at, the corner”   */
+      left: 0;
+      transform: translate(-15%, 0);   /* 40 % outside ⇒ 60 % inside the page    */
+      width: 44px;
+      height: 44px;
+      border-radius: 50%;
+      background: #4CAF50;
+      color: #fff;
+      font-weight: 700;
+      font-size: 24px;
+      border: none;
+      cursor: pointer;
+      z-index: 1003;
+      box-shadow: 0 2px 4px rgba(0,0,0,.3);
+    }
+
+    /* ──────────────────────────────────────── */
+    /*  DESCRIPTION SLIDE-OUT PANEL            */
+    /* ──────────────────────────────────────── */
+    #descriptionPanel {
+      position: fixed;
+      left: 50px;
+      top: 0;
+      width: 30%;
+      height: 100vh;
+      background: #fff;
+      transform: translateX(-120%);
+      transition: transform 0.3s ease;
+      z-index: 1002;
+      box-shadow: 2px 0 5px rgba(0,0,0,0.3);
+      display: flex;
+      flex-direction: column;
+    }
+    #descriptionPanel.open { transform: translateX(0); }
+
+    /* scrolling content wrapper */
+    .description-content {
+      flex: 1;
+      overflow: auto;
+      padding: 10px;
+    }
+
+    /* ---------------------------------- */
+    /* upload progress/status strip (fixed*/
+    /* ---------------------------------- */
+    #progressContainer {
+      position: fixed;
+      bottom: -50px;
+      left: 0;
+      width: 100%;
+      background: #ddd;
+      z-index: -100;  /* below slide */
+      padding: 4px 0;
+    }
+    #uploadProgress { /* progress bar fill */ }
+    #uploadStatus  { /* text status      */ }
   </style>
 {% endblock %}
 
 <!-- goes in body -->
 {% block contents %}
+
+<!-----------------------------
+  1.  HELP BUTTON & SLIDE PANEL
+------------------------------>
+<button id="helpButton" title="Show / hide description">?</button>
+
+<div id="descriptionPanel">
+  {#  ⟵ removed the dedicated “close” arrow button  #}
+  <div id="descriptionContent" class="description-content">
+    {{ embed(roots.description) }}
+  </div>
+</div>
+
+<!-----------------------------
+  2.  REGULAR PAGE LAYOUT
+------------------------------>
 <div class="popup">
   <div id="props-popup" class="popup-content hidden">
-    <div class="popup-header">
-      <h2>Annotation Properties</h2>
-    </div>
-    <div class="popup-body">
-    {{ embed(roots.popup_window) }}
-    </div>
+    <div class="popup-header"><h2>Annotation Properties</h2></div>
+    <div class="popup-body">{{ embed(roots.popup_window) }}</div>
     <button class="btn btn-primary" id="close-popup">Close</button>
   </div>
 </div>
 <div class="popup">
   <div id="gpt-popup" class="popup-content hidden">
-    <div class="popup-header">
-      <h2>Prompt to be sent:</h2>
-    </div>
-    <div class="popup-body">
-      {{ embed(roots.dialog) }}
-    </div>
+    <div class="popup-header"><h2>Prompt to be sent:</h2></div>
+    <div class="popup-body">{{ embed(roots.dialog) }}</div>
   </div>
 </div>
-<div class="slide" id="dropZone"> {{ embed(roots.slide_windows) }} </div><div class="ui"> {{ embed(roots.ui_layout) }} </div>
+
+<div class="slide" id="dropZone">{{ embed(roots.slide_windows) }}</div>
+<div class="ui">{{ embed(roots.ui_layout) }}</div>
+
 <input type="file" id="fileInput" style="display: none;" multiple>
-<!-- Backdrop -->
+
+<!-- Backdrop for upload modal-->
 <div id="modalBackdrop" style="display:none;"></div>
-<!-- Hidden modal -->
-<div id="uploadModal" style="display:none;">
+<div id="uploadModal"   style="display:none;">
   <div class="modal-content">
     {% if allow_upload %}
-      <div>Files will be uploaded in the background, scroll to bottom of page to see progress. <br>
-        Please select the type of file you are uploading:</div>
+      <div>Files will be uploaded in the background, scroll to bottom of page to see progress.<br>
+           Please select the type of file you are uploading:</div>
       <button id="Slide">Slide</button>
       <button id="Overlay">Overlay</button>
     {% else %}
@@ -150,155 +209,113 @@
     {% endif %}
   </div>
 </div>
-<div class="description">
-  {{ embed(roots.description) }}
-  <!-- Progress bar container -->
+
+<!-----------------------------
+  3.  UPLOAD PROGRESS STRIP
+------------------------------>
+<div id="progressContainer">
   <div style="width: 100%; background-color: #ddd;">
-    <!-- Progress bar -->
     <div id="uploadProgress" style="width: 0%; height: 30px; background-color: #4CAF50; text-align: center; color: white;"></div>
   </div>
-
-  <!-- Status display -->
   <div id="uploadStatus"></div>
 </div>
+
 <script>
-  // Query all popup headers and contents
-  const popupHeaders = document.querySelectorAll('.popup-header');
-  const popups = document.querySelectorAll('.popup-content');
+/*************************************
+* A.  DRAGGABLE BOKEH POP‑UPS        *
+*************************************/
+const popupHeaders = document.querySelectorAll('.popup-header');
+const popups = document.querySelectorAll('.popup-content');
 
-  // Function to initialize drag functionality for each popup
-  function makePopupDraggable(popupHeader, popupContent) {
-      let isDragging = false;
-      let offsetX, offsetY;
-
-      popupHeader.addEventListener('mousedown', function(e) {
-          isDragging = true;
-          offsetX = e.clientX - popupContent.getBoundingClientRect().left;
-          offsetY = e.clientY - popupContent.getBoundingClientRect().top;
-          popupContent.style.position = 'fixed';
-      });
-
-      document.addEventListener('mousemove', function(e) {
-          if (isDragging) {
-              popupContent.style.left = (e.clientX - offsetX) + 'px';
-              popupContent.style.top = (e.clientY - offsetY) + 'px';
-          }
-      });
-
-      document.addEventListener('mouseup', function() {
-          isDragging = false;
-      });
-  }
-
-  // Attach close button functionality and make each popup draggable
-  popups.forEach((popupContent, index) => {
-      const closePopupBtn = popupContent.querySelector('.btn-primary');
-      const popupHeader = popupHeaders[index];
-
-      if (closePopupBtn) {
-        closePopupBtn.addEventListener('click', function() {
-          popupContent.classList.add('hidden');
-        });
-      }
-
-      makePopupDraggable(popupHeader, popupContent);
+function makePopupDraggable(header, content){
+  let isDragging = false, offsetX, offsetY;
+  header.addEventListener('mousedown', e=>{
+    isDragging = true;
+    offsetX = e.clientX - content.getBoundingClientRect().left;
+    offsetY = e.clientY - content.getBoundingClientRect().top;
+    content.style.position = 'fixed';
   });
-
-  document.getElementById('dropZone').addEventListener('dragover', function(event) {
-      event.stopPropagation();
-      event.preventDefault();
-      event.dataTransfer.dropEffect = 'copy'; // Explicitly show this is a copy.
+  document.addEventListener('mousemove', e=>{
+    if(isDragging){
+      content.style.left = (e.clientX-offsetX)+'px';
+      content.style.top  = (e.clientY-offsetY)+'px';
+    }
   });
+  document.addEventListener('mouseup', ()=> isDragging = false);
+}
 
-  document.getElementById('dropZone').addEventListener('drop', function(event) {
-      event.stopPropagation();
-      event.preventDefault();
-      const files = event.dataTransfer.files; // FileList object.
-      showUploadModal(files);
+popups.forEach((content, idx)=>{
+  const closeBtn = content.querySelector('.btn-primary');
+  if(closeBtn) closeBtn.addEventListener('click', ()=> content.classList.add('hidden'));
+  makePopupDraggable(popupHeaders[idx], content);
+});
+
+/*************************************
+* B.  FILE DRAG‑AND‑DROP UPLOAD      *
+*************************************/
+const dropZone = document.getElementById('dropZone');
+dropZone.addEventListener('dragover', e=>{ e.preventDefault(); e.dataTransfer.dropEffect='copy';});
+dropZone.addEventListener('drop', e=>{ e.preventDefault(); showUploadModal(e.dataTransfer.files); });
+
+function showUploadModal(files){
+  document.getElementById('modalBackdrop').style.display='block';
+  const modal = document.getElementById('uploadModal');
+  modal.style.display='block';
+  if(document.getElementById('Slide')){
+    document.getElementById('Slide').onclick = ()=>{ handleFiles(files,'slides'); hideModal(); };
+    document.getElementById('Overlay').onclick= ()=>{ handleFiles(files,'overlays'); hideModal(); };
+  } else {
+    document.getElementById('Close').onclick = hideModal;
+  }
+  function hideModal(){ modal.style.display='none'; document.getElementById('modalBackdrop').style.display='none'; }
+}
+
+function handleFiles(files,type){ for(const f of files) uploadFile(f,type); }
+function uploadFile(file,type){
+  const xhr = new XMLHttpRequest();
+  const formData = new FormData();
+  const bar = document.getElementById('uploadProgress');
+  const status = document.getElementById('uploadStatus');
+
+  formData.append('file', file);
+  formData.append('folder', type==='slides' ? '{{ slide_folder }}' : '{{ overlay_folder }}');
+
+  xhr.upload.addEventListener('progress', e=>{
+    if(e.lengthComputable){ const pct = (e.loaded/e.total)*100; bar.style.width=pct+'%'; bar.textContent=pct.toFixed(2)+'%'; }
   });
+  xhr.addEventListener('load', ()=> status.innerText = xhr.status===200 ? 'Upload successful!' : 'Upload failed!');
+  xhr.addEventListener('error',()=> status.innerText='Upload error!');
+  xhr.addEventListener('abort',()=> status.innerText='Upload aborted!');
 
-  function showUploadModal(files) {
-      // Show the backdrop
-      document.getElementById('modalBackdrop').style.display = 'block';
+  xhr.open('POST', 'https://tiademos.dcs.warwick.ac.uk/tileserver/upload', true);
+  xhr.send(formData);
+}
 
-      // Show the modal
-      const uploadModal = document.getElementById('uploadModal');
-      uploadModal.style.display = 'block';
+/*************************************
+* C.  DESCRIPTION PANEL LOGIC        *
+*************************************/
+const helpBtn = document.getElementById('helpButton');
+const panel   = document.getElementById('descriptionPanel');
 
-      // Add event listeners for the buttons
-      if (document.getElementById('Slide') && document.getElementById('Overlay')) {
-        document.getElementById('Slide').onclick = function() {
-            handleFiles(files, 'slides');
-            uploadModal.style.display = 'none'; // Hide the modal
-            document.getElementById('modalBackdrop').style.display = 'none';
-        };
-        document.getElementById('Overlay').onclick = function() {
-            handleFiles(files, 'overlays');
-            uploadModal.style.display = 'none'; // Hide the modal
-            document.getElementById('modalBackdrop').style.display = 'none';
-        };
-      } else if (document.getElementById('Close')) {
-        document.getElementById('Close').onclick = function() {
-            uploadModal.style.display = 'none'; // Hide the modal
-            document.getElementById('modalBackdrop').style.display = 'none';
-        };
-      }
-  }
+/* one button → toggle                         */
+helpBtn.addEventListener('click', () => {
+  panel.classList.toggle('open');
+});
 
-  function handleFiles(files, type) {
-      for (let i = 0, f; f = files[i]; i++) {
-          // Process each file here
-          uploadFile(f, type);
-      }
-  }
-
-  function uploadFile(file, type) {
-      const xhr = new XMLHttpRequest();
-      const formData = new FormData();
-      const progressElement = document.getElementById('uploadProgress'); // Progress bar element in your HTML
-      const statusElement = document.getElementById('uploadStatus'); // Status display element in your HTML
-
-      formData.append('file', file);
-      if (type === 'slides') {
-          formData.append('folder', '{{ slide_folder }}');
-      } else if (type === 'overlays') {
-          formData.append('folder', '{{ overlay_folder }}');
-      }
-
-      // Progress event
-      xhr.upload.addEventListener('progress', function(e) {
-          if (e.lengthComputable) {
-              const percentComplete = (e.loaded / e.total) * 100;
-              // Update your progress bar here
-              progressElement.style.width = percentComplete + '%';
-              progressElement.textContent = `${percentComplete.toFixed(2)}%`; // Optional: show percentage number in progress bar
-          }
-      });
-
-      // Load event
-      xhr.addEventListener('load', function() {
-          if (xhr.status === 200) {
-              statusElement.innerText = 'Upload successful!';
-          } else {
-              statusElement.innerText = 'Upload failed!';
-          }
-      });
-
-      // Error event
-      xhr.addEventListener('error', function() {
-          statusElement.innerText = 'Upload error!';
-      });
-
-      // Abort event
-      xhr.addEventListener('abort', function() {
-          statusElement.innerText = 'Upload aborted!';
-      });
-
-      // Open and send the request
-      xhr.open('POST', '{{ tileserver_base_url }}/upload', true);
-      xhr.send(formData);
-  }
-
+ // load external description html into the panel (if it exists)
+const demoName  = "{{ demo_name }}";
+//const iframeSrc = `bokeh_app/static/${demoName}/description.html`;
+//fetch(iframeSrc, {method:'HEAD'})
+//  .then(r => {
+//    if (r.ok) {
+//      const iframe = document.createElement('iframe');
+//      iframe.src   = iframeSrc;
+//      iframe.style.border = 'none';
+//      iframe.style.width  = '100%';
+//      iframe.style.height = '100%';
+//      document.getElementById('descriptionContent').appendChild(iframe);
+//    }
+//  })
+//  .catch(err => console.warn('Description HTML not found', err));
 </script>
-
 {% endblock %}

@@ -320,9 +320,10 @@ def override_config_from_url(config: dict, req_args: dict) -> None:
             config["initial_views"][Path(config["first_slide"]).stem] = [
                 int(s) for s in str(req_args["window"][0], "utf-8")[1:-1].split(",")
             ]
-    #for k, v in req_args.items():
-    #    if k not in ["slide", "window"]:
-    #        config[k] = json.loads(v[0].decode("utf-8"))
+    for k, v in req_args.items():
+        print(f"k: {k}, v: {v}")
+        if k not in ["slide", "window"]:
+            config[k] = str(v[0], "utf-8")
 
 
 class NodeScaler:
@@ -1644,7 +1645,7 @@ def layer_drop_cb(attr: MenuItemClick) -> None:
     fname = make_safe_name(attr.item)
     resp = UI["s"].put(
         f"http://{host2}:{port}/tileserver/overlay",
-        data={"overlay_path": fname},
+        data={"overlay_path": fname, "other_session_id": win_dicts[1-UI.active]["user"] if len(win_dicts) > 1 else ""},
     )
     resp = json.loads(resp.text)
 

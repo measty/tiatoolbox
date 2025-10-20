@@ -521,18 +521,12 @@ class TileServer(Flask):
         """
         session_id = self._get_session_id()
         overlay_path = request.form["overlay_path"]
+        other_session_id = request.form["other_session_id"]
         overlay_path = self.decode_safe_name(overlay_path)
-
-        # Get other session id
-        session_ids = list(self.layers.keys())
-        session_ids.remove(session_id)
-
-        # Get the first remaining session_id (if any exist)
-        other_session_id = session_ids[0] if session_ids else None
 
         if overlay_path.suffix in [".npy", ".mha"]:
             return self._handle_registration_overlay(
-                session_id, overlay_path, other_session_id
+                session_id, overlay_path, other_session_id or None
             )
 
         if overlay_path.suffix in [".jpg", ".png", ".tiff", ".svs", ".ndpi", ".mrxs"]:
@@ -858,7 +852,7 @@ class TileServer(Flask):
         if isinstance(self.layers[session_id]["slide"].post_proc, MultichannelToRGB):
             if not self.layers[session_id]["slide"].post_proc.is_validated:
                 _ = self.layers[session_id]["slide"].slide_thumbnail(
-                    resolution=8.0, units="mpp"
+                    resolution=0.06, units="baseline"
                 )
             return jsonify(
                 {
