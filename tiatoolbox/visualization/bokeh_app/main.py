@@ -1055,7 +1055,7 @@ def change_tiles(layer_name: str = "overlay") -> None:
         return
 
     ts = make_ts(
-        f"//{host}/tileserver/layer/{layer_name}/{UI['user']}/"
+        f"//{host}{ts_port}/tileserver/layer/{layer_name}/{UI['user']}/"
         f"zoomify/TileGroup{grp}"
         r"/{z}-{x}-{y}"
         f"@{UI['vstate'].res}x.jpg",
@@ -1076,7 +1076,7 @@ def change_tiles(layer_name: str = "overlay") -> None:
                 continue
             grp = tg.get_grp()
             ts = make_ts(
-                f"//{host}/tileserver/layer/{layer_key}/{UI['user']}/"
+                f"//{host}{ts_port}/tileserver/layer/{layer_key}/{UI['user']}/"
                 f"zoomify/TileGroup{grp}"
                 r"/{z}-{x}-{y}"
                 f"@{UI['vstate'].res}x.jpg",
@@ -1645,7 +1645,12 @@ def layer_drop_cb(attr: MenuItemClick) -> None:
     fname = make_safe_name(attr.item)
     resp = UI["s"].put(
         f"http://{host2}:{port}/tileserver/overlay",
-        data={"overlay_path": fname, "other_session_id": win_dicts[1-UI.active]["user"] if len(win_dicts) > 1 else ""},
+        data={
+            "overlay_path": fname,
+            "other_session_id": win_dicts[1 - UI.active]["user"]
+            if len(win_dicts) > 1
+            else "",
+        },
     )
     resp = json.loads(resp.text)
 
@@ -2662,7 +2667,7 @@ def make_window(vstate: ViewerState) -> dict:  # noqa: PLR0915
     # Set up the main slide window
     vstate.init_z = init_z
     ts1 = make_ts(
-        f"//{host}/tileserver/layer/slide/{user}/zoomify/TileGroup1"
+        f"//{host}{ts_port}/tileserver/layer/slide/{user}/zoomify/TileGroup1"
         r"/{z}-{x}-{y}"
         f"@{vstate.res}x.jpg",
         vstate.num_zoom_levels,
@@ -2927,7 +2932,7 @@ if curdoc().session_context is not None:
     req_args = curdoc().session_context.request.arguments
     do_doc = True
 
-is_deployed = True
+is_deployed = False
 rand_id = token.generate_session_id()
 first_z = [1]
 
@@ -2936,10 +2941,12 @@ if is_deployed:
     host = os.environ.get("HOST")
     host2 = os.environ.get("HOST2")
     port = os.environ.get("PORT") or "7300"
+    ts_port = ""
 else:
     host = "127.0.0.1"
     host2 = "127.0.0.1"
     port = "5000"
+    ts_port = ":5000"
 
 
 def update() -> None:
