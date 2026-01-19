@@ -89,6 +89,62 @@ from tiatoolbox.utils.visualization import random_colors
 from tiatoolbox.visualization.ui_utils import get_level_by_extent
 from tiatoolbox.wsicore.wsireader import WSIReader
 
+JSON_SCHEMA = {
+    "colour_dict": {
+        str: list[int]
+    },
+    "initial_views": {
+        str: list[int]
+            },
+    "auto_load": int,
+    "first_slide": str,
+    "default_cprop": str,
+    "UI_settings": {
+        "blur_radius": int,
+        "edge_thickness": int,
+        "max_scale": int
+    },
+    "opts": {
+        "edges_on": int,
+        "nodes_on": int,
+        "colorbar_on": int
+    },
+    "ui_elements_1": {
+        "slide_select": int,
+        "layer_drop": int,
+        "slide_row": int,
+        "overlay_row": int,
+        "filter_input": int,
+        "cprop_input": int,
+        "cmap_row": int,
+        "type_cmap_select": int,
+        "model_row": int,
+        "type_select_row": int
+    },
+    "ui_elements_2": {
+        "opt_buttons": int,
+        "pt_size_spinner": int,
+        "edge_size_spinner": int,
+        "res_switch": int
+    },
+    "allow_upload": int,
+    "password": str,
+    "cohorts": {
+        str: list[str]
+    }
+    }
+
+def to_str_or_num(val):
+    out = str(val, "utf-8")
+    # if it can be converted to number, do it
+    try:
+        out = float(out)
+        if out.is_integer():
+            out = int(out)
+    except ValueError:
+        pass      
+    return out
+
 # try to import ollama if its available
 try:
     import ollama
@@ -323,7 +379,14 @@ def override_config_from_url(config: dict, req_args: dict) -> None:
     for k, v in req_args.items():
         print(f"k: {k}, v: {v}")
         if k not in ["slide", "window"]:
-            config[k] = str(v[0], "utf-8")
+            keys_and_subkeys = k.split(":")
+            if len(keys_and_subkeys) > 1:
+                main_key = keys_and_subkeys[0]
+                sub_dict = config.get(main_key, {})
+                sub_dict[keys_and_subkeys[1]] = to_str_or_num(v[0])
+                config[main_key] = sub_dict
+            else:
+                config[k] = to_str_or_num(v[0])              
 
 
 class NodeScaler:
@@ -1117,7 +1180,7 @@ class ViewerState:
         )
         self.current_model = "hovernet"
         self.props = []
-        self.props_old = []
+        self.props_old = None
         self.to_update = set()
         self.graph = []
         self.res = 2
@@ -1613,14 +1676,13 @@ def update_ui_on_new_annotations(ann_types: list[str]) -> None:
         UI["type_cmap_select"].options.append("graph_overlay")
     UI["cprop_input"].options = UI["vstate"].props
     UI["cprop_input"].options.append("None")
-    if UI["vstate"].props != UI["vstate"].props_old:
+    if (UI["vstate"].props != UI["vstate"].props_old) and UI["vstate"].props_old is not None:
         # If color by prop no longer exists, reset to type
         if (
             len(UI["cprop_input"].value) == 0
             or UI["cprop_input"].value[0] not in UI["vstate"].props
         ):
             UI["cprop_input"].value = ["type"]
-        UI["vstate"].props_old = UI["vstate"].props
     else:
         # trigger the color by callbacks to update the mapper
         # based on updated property values
@@ -1628,6 +1690,7 @@ def update_ui_on_new_annotations(ann_types: list[str]) -> None:
         type_cmap_cb(None, None, UI["type_cmap_select"].value)
         # cmap = get_mapper_for_prop(UI["cprop_input"].value[0])
         # update_renderer("mapper", cmap)
+    UI["vstate"].props_old = UI["vstate"].props
 
     initialise_overlay()
     change_tiles("overlay")
@@ -3020,12 +3083,10 @@ def setup_config_ui_settings(config: dict) -> None:
             doc_config["default_type_cprop"].values(),
         )
     populate_slide_list(config["slide_folder"])
-    UI["slide_select"].value = [str(UI["vstate"].slide_path.name)]
-    slide_select_cb(None, None, new=[UI["vstate"].slide_path.name])
-    populate_layer_list(
-        Path(UI["vstate"].slide_path).stem,
-        doc_config["overlay_folder"],
-    )
+    if UI["slide_select"].value != [str(UI["vstate"].slide_path.name)]:
+        UI["slide_select"].value = [str(UI["vstate"].slide_path.name)]
+    else:
+        slide_select_cb(None, None, new=[UI["vstate"].slide_path.name])
 
 
 class DocConfig:
@@ -3131,8 +3192,6 @@ class DocConfig:
 
         # Make initial window
         win_dicts.append(make_window(ViewerState(first_slide_path)))
-        # Set up any initial ui settings from config file
-        setup_config_ui_settings(self.config)
         UI["vstate"].init = False
 
         # Set up main window
@@ -3168,6 +3227,8 @@ class DocConfig:
         base_doc.template_variables["overlay_folder"] = make_safe_name(
             doc_config["overlay_folder"],
         )
+        # Set up any initial ui settings from config file
+        setup_config_ui_settings(self.config)
         return slide_wins, control_tabs
 
 
@@ -3177,7 +3238,7 @@ if do_doc:
     doc_config.set_sys_args(sys.argv)
     doc_config.get_config()
     # see if there's a metadata .csv file in slides folder
-    metadata_file = list(doc_config["slide_folder"].glob("*.csv"))
+    metadata_file = list(doc_config["overlay_folder"].glob("*.csv"))
     if len(metadata_file) > 0:
         metadata_file = metadata_file[0]
         with metadata_file.open() as f:

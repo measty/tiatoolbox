@@ -43,7 +43,7 @@ class LoginHandler(RequestHandler):
         demo = query.get("demo", [None])[0]
 
         needs_auth = False
-        demo_path = Path(f"/app_data/{demo}/overlays")
+        demo_path = Path(f"/tia/web-backup/new-web-server/data/tiademos/app_data/{demo}/overlays")
         config_file = list(demo_path.glob("*config.json"))
         print(config_file)
         if len(config_file) > 0:
@@ -85,7 +85,7 @@ class LoginHandler(RequestHandler):
         query = parse_qs(parsed.query)
         demo = query.get("demo", [None])[0]
 
-        demo_path = Path(f"/app_data/{demo}/overlays")
+        demo_path = Path(f"/tia/web-backup/new-web-server/data/tiademos/app_data/{demo}/overlays")
         config_file = list(demo_path.glob("*config.json"))
         if len(config_file) > 0:
             with open(config_file[0]) as f:
