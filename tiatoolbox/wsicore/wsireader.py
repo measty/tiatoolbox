@@ -3627,6 +3627,14 @@ class TIFFWSIReader(WSIReader):
         )
         # maybe get colors if they exist in metadata
         self._get_colors_from_meta()
+        try:
+            photometric = self.tiff.pages[0].photometric
+        except:
+            photometric = None
+        if photometric.name in ['MINISBLACK']:
+            if isinstance(self.post_proc, postproc_defs.MultichannelToRGB):
+                self.post_proc.photometric_multichannel = True
+
         self.tiff_reader_delegate = TIFFWSIReaderDelegate(self, self.level_arrays)
 
     def _get_colors_from_meta(self: TIFFWSIReader) -> None:
@@ -3644,7 +3652,7 @@ class TIFFWSIReader(WSIReader):
                     for k, v in zip(
                         color_info.iterfind("ScanColorTable-k"),
                         color_info.iterfind("ScanColorTable-v"),
-                        strict=False,
+                        strict=False
                     )
                 }
                 # values will be either a string of 3 ints e.g 155, 128, 0, or
@@ -3657,6 +3665,86 @@ class TIFFWSIReader(WSIReader):
                     else:
                         color_dict[key] = mcolors.to_rgb(value)
                 self.post_proc.color_dict = color_dict
+                return
+
+            # try alternate metadata format
+            # Build a map from filter pair string -> color label or RGB string
+            # from the <FilterColors> section
+            filter_colors = {}
+            filter_colors_section = root.find(".//FilterColors")
+            if filter_colors_section is not None:
+                keys = filter_colors_section.findall(".//FilterColors-k")
+                vals = filter_colors_section.findall(".//FilterColors-v")
+                for k, v in zip(keys, vals):
+                    filter_colors[k.text] = v.text
+
+            # Helper function to convert color strings like "Lime" or "255, 128, 0" into (R,G,B)
+            def color_string_to_rgb(s):
+                if "," in s:
+                    return tuple(int(x.strip()) / 255 for x in s.split(","))
+                return mcolors.to_rgb(s)
+
+            # 2) For each <ScanBands-i>, find the channel's name and figure out
+            #    which filter pair it uses, then match that to a color.
+            channel_dict = {}
+
+            for scan_band in root.findall(".//ScanBands-i"):
+                # Inside a <ScanBands-i> there is a <Bands-i> with a <Name> tag
+                bands_i = scan_band.find(".//Bands-i")
+                if bands_i is not None:
+                    band_name_element = bands_i.find("Name")
+                    if band_name_element is not None:
+                        channel_name = band_name_element.text.strip()
+
+                        # Grab the filter pair manufacturer info
+                        filter_pair = scan_band.find(".//FilterPair")
+                        if filter_pair is not None:
+                            emission_part = filter_pair.find(
+                                ".//EmissionFilter/FixedFilter/PartNumber"
+                            )
+                            excitation_part = filter_pair.find(
+                                ".//ExcitationFilter/FixedFilter/PartNumber"
+                            )
+                            if (
+                                emission_part is not None
+                                and excitation_part is not None
+                            ):
+                                matching_rgb = (1.0, 1.0, 1.0)  # default white
+                                for fc_key, fc_val in filter_colors.items():
+                                    # if both part numbers appear in the FilterColors-k string, assume it's the match
+                                    if (
+                                        emission_part.text in fc_key
+                                        and excitation_part.text in fc_key
+                                    ):
+                                        matching_rgb = color_string_to_rgb(fc_val)
+                                        break
+
+                                channel_dict[channel_name] = matching_rgb
+
+            if len(channel_dict) > 0:
+                self.post_proc.color_dict = channel_dict
+                return
+            
+            # 3) Try OME-TIFF <Channel Color="...">
+            ome_channels = root.findall(".//{http://www.openmicroscopy.org/Schemas/OME/2016-06}Channel")
+            if ome_channels:
+                ome_color_dict = {}
+                for i, ch in enumerate(ome_channels):
+                    color_val = ch.attrib.get("Color")
+                    name = ch.attrib.get("Name", f"Channel_{i}")
+                    if color_val:
+                        color_val = int(color_val)
+                        val_unsigned = color_val & 0xFFFFFFFF
+                        r = (val_unsigned >> 24) & 0xFF
+                        g = (val_unsigned >> 16) & 0xFF
+                        b = (val_unsigned >> 8)  & 0xFF
+                        a = val_unsigned & 0xFF
+
+                        ome_color_dict[name] = (r/255, g/255, b/255)
+
+                if len(ome_color_dict) > 0:
+                    self.post_proc.color_dict = ome_color_dict
+            return
 
     def _get_ome_xml(self: TIFFWSIReader) -> ElementTree.Element:
         """Parse OME-XML from the description of the first IFD (page).

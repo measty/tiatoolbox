@@ -14,6 +14,7 @@ class MultichannelToRGB:
     def __init__(
         self: MultichannelToRGB,
         color_dict: dict[str, tuple[float, float, float]] | None = None,
+        photometric_multichannel: bool = False
     ) -> None:
         """Initialize the MultichannelToRGB converter.
 
@@ -27,6 +28,7 @@ class MultichannelToRGB:
         self.is_validated: bool = False
         self.channels: list[int] | None = None
         self.enhance: float = 1.0
+        self.photometric_multichannel = photometric_multichannel
 
     def validate(self: MultichannelToRGB, n: int) -> None:
         """Validate the input color_dict on first read from image.
@@ -93,9 +95,12 @@ class MultichannelToRGB:
             np.ndarray: RGB image of shape (H, W, 3)
 
         """
+        # convert 1-channel images to (H,W,1)
+        if len(image.shape) == 2:
+            image = image[..., np.newaxis]
         n = image.shape[2]
 
-        if n < 5:  # noqa: PLR2004
+        if n in [3,4] and self.photometric_multichannel==False:  # noqa: PLR2004
             # assume already rgb(a) so just return image
             return image
 
