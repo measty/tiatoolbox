@@ -3540,7 +3540,7 @@ class ArrayView:
 
         if self.axes in ("YXS", "YXC", "YXZ", "YX"):
             return self.array[index]
-        if self.axes in ("SYX", "CYX"):
+        if self.axes in ("SYX", "CYX", "ZYX"):
             y, x, s = index
             index = (s, y, x)
             return np.rollaxis(self.array[index], 0, 3)
@@ -3812,7 +3812,12 @@ class TIFFWSIReader(WSIReader):
             return None
 
         objective_settings = xml_series.find("ome:ObjectiveSettings", namespaces)
+        if objective_settings is None:
+            # try alternative tag
+            objective_settings = xml_series.find("ome:Objective", namespaces)
         instrument_ref_id = instrument_ref.attrib["ID"]
+        if objective_settings is None:
+            return None
         objective_settings_id = objective_settings.attrib["ID"]
         instruments = {
             instrument.attrib["ID"]: instrument
