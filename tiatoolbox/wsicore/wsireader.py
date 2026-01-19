@@ -3514,12 +3514,17 @@ class ArrayView:
 
         """
         self.array = array
+        shape = self.array.shape
         self.axes = axes
-        self._shape = dict(zip(self.axes, self.array.shape, strict=False))
+        self._shape = dict(zip(self.axes, shape, strict=False))
 
     @property
     def shape(self: ArrayView) -> tuple:
         """Return array shape."""
+        if len(self._shape) == 2:
+            return tuple(self._shape[c] for c in "YX")
+        if "Z" in self._shape:
+            return tuple(self._shape[c] for c in "YXZ")
         try:
             return tuple(self._shape[c] for c in "YXC")
         except KeyError:
@@ -3533,7 +3538,7 @@ class ArrayView:
         while len(index) < len(self.axes):
             index = (*index, slice(None))
 
-        if self.axes in ("YXS", "YXC"):
+        if self.axes in ("YXS", "YXC", "YXZ", "YX"):
             return self.array[index]
         if self.axes in ("SYX", "CYX"):
             y, x, s = index
@@ -3557,7 +3562,7 @@ class TIFFWSIReader(WSIReader):
     ) -> None:
         """Initialize :class:`TIFFWSIReader`."""
         super().__init__(input_img=input_img, mpp=mpp, power=power, post_proc=post_proc)
-        self.tiff = tifffile.TiffFile(self.input_path)
+        self.tiff = tifffile.TiffFile(self.input_path, _multifile=False)
         self._axes = self.tiff.series[0].axes
         # Flag which is True if the image is a simple single page tile TIFF
         is_single_page_tiled = all(
@@ -3602,6 +3607,7 @@ class TIFFWSIReader(WSIReader):
             self.input_path,
             series=self.series_n,
             aszarr=True,
+            _multifile=False,
         )
         # remove LRU cache for now as seems to cause issues on windows
         self._zarr_group = zarr.open(self._zarr_store)
@@ -4289,18 +4295,23 @@ class TIFFWSIReaderDelegate:
         """Make a level shape tuple in YXS order.
 
         Args:
-            axes (str): The axes format.
-            shape (tuple[int, int]): Input shape tuple.
+            shape (IntPair):
+                Input shape tuple.
 
         Returns:
-            tuple[int, int]: Shape in YXS order.
+            tuple:
+                Shape in YXS or YXC order.
+
         """
-        if axes in ("YXS", "YXC"):
+        if axes in ("YXS", "YXC", "YXZ"):
             return shape
-        if axes in ("SYX", "CYX"):
+        if axes in ("SYX", "CYX", "ZYX"):
             return np.roll(shape, -1)
+        if axes in {"YX"}:
+            return shape  #  + (1,)
         msg = f"Unsupported axes `{axes}`."
         raise ValueError(msg)
+    
 
     def read_rect(
         self,
