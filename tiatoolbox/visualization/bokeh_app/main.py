@@ -2716,6 +2716,8 @@ def make_window(vstate: ViewerState) -> dict:  # noqa: PLR0915
 
     # Set up a session for communicating with tile server
     s = requests.Session()
+    s.trust_env = False  # bypass system proxies for local tile server requests
+    s.proxies.update({"http": None, "https": None})
     retries = Retry(
         total=5,
         backoff_factor=0.1,
@@ -3008,7 +3010,7 @@ if is_deployed:
 else:
     host = "127.0.0.1"
     host2 = "127.0.0.1"
-    port = "5000"
+    port = os.environ.get("TIATOOLBOX_TILESERVER_PORT", "5000")
     ts_port = ":5000"
 
 

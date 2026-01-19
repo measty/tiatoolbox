@@ -8,8 +8,10 @@ import json
 import multiprocessing
 import os
 import re
+import shutil
 import time
 from pathlib import Path
+from types import SimpleNamespace
 from typing import TYPE_CHECKING
 
 import bokeh.models as bkmodels
@@ -26,7 +28,7 @@ from PIL import Image
 from scipy.ndimage import label
 
 from tiatoolbox.data import _fetch_remote_sample
-from tiatoolbox.visualization.bokeh_app import main
+from tiatoolbox.visualization.bokeh_app import app_hooks, main
 from tiatoolbox.visualization.tileserver import TileServer
 from tiatoolbox.visualization.ui_utils import get_level_by_extent
 
@@ -41,6 +43,44 @@ FILLED = 0
 MICRON_FORMATTER = 1
 GRIDLINES = 2
 TILESERVER_PORT = os.environ.get("PORT", "5000")
+
+
+# Helper function
+def fetch_sample_to_dir(key: str, target_dir: Path) -> Path:
+    """Fetch a remote sample and and ensure it resides directly in ``target_dir``.
+
+     The sample is downloaded and, if it is not already located directly in
+    ``target_dir``, it is moved there. If it is already in ``target_dir``,
+    it is left in place and its path is returned.
+
+    Args:
+        key (str): The name of the resource to fetch.
+        target_dir (Path): The directory where the file should be placed.
+
+    Returns:
+        Path: The path to the file in the target directory.
+    """
+    # Download to a temp location
+    downloaded_path = _fetch_remote_sample(key, target_dir)
+
+    # If the file is already in target_dir directly, return it
+    if downloaded_path.parent == target_dir:
+        return downloaded_path
+
+    # Otherwise, move it to target_dir
+    target_path = target_dir / downloaded_path.name
+    if not target_path.exists():
+        target_dir.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(downloaded_path), str(target_path))
+
+    return target_path
+
+
+class _DummySessionContext:
+    """Simple shim matching the subset of Bokeh's SessionContext we use."""
+
+    def __init__(self: _DummySessionContext, user: str) -> None:
+        self.request = SimpleNamespace(arguments={"user": user})
 
 
 # helper functions and fixtures
@@ -80,7 +120,7 @@ def get_renderer_prop(prop: str) -> json:
 
     """
     resp = main.UI["s"].get(
-        f"http://{main.host2}:{TILESERVER_PORT}/tileserver/renderer/{prop}"
+        f"http://{main.host2}:{main.port}/tileserver/renderer/{prop}",
     )
     return resp.json()
 
@@ -93,39 +133,39 @@ def annotation_path(data_path: dict[str, Path]) -> dict[str, object]:
     that can be grabbed as a fixture to refer to during tests.
 
     """
-    data_path["slide1"] = _fetch_remote_sample(
+    data_path["slide1"] = fetch_sample_to_dir(
         "svs-1-small",
         data_path["base_path"] / "slides",
     )
-    data_path["slide2"] = _fetch_remote_sample(
+    data_path["slide2"] = fetch_sample_to_dir(
         "ndpi-1",
         data_path["base_path"] / "slides",
     )
-    data_path["slide3"] = _fetch_remote_sample(
+    data_path["slide3"] = fetch_sample_to_dir(
         "patch-extraction-vf",
         data_path["base_path"] / "slides",
     )
-    data_path["annotations"] = _fetch_remote_sample(
+    data_path["annotations"] = fetch_sample_to_dir(
         "annotation_store_svs_1",
         data_path["base_path"] / "overlays",
     )
-    data_path["graph"] = _fetch_remote_sample(
+    data_path["graph"] = fetch_sample_to_dir(
         "graph_svs_1",
         data_path["base_path"] / "overlays",
     )
-    data_path["graph_feats"] = _fetch_remote_sample(
+    data_path["graph_feats"] = fetch_sample_to_dir(
         "graph_svs_1_feats",
         data_path["base_path"] / "overlays",
     )
-    data_path["img_overlay"] = _fetch_remote_sample(
+    data_path["img_overlay"] = fetch_sample_to_dir(
         "svs_1_rendered_annotations_jpg",
         data_path["base_path"] / "overlays",
     )
-    data_path["geojson_anns"] = _fetch_remote_sample(
+    data_path["geojson_anns"] = fetch_sample_to_dir(
         "geojson_cmu_1",
         data_path["base_path"] / "overlays",
     )
-    data_path["dat_anns"] = _fetch_remote_sample(
+    data_path["dat_anns"] = fetch_sample_to_dir(
         "annotation_dat_svs_1",
         data_path["base_path"] / "overlays",
     )
@@ -134,7 +174,7 @@ def annotation_path(data_path: dict[str, Path]) -> dict[str, object]:
     )
     # save eye as test identity transform
     np.save(data_path["affine_trans"], np.eye(3))
-    data_path["config"] = _fetch_remote_sample(
+    data_path["config"] = fetch_sample_to_dir(
         "config_2",
         data_path["base_path"] / "overlays",
     )
@@ -149,7 +189,7 @@ def run_app() -> None:
     )
     app.json.sort_keys = False
     CORS(app, send_wildcard=True)
-    app.run(host="127.0.0.1", threaded=True)
+    app.run(host="127.0.0.1", port=int(main.port), threaded=True)
 
 
 @pytest.fixture(scope="module")
@@ -382,7 +422,7 @@ def test_type_cmap_select(doc: Document) -> None:
     # remove the type cmap
     cmap_select.value = []
     resp = main.UI["s"].get(
-        f"http://{main.host2}:{TILESERVER_PORT}/tileserver/secondary_cmap"
+        f"http://{main.host2}:{main.port}/tileserver/secondary_cmap"
     )
     assert resp.json()["score_prop"] == "None"
 
@@ -390,7 +430,7 @@ def test_type_cmap_select(doc: Document) -> None:
     cmap_select.value = ["0"]
     cmap_select.value = ["0", "prob"]
     resp = main.UI["s"].get(
-        f"http://{main.host2}:{TILESERVER_PORT}/tileserver/secondary_cmap"
+        f"http://{main.host2}:{main.port}/tileserver/secondary_cmap"
     )
     assert resp.json()["score_prop"] == "prob"
 
@@ -762,16 +802,16 @@ def test_cmap_select(doc: Document) -> None:
     main.UI["cprop_input"].value = ["prob"]
     # set to jet
     cmap_select.value = "jet"
-    resp = main.UI["s"].get(f"http://{main.host2}:{TILESERVER_PORT}/tileserver/cmap")
+    resp = main.UI["s"].get(f"http://{main.host2}:{main.port}/tileserver/cmap")
     assert resp.json() == "jet"
     # set to dict
     cmap_select.value = "dict"
-    resp = main.UI["s"].get(f"http://{main.host2}:{TILESERVER_PORT}/tileserver/cmap")
+    resp = main.UI["s"].get(f"http://{main.host2}:{main.port}/tileserver/cmap")
     assert isinstance(resp.json(), dict)
 
     main.UI["cprop_input"].value = ["type"]
     # should now be the type mapping
-    resp = main.UI["s"].get(f"http://{main.host2}:{TILESERVER_PORT}/tileserver/cmap")
+    resp = main.UI["s"].get(f"http://{main.host2}:{main.port}/tileserver/cmap")
     for key in main.UI["vstate"].mapper:
         assert str(key) in resp.json()
         assert np.all(
@@ -779,7 +819,7 @@ def test_cmap_select(doc: Document) -> None:
         )
     # set the cmap to "coolwarm"
     cmap_select.value = "coolwarm"
-    resp = main.UI["s"].get(f"http://{main.host2}:{TILESERVER_PORT}/tileserver/cmap")
+    resp = main.UI["s"].get(f"http://{main.host2}:{main.port}/tileserver/cmap")
     # as cprop is type (categorical), it should have had no effect
     for key in main.UI["vstate"].mapper:
         assert str(key) in resp.json()
@@ -788,7 +828,7 @@ def test_cmap_select(doc: Document) -> None:
         )
 
     main.UI["cprop_input"].value = ["prob"]
-    resp = main.UI["s"].get(f"http://{main.host2}:{TILESERVER_PORT}/tileserver/cmap")
+    resp = main.UI["s"].get(f"http://{main.host2}:{main.port}/tileserver/cmap")
     # should be coolwarm as that is the last cmap we set, and prob is continuous
     assert resp.json() == "coolwarm"
 
@@ -834,3 +874,51 @@ def test_clearing_doc(doc: Document) -> None:
     """Test that the doc can be cleared."""
     doc.clear()
     assert len(doc.roots) == 0
+
+
+def test_app_hooks_session_destroyed(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Hook should call reset endpoint and exit."""
+    recorded: dict[str, object] = {}
+
+    def fake_get(url: str, *, timeout: int) -> None:
+        """Fake requests.get to record parameters."""
+        recorded["url"] = url
+        recorded["timeout"] = timeout
+
+    monkeypatch.setattr(app_hooks, "PORT", "6150")
+    monkeypatch.setattr(app_hooks.requests, "get", fake_get)
+    exited = False
+
+    def fake_exit() -> None:
+        """Fake sys.exit to record call."""
+        nonlocal exited
+        exited = True
+
+    monkeypatch.setattr(app_hooks, "sys", SimpleNamespace(exit=fake_exit))
+    app_hooks.on_session_destroyed(_DummySessionContext("user-1"))
+    assert recorded["url"] == "http://127.0.0.1:6150/tileserver/reset/user-1"
+    assert recorded["timeout"] == 5
+    assert exited
+
+
+def test_app_hooks_session_destroyed_suppresses_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """ReadTimeout should be suppressed and exit still called."""
+
+    def fake_get(*_: object, **__: object) -> None:
+        """Fake requests.get to raise ReadTimeout."""
+        raise app_hooks.requests.exceptions.ReadTimeout  # type: ignore[attr-defined]
+
+    monkeypatch.setattr(app_hooks, "PORT", "6160")
+    monkeypatch.setattr(app_hooks.requests, "get", fake_get)
+    exited = False
+
+    def fake_exit() -> None:
+        """Fake sys.exit to record call."""
+        nonlocal exited
+        exited = True
+
+    monkeypatch.setattr(app_hooks, "sys", SimpleNamespace(exit=fake_exit))
+    app_hooks.on_session_destroyed(_DummySessionContext("user-2"))
+    assert exited

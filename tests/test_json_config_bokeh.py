@@ -15,6 +15,8 @@ from bokeh.client.session import ClientSession, pull_session
 from tiatoolbox.cli.visualize import run_bokeh, run_tileserver
 from tiatoolbox.data import _fetch_remote_sample
 
+PORT = os.environ.get("TIATOOLBOX_TILESERVER_PORT", "5000")
+
 if TYPE_CHECKING:
     from pathlib import Path
 
@@ -51,11 +53,12 @@ def bk_session(data_path: dict[str, Path]) -> ClientSession:
 
     args = [
         [
-            str(data_path["base_path"] / "slides"),
-            str(data_path["base_path"] / "overlays"),
+            str(data_path["base_path"] / "slides" / "sample_wsis"),
+            str(data_path["base_path"] / "overlays" / "testdata" / "annotation"),
         ],
         5006,
     ]
+
     kwargs = {"noshow": True}
     proc = Thread(target=run_bokeh, daemon=True, args=args, kwargs=kwargs)
     proc.start()
@@ -69,7 +72,8 @@ def bk_session(data_path: dict[str, Path]) -> ClientSession:
     session.close()
     with suppress(requests.exceptions.ConnectionError):
         requests.post(
-            f"http://localhost:{TILESERVER_PORT}/tileserver/shutdown", timeout=2
+            f"http://localhost:{PORT}/tileserver/shutdown",
+            timeout=2,
         )
 
 
