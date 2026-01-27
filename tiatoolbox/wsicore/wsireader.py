@@ -3525,9 +3525,11 @@ class ArrayView:
             return tuple(self._shape[c] for c in "YX")
         if "Z" in self._shape:
             return tuple(self._shape[c] for c in "YXZ")
-        try:
+        if "C" in self._shape:
             return tuple(self._shape[c] for c in "YXC")
-        except KeyError:
+        if "I" in self._shape:
+            return tuple(self._shape[c] for c in "YXI")
+        if "S" in self._shape:
             return tuple(self._shape[c] for c in "YXS")
 
     def __getitem__(self: ArrayView, index: int) -> np.ndarray:
@@ -3538,9 +3540,9 @@ class ArrayView:
         while len(index) < len(self.axes):
             index = (*index, slice(None))
 
-        if self.axes in ("YXS", "YXC", "YXZ", "YX"):
+        if self.axes in ("YXS", "YXC", "YXZ", "YX","YXI"):
             return self.array[index]
-        if self.axes in ("SYX", "CYX", "ZYX"):
+        if self.axes in ("SYX", "CYX", "ZYX","IYX"):
             y, x, s = index
             index = (s, y, x)
             return np.rollaxis(self.array[index], 0, 3)
@@ -4308,9 +4310,9 @@ class TIFFWSIReaderDelegate:
                 Shape in YXS or YXC order.
 
         """
-        if axes in ("YXS", "YXC", "YXZ"):
+        if axes in ("YXS", "YXC", "YXZ","YXI"):
             return shape
-        if axes in ("SYX", "CYX", "ZYX"):
+        if axes in ("SYX", "CYX", "ZYX","IYX"):
             return np.roll(shape, -1)
         if axes in {"YX"}:
             return shape  #  + (1,)
