@@ -1798,7 +1798,7 @@ def gather_ui_elements(  # noqa: PLR0915
     assistant_include_context = Toggle(
         label="Include viewer context",
         active=bool(get_from_config(["assistant", "include_context"], 1)),
-        button_type="success",
+        button_type="primary",
         sizing_mode="stretch_width",
         name=f"assistant_ctx{win_num}",
     )
@@ -1808,8 +1808,9 @@ def gather_ui_elements(  # noqa: PLR0915
             "Ask about this slide, overlays, or ROIs."
             "</div>"
         ),
-        sizing_mode="stretch_both",
-        height=360,
+        # Fixed height + CSS overflow to keep transcript contained and scrollable.
+        sizing_mode="stretch_width",
+        height=460,
         css_classes=["assistant-transcript"],
         name=f"assistant_transcript{win_num}",
     )

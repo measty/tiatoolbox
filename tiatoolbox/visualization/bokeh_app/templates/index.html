@@ -33,15 +33,21 @@
     .assistant-panel {
       gap: 10px;
       padding: 6px 2px;
+      /* Bokeh layouts are flex-based; this helps keep the transcript contained */
+      min-height: 0;
     }
 
     .assistant-transcript {
-      height: 360px;
-      overflow-y: auto;
+      /* Force a bounded, scrollable transcript area (Bokeh may set inline overflow). */
+      height: 460px;
+      max-height: 55vh;
+      overflow: auto !important;
+      overflow-x: hidden !important;
       background: #f8fafc;
       border: 1px solid #d9e2ec;
       border-radius: 8px;
       padding: 8px;
+      box-sizing: border-box;
     }
 
     .assistant-empty {
@@ -55,6 +61,8 @@
       border-radius: 8px;
       white-space: normal;
       line-height: 1.35;
+      overflow-wrap: anywhere;
+      word-break: break-word;
     }
 
     .assistant-role {
