@@ -1642,6 +1642,14 @@ assistant_bridge_source = ColumnDataSource(
     },
     name="assistant_bridge",
 )
+assistant_bridge_host = DataTable(
+    source=assistant_bridge_source,
+    columns=[TableColumn(field="status", title="status")],
+    index_position=None,
+    width=1,
+    height=1,
+    name="assistant_bridge_host",
+)
 # Slide info div
 slide_info = Div(
     text="",
@@ -2514,7 +2522,7 @@ class DocConfig:
         base_doc.add_periodic_callback(update, 220)
         base_doc.add_root(slide_wins)
         base_doc.add_root(control_tabs)
-        base_doc.add_root(assistant_bridge_source)
+        base_doc.add_root(assistant_bridge_host)
         base_doc.add_root(popup_table)
         base_doc.add_root(slide_info)
         base_doc.title = "Tiatoolbox Visualization Tool"

@@ -228,8 +228,11 @@ def test_get_level_by_extent() -> None:
 
 def test_roots(doc: Document) -> None:
     """Test that the document has the correct number of roots."""
-    # should be 4 roots: main window, controls, slide_info, popup table
-    assert len(doc.roots) == 4
+    # should be 5 roots: main window, controls, assistant bridge host,
+    # slide_info, and popup table
+    assert len(doc.roots) == 5
+    assert doc.get_model_by_name("assistant_bridge_host") is not None
+    assert doc.get_model_by_name("assistant_bridge") is not None
 
 
 def test_config_loaded(data_path: pytest.TempPathFactory) -> None:

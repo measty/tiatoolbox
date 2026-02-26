@@ -43,17 +43,53 @@
         margin: 10px 0;
     }
 
+    .assistant-drawer-toggle {
+      position: fixed;
+      right: 12px;
+      top: 50%;
+      transform: translateY(-50%);
+      z-index: 30;
+      width: 48px;
+      height: 48px;
+      border-radius: 999px;
+      border: 1px solid #93c5fd;
+      background: #2563eb;
+      color: #ffffff;
+      font-size: 22px;
+      line-height: 1;
+      cursor: pointer;
+      box-shadow: 0 8px 18px rgba(15, 23, 42, 0.25);
+    }
+
+    .assistant-drawer {
+      position: fixed;
+      top: 8px;
+      right: 8px;
+      bottom: 8px;
+      width: min(380px, 88vw);
+      z-index: 29;
+      transform: translateX(calc(100% + 12px));
+      transition: transform 0.25s ease-in-out;
+      pointer-events: none;
+    }
+
+    .assistant-drawer.open {
+      transform: translateX(0);
+      pointer-events: auto;
+    }
+
     .assistant-template-panel {
-      flex: 0 0 auto;
+      height: 100%;
       border: 1px solid #d9e2ec;
-      border-radius: 8px;
+      border-radius: 10px;
       background: #ffffff;
-      padding: 8px;
+      padding: 10px;
       display: flex;
       flex-direction: column;
       gap: 8px;
       min-height: 0;
       box-sizing: border-box;
+      box-shadow: 0 12px 30px rgba(15, 23, 42, 0.25);
     }
 
     .assistant-template-header {
@@ -64,8 +100,8 @@
     }
 
     .assistant-transcript {
-      height: 300px;
-      max-height: 50vh;
+      flex: 1 1 auto;
+      min-height: 140px;
       overflow: auto;
       overflow-x: hidden;
       background: #f8fafc;
@@ -121,6 +157,7 @@
     .assistant-input {
       width: 100%;
       min-height: 72px;
+      max-height: 180px;
       resize: vertical;
       border: 1px solid #cbd5e1;
       border-radius: 6px;
@@ -168,6 +205,13 @@
       align-items: center;
       gap: 8px !important;
       font-weight: 500 !important;
+    }
+
+    .assistant-bridge-host {
+      display: none;
+      width: 0;
+      height: 0;
+      overflow: hidden;
     }
 
     .hidden {
@@ -227,7 +271,22 @@
 <div class="slide">{{ embed(roots.slide_windows) }}</div>
 <div class="ui">
   <div class="ui-controls">{{ embed(roots.ui_layout) }}</div>
+</div>
 
+<div class="assistant-bridge-host">{{ embed(roots.assistant_bridge_host) }}</div>
+
+<button
+  id="assistant-drawer-toggle"
+  class="assistant-drawer-toggle"
+  type="button"
+  title="Toggle assistant"
+  aria-controls="assistant-drawer"
+  aria-expanded="false"
+>
+  💬
+</button>
+
+<aside id="assistant-drawer" class="assistant-drawer" aria-hidden="true">
   <div class="assistant-template-panel" id="assistant-panel">
     <p class="assistant-template-header">Assistant</p>
     <div id="assistant-transcript" class="assistant-transcript">
@@ -261,7 +320,8 @@
       </label>
     </div>
   </div>
-</div>
+</aside>
+
 <div class="description">{{ embed(roots.description) }}</div>
 <script>
   const closePopupBtn = document.getElementById('close-popup');
@@ -276,10 +336,29 @@
   const assistantEndpointEl = document.getElementById('assistant-endpoint');
   const assistantTempEl = document.getElementById('assistant-temperature');
   const assistantIncludeContextEl = document.getElementById('assistant-include-context');
+  const assistantDrawerEl = document.getElementById('assistant-drawer');
+  const assistantDrawerToggleEl = document.getElementById('assistant-drawer-toggle');
 
   let isDragging = false;
   let offsetX, offsetY;
   let assistantBridge = null;
+  let assistantDrawerOpen = false;
+
+  function setAssistantDrawerOpen(isOpen) {
+    assistantDrawerOpen = Boolean(isOpen);
+    assistantDrawerEl.classList.toggle('open', assistantDrawerOpen);
+    assistantDrawerEl.setAttribute('aria-hidden', assistantDrawerOpen ? 'false' : 'true');
+    assistantDrawerToggleEl.setAttribute('aria-expanded', assistantDrawerOpen ? 'true' : 'false');
+    if (assistantDrawerOpen) {
+      window.setTimeout(function() {
+        assistantInputEl.focus();
+      }, 120);
+    }
+  }
+
+  function toggleAssistantDrawer() {
+    setAssistantDrawerOpen(!assistantDrawerOpen);
+  }
 
   function bridgeScalar(data, key, fallbackValue) {
     const value = data[key];
@@ -406,6 +485,13 @@
       isDragging = false;
   });
 
+  assistantDrawerToggleEl.addEventListener('click', toggleAssistantDrawer);
+  document.addEventListener('keydown', function(event) {
+    if (event.key === 'Escape' && assistantDrawerOpen) {
+      setAssistantDrawerOpen(false);
+    }
+  });
+
   assistantSendBtn.addEventListener('click', sendAssistantPrompt);
   assistantClearBtn.addEventListener('click', clearAssistantConversation);
   assistantInputEl.addEventListener('keydown', function(event) {
@@ -415,6 +501,7 @@
     }
   });
 
+  setAssistantDrawerOpen(false);
   connectAssistantBridge();
 </script>
 {% endblock %}
