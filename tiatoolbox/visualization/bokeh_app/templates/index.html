@@ -66,7 +66,7 @@
       top: 8px;
       right: 8px;
       bottom: 8px;
-      width: min(380px, 88vw);
+      width: min(440px, 90vw);
       z-index: 29;
       transform: translateX(calc(100% + 12px));
       transition: transform 0.25s ease-in-out;
@@ -152,6 +152,20 @@
       color: #374151;
       font-size: 12px;
       min-height: 18px;
+    }
+
+    .assistant-workflow-status {
+      color: #0f5132;
+      background: #ecfdf3;
+      border: 1px solid #bce9cc;
+      border-radius: 6px;
+      padding: 6px 8px;
+      font-size: 12px;
+      min-height: 18px;
+    }
+
+    .assistant-workflow-status:empty {
+      display: none;
     }
 
     .assistant-input {
@@ -305,6 +319,14 @@
       <button id="assistant-clear" class="btn btn-default" type="button" disabled>Clear</button>
     </div>
 
+    <div class="assistant-actions">
+      <button id="assistant-open-comfyui" class="btn btn-default" type="button" disabled>
+        Open ComfyUI
+      </button>
+    </div>
+
+    <div id="assistant-workflow-status" class="assistant-workflow-status"></div>
+
     <div class="assistant-settings">
       <label>
         Endpoint URL
@@ -336,6 +358,8 @@
   const assistantEndpointEl = document.getElementById('assistant-endpoint');
   const assistantTempEl = document.getElementById('assistant-temperature');
   const assistantIncludeContextEl = document.getElementById('assistant-include-context');
+  const assistantOpenComfyuiBtn = document.getElementById('assistant-open-comfyui');
+  const assistantWorkflowStatusEl = document.getElementById('assistant-workflow-status');
   const assistantDrawerEl = document.getElementById('assistant-drawer');
   const assistantDrawerToggleEl = document.getElementById('assistant-drawer-toggle');
 
@@ -343,6 +367,8 @@
   let offsetX, offsetY;
   let assistantBridge = null;
   let assistantDrawerOpen = false;
+  let assistantComfyuiUrl = 'http://127.0.0.1:8188';
+  let assistantWorkflowArtifactUrl = '';
 
   function setAssistantDrawerOpen(isOpen) {
     assistantDrawerOpen = Boolean(isOpen);
@@ -397,9 +423,23 @@
     }
     assistantIncludeContextEl.checked = Boolean(Number(bridgeScalar(data, 'include_context', 1)));
 
+    assistantComfyuiUrl = String(bridgeScalar(data, 'comfyui_url', assistantComfyuiUrl || 'http://127.0.0.1:8188'));
+    assistantWorkflowArtifactUrl = String(bridgeScalar(data, 'workflow_artifact_url', assistantWorkflowArtifactUrl || ''));
+
+    const workflowAvailable = Number(bridgeScalar(data, 'workflow_available', 0)) === 1;
+    const workflowUploadedName = String(bridgeScalar(data, 'workflow_uploaded_name', '')).trim();
+    if (workflowAvailable && workflowUploadedName) {
+      assistantWorkflowStatusEl.textContent = `Workflow uploaded to ComfyUI as ${workflowUploadedName}`;
+    } else if (workflowAvailable && assistantWorkflowArtifactUrl) {
+      assistantWorkflowStatusEl.textContent = 'Workflow detected in assistant response.';
+    } else {
+      assistantWorkflowStatusEl.textContent = '';
+    }
+
     assistantTranscriptEl.scrollTop = assistantTranscriptEl.scrollHeight;
     assistantSendBtn.disabled = false;
     assistantClearBtn.disabled = false;
+    assistantOpenComfyuiBtn.disabled = false;
   }
 
   function connectAssistantBridge() {
@@ -463,6 +503,15 @@
     });
   }
 
+  function openComfyuiTab() {
+    const url = (assistantComfyuiUrl || 'http://127.0.0.1:8188').trim();
+    if (!url) {
+      assistantStatusEl.textContent = 'ComfyUI URL is empty.';
+      return;
+    }
+    window.open(url, 'comfyui-main', 'noopener');
+  }
+
   closePopupBtn.addEventListener('click', function() {
       popupContent.classList.add('hidden');
   });
@@ -494,6 +543,7 @@
 
   assistantSendBtn.addEventListener('click', sendAssistantPrompt);
   assistantClearBtn.addEventListener('click', clearAssistantConversation);
+  assistantOpenComfyuiBtn.addEventListener('click', openComfyuiTab);
   assistantInputEl.addEventListener('keydown', function(event) {
     if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
       event.preventDefault();

@@ -76,7 +76,10 @@ from tiatoolbox.utils.misc import select_device
 from tiatoolbox.utils.visualization import random_colors
 from tiatoolbox.visualization.bokeh_app.histograph_client import (
     DEFAULT_HISTOGRAPH_ENDPOINT,
+    extract_workflow_artifact,
+    normalize_base_url,
     request_chat_completion,
+    upload_workflow_artifact_to_comfyui,
 )
 from tiatoolbox.visualization.ui_utils import get_level_by_extent
 from tiatoolbox.wsicore.wsireader import WSIReader
@@ -712,6 +715,7 @@ def build_assistant_view_context(ui_state: dict[str, Any]) -> dict[str, Any]:
     return {
         "slide_path": slide_path,
         "slide_name": slide_name,
+        "overlay_folder": str(doc_config["overlay_folder"]),
         "slide_dimensions": list(ui_state["vstate"].dims),
         "mpp": mpp,
         "view_bounds": {
@@ -732,7 +736,11 @@ def build_assistant_system_message(view_context: dict[str, Any]) -> str:
     return (
         "You are an assistant integrated into the TIAToolbox slide viewer. "
         "Resolve references like 'this slide' using the viewer context below. "
-        "If the user asks for coordinates, use the provided coordinate system.\n"
+        "If the user asks for coordinates, use the provided coordinate system. "
+        "For default overlay-style outputs (e.g., classification maps, heatmaps, "
+        "embedding visualizations), write files to overlay_folder from the context. "
+        "Use output filenames whose stem starts with slide_name (e.g., "
+        "colon_slide1_classmap.png for colon_slide1.svs).\n"
         "Viewer context (JSON):\n"
         f"```json\n{context_json}\n```"
     )
@@ -814,7 +822,20 @@ def _assistant_user_id(ui_state: dict[str, Any]) -> str:
     return rand_id
 
 
-def _update_assistant_bridge(*, status: str | None = None) -> None:
+def _reset_workflow_bridge_fields(data: dict[str, Any]) -> None:
+    """Reset workflow bridge fields to defaults."""
+    data["workflow_available"] = [0]
+    data["workflow_artifact_url"] = [""]
+    data["workflow_uploaded_name"] = [""]
+
+
+def _update_assistant_bridge(
+    *,
+    status: str | None = None,
+    workflow_available: int | None = None,
+    workflow_artifact_url: str | None = None,
+    workflow_uploaded_name: str | None = None,
+) -> None:
     """Push transcript/status updates to assistant bridge model."""
     if len(win_dicts) == 0:
         return
@@ -828,6 +849,12 @@ def _update_assistant_bridge(*, status: str | None = None) -> None:
     data["transcript_html"] = [render_assistant_transcript_html(history)]
     if status is not None:
         data["status"] = [status]
+    if workflow_available is not None:
+        data["workflow_available"] = [int(workflow_available)]
+    if workflow_artifact_url is not None:
+        data["workflow_artifact_url"] = [str(workflow_artifact_url)]
+    if workflow_uploaded_name is not None:
+        data["workflow_uploaded_name"] = [str(workflow_uploaded_name)]
     assistant_bridge_source.data = data
 
 
@@ -841,7 +868,12 @@ def clear_assistant_history_cb() -> None:
     session_state["history_by_user"][user_id] = []
     session_state["pending_by_user"][user_id] = False
     session_state["active_nonce_by_user"][user_id] = None
-    _update_assistant_bridge(status="Conversation cleared.")
+    _update_assistant_bridge(
+        status="Conversation cleared.",
+        workflow_available=0,
+        workflow_artifact_url="",
+        workflow_uploaded_name="",
+    )
 
 
 def send_assistant_prompt_cb(
@@ -877,7 +909,12 @@ def send_assistant_prompt_cb(
         session_state["history_by_user"][user_id] = history[-ASSISTANT_HISTORY_LIMIT:]
         history = session_state["history_by_user"][user_id]
 
-    _update_assistant_bridge(status="Sending request to assistant...")
+    _update_assistant_bridge(
+        status="Sending request to assistant...",
+        workflow_available=0,
+        workflow_artifact_url="",
+        workflow_uploaded_name="",
+    )
 
     payload_messages = []
     if include_context:
@@ -891,10 +928,14 @@ def send_assistant_prompt_cb(
     payload_messages.extend(history)
 
     doc = curdoc()
+    comfyui_url = normalize_base_url(
+        str(_bridge_scalar(assistant_bridge_source.data, "comfyui_url", "http://127.0.0.1:8188")),
+        default="http://127.0.0.1:8188",
+    )
 
-    def _worker() -> str:
+    def _worker() -> dict[str, Any]:
         model_name = get_from_config(["assistant", "model"], "histograph")
-        return request_chat_completion(
+        answer = request_chat_completion(
             endpoint,
             model=model_name,
             messages=payload_messages,
@@ -902,6 +943,32 @@ def send_assistant_prompt_cb(
             user=user_id,
             conversation_id=user_id,
         )
+
+        workflow = extract_workflow_artifact(answer)
+        result: dict[str, Any] = {
+            "answer": answer,
+            "workflow_available": 0,
+            "workflow_artifact_url": "",
+            "workflow_uploaded_name": "",
+            "workflow_error": "",
+        }
+        if workflow is None:
+            return result
+
+        result["workflow_available"] = 1
+        result["workflow_artifact_url"] = workflow.url
+
+        try:
+            uploaded_name, _endpoint_used = upload_workflow_artifact_to_comfyui(
+                artifact_url=workflow.url,
+                run_id=workflow.run_id,
+                comfyui_url=comfyui_url,
+            )
+            result["workflow_uploaded_name"] = uploaded_name
+        except Exception as exc:  # noqa: BLE001
+            result["workflow_error"] = str(exc)
+
+        return result
 
     def _on_done(future: Future) -> None:
         def _finish() -> None:
@@ -911,12 +978,13 @@ def send_assistant_prompt_cb(
 
             fresh_state["pending_by_user"][user_id] = False
             try:
-                answer = future.result()
+                result = future.result()
             except Exception as exc:  # noqa: BLE001
                 _update_assistant_bridge(status=f"Assistant request failed: {exc}")
                 logger.exception("assistant request failed", exc_info=exc)
                 return
 
+            answer = str(result.get("answer", ""))
             fresh_history = fresh_state["history_by_user"].setdefault(user_id, [])
             fresh_history.append({"role": "assistant", "content": answer})
             if len(fresh_history) > ASSISTANT_HISTORY_LIMIT:
@@ -924,7 +992,30 @@ def send_assistant_prompt_cb(
                     -ASSISTANT_HISTORY_LIMIT:
                 ]
 
-            _update_assistant_bridge(status="Assistant response received.")
+            workflow_available = int(result.get("workflow_available", 0))
+            workflow_artifact_url = str(result.get("workflow_artifact_url", ""))
+            workflow_uploaded_name = str(result.get("workflow_uploaded_name", ""))
+            workflow_error = str(result.get("workflow_error", "")).strip()
+
+            if workflow_available == 0:
+                status_msg = "Assistant response received."
+            elif workflow_uploaded_name != "":
+                status_msg = (
+                    "Workflow uploaded to ComfyUI as "
+                    f"{workflow_uploaded_name}."
+                )
+            elif workflow_error != "":
+                status_msg = f"Workflow detected but upload failed: {workflow_error}"
+                logger.warning("workflow upload failed: %s", workflow_error)
+            else:
+                status_msg = "Workflow detected."
+
+            _update_assistant_bridge(
+                status=status_msg,
+                workflow_available=workflow_available,
+                workflow_artifact_url=workflow_artifact_url,
+                workflow_uploaded_name=workflow_uploaded_name,
+            )
 
         doc.add_next_tick_callback(_finish)
 
@@ -987,6 +1078,10 @@ def init_assistant_bridge_for_session() -> None:
     )
     temperature = _as_float_or_none(get_from_config(["assistant", "temperature"], 0.2))
     include_context = bool(get_from_config(["assistant", "include_context"], 1))
+    comfyui_url = get_from_config(
+        ["assistant", "comfyui_url"],
+        os.environ.get("TIATOOLBOX_COMFYUI_URL", "http://127.0.0.1:8188"),
+    )
 
     data = dict(assistant_bridge_source.data)
     data["pending_prompt"] = [""]
@@ -995,8 +1090,12 @@ def init_assistant_bridge_for_session() -> None:
     data["endpoint"] = [str(endpoint)]
     data["temperature"] = [0.2 if temperature is None else temperature]
     data["include_context"] = [1 if include_context else 0]
+    data["comfyui_url"] = [
+        normalize_base_url(str(comfyui_url), default="http://127.0.0.1:8188")
+    ]
     data["transcript_html"] = [render_assistant_transcript_html([])]
     data["status"] = ["Ready."]
+    _reset_workflow_bridge_fields(data)
     assistant_bridge_source.data = data
 
     session_state = _assistant_session_state()
@@ -1632,6 +1731,10 @@ assistant_bridge_source = ColumnDataSource(
         "endpoint": [DEFAULT_HISTOGRAPH_ENDPOINT],
         "temperature": [0.2],
         "include_context": [1],
+        "comfyui_url": ["http://127.0.0.1:8188"],
+        "workflow_available": [0],
+        "workflow_artifact_url": [""],
+        "workflow_uploaded_name": [""],
         "clear_nonce": [0],
         "transcript_html": [
             "<div class='assistant-empty'>"
