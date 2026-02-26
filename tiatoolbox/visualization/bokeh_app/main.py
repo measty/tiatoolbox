@@ -7,7 +7,9 @@ import os
 import sys
 import tempfile
 import urllib
+from concurrent.futures import Future, ThreadPoolExecutor
 from cmath import pi
+from html import escape
 from pathlib import Path, PureWindowsPath
 from shutil import rmtree
 from typing import TYPE_CHECKING, Any, SupportsFloat
@@ -51,6 +53,7 @@ from bokeh.models import (
     TabPanel,
     Tabs,
     TapTool,
+    TextAreaInput,
     TextInput,
     Toggle,
     Tooltip,
@@ -72,6 +75,10 @@ from tiatoolbox.models.engine.nucleus_instance_segmentor import (
 from tiatoolbox.tools.pyramid import ZoomifyGenerator
 from tiatoolbox.utils.misc import select_device
 from tiatoolbox.utils.visualization import random_colors
+from tiatoolbox.visualization.bokeh_app.histograph_client import (
+    DEFAULT_HISTOGRAPH_ENDPOINT,
+    request_chat_completion,
+)
 from tiatoolbox.visualization.ui_utils import get_level_by_extent
 from tiatoolbox.wsicore.wsireader import WSIReader
 
@@ -92,6 +99,8 @@ N_PERMANENT_RENDERERS = 5
 NO_UPDATE = 0
 PENDING_UPDATE = 1
 DO_UPDATE = 2
+ASSISTANT_HISTORY_LIMIT = 24
+assistant_executor = ThreadPoolExecutor(max_workers=4)
 
 
 # Stylesheets to format some things better
@@ -666,6 +675,196 @@ class ViewerState:
             self.__dict__["num_zoom_levels"] = z.level_count
 
         self.__dict__[name] = value
+
+
+def _sanitize_text_for_html(text: str) -> str:
+    """Escape text for safe display in an HTML transcript."""
+    return escape(text).replace("\n", "<br>")
+
+
+def _as_float_or_none(value: Any) -> float | None:  # noqa: ANN401
+    """Convert value to float if possible."""
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def build_assistant_view_context(ui_state: dict[str, Any]) -> dict[str, Any]:
+    """Build compact viewer context to inject into assistant prompts."""
+    slide_path = str(ui_state["vstate"].slide_path)
+    slide_name = ui_state["vstate"].slide_path.stem
+    mpp = ui_state["vstate"].mpp
+    if isinstance(mpp, np.ndarray):
+        mpp = mpp.tolist()
+
+    box_data = ui_state["box_source"].data
+    selected_roi = None
+    if box_data.get("x") and len(box_data["x"]) > 0:
+        selected_roi = {
+            "x": _as_float_or_none(box_data["x"][0]),
+            "y": _as_float_or_none(box_data["y"][0]),
+            "width": _as_float_or_none(box_data["width"][0]),
+            "height": _as_float_or_none(box_data["height"][0]),
+        }
+
+    return {
+        "slide_path": slide_path,
+        "slide_name": slide_name,
+        "slide_dimensions": list(ui_state["vstate"].dims),
+        "mpp": mpp,
+        "view_bounds": {
+            "x_start": _as_float_or_none(ui_state["p"].x_range.start),
+            "x_end": _as_float_or_none(ui_state["p"].x_range.end),
+            "y_start": _as_float_or_none(ui_state["p"].y_range.start),
+            "y_end": _as_float_or_none(ui_state["p"].y_range.end),
+            "y_note": "y values are negative in this viewer coordinate space",
+        },
+        "selected_roi": selected_roi,
+        "loaded_layers": list(ui_state["vstate"].layer_dict.keys()),
+    }
+
+
+def build_assistant_system_message(view_context: dict[str, Any]) -> str:
+    """Build the hidden system context message for HistoGraph."""
+    context_json = json.dumps(view_context, separators=(",", ":"))
+    return (
+        "You are an assistant integrated into the TIAToolbox slide viewer. "
+        "Resolve references like 'this slide' using the viewer context below. "
+        "If the user asks for coordinates, use the provided coordinate system.\n"
+        "Viewer context (JSON):\n"
+        f"```json\n{context_json}\n```"
+    )
+
+
+def render_assistant_transcript(ui_state: dict[str, Any]) -> None:
+    """Render assistant transcript into HTML."""
+    if len(ui_state["assistant_history"]) == 0:
+        ui_state["assistant_transcript"].text = (
+            "<div class='assistant-empty'>"
+            "Ask about this slide, overlays, or ROIs."
+            "</div>"
+        )
+        return
+
+    msg_blocks = []
+    role_title = {"user": "You", "assistant": "Assistant", "system": "System"}
+    role_cls = {
+        "user": "assistant-user-msg",
+        "assistant": "assistant-bot-msg",
+        "system": "assistant-system-msg",
+    }
+    for message in ui_state["assistant_history"]:
+        role = message.get("role", "assistant")
+        text = _sanitize_text_for_html(str(message.get("content", "")))
+        msg_blocks.append(
+            "<div class='assistant-msg "
+            f"{role_cls.get(role, 'assistant-bot-msg')}'>"
+            f"<div class='assistant-role'>{role_title.get(role, role.title())}</div>"
+            f"<div class='assistant-content'>{text}</div>"
+            "</div>"
+        )
+    ui_state["assistant_transcript"].text = "".join(msg_blocks)
+
+
+def clear_assistant_history_cb(win_idx: int) -> None:
+    """Clear per-session assistant history for one viewer window."""
+    ui_state = win_dicts[win_idx]
+    ui_state["assistant_history"] = []
+    ui_state["assistant_status"].text = "Conversation cleared."
+    render_assistant_transcript(ui_state)
+
+
+def send_assistant_prompt_cb(win_idx: int) -> None:
+    """Send a chat prompt to the configured OpenAI-compatible endpoint."""
+    ui_state = win_dicts[win_idx]
+    prompt = ui_state["assistant_input"].value.strip()
+    if prompt == "":
+        ui_state["assistant_status"].text = "Please enter a message."
+        return
+
+    if ui_state["assistant_pending"]:
+        ui_state["assistant_status"].text = "A request is already in progress."
+        return
+
+    endpoint = ui_state["assistant_endpoint_input"].value.strip()
+    temperature = float(ui_state["assistant_temperature"].value)
+    include_context = ui_state["assistant_include_context"].active
+    stream_requested = ui_state["assistant_stream_toggle"].active
+    user_id = ui_state["user"] if ui_state["user"] else rand_id
+
+    ui_state["assistant_pending"] = True
+    ui_state["assistant_send_button"].disabled = True
+    ui_state["assistant_send_button"].label = "Sending..."
+
+    ui_state["assistant_history"].append({"role": "user", "content": prompt})
+    if len(ui_state["assistant_history"]) > ASSISTANT_HISTORY_LIMIT:
+        ui_state["assistant_history"] = ui_state["assistant_history"][
+            -ASSISTANT_HISTORY_LIMIT:
+        ]
+    ui_state["assistant_input"].value = ""
+
+    if stream_requested:
+        ui_state["assistant_status"].text = (
+            "Streaming is not enabled in this UI yet. Sending a standard request."
+        )
+    else:
+        ui_state["assistant_status"].text = "Sending request to assistant..."
+    render_assistant_transcript(ui_state)
+
+    payload_messages = []
+    if include_context:
+        context = build_assistant_view_context(ui_state)
+        payload_messages.append(
+            {
+                "role": "system",
+                "content": build_assistant_system_message(context),
+            },
+        )
+    payload_messages.extend(ui_state["assistant_history"])
+
+    doc = curdoc()
+
+    def _worker() -> str:
+        model_name = get_from_config(["assistant", "model"], "histograph")
+        return request_chat_completion(
+            endpoint,
+            model=model_name,
+            messages=payload_messages,
+            temperature=temperature,
+            user=user_id,
+            conversation_id=user_id,
+        )
+
+    def _on_done(future: Future) -> None:
+        def _finish() -> None:
+            ui_state["assistant_pending"] = False
+            ui_state["assistant_send_button"].disabled = False
+            ui_state["assistant_send_button"].label = "Send"
+            try:
+                answer = future.result()
+            except Exception as exc:  # noqa: BLE001
+                ui_state["assistant_status"].text = f"Assistant request failed: {exc}"
+                logger.exception("assistant request failed", exc_info=exc)
+                render_assistant_transcript(ui_state)
+                return
+
+            ui_state["assistant_history"].append(
+                {"role": "assistant", "content": answer},
+            )
+            if len(ui_state["assistant_history"]) > ASSISTANT_HISTORY_LIMIT:
+                ui_state["assistant_history"] = ui_state["assistant_history"][
+                    -ASSISTANT_HISTORY_LIMIT:
+                ]
+            ui_state["assistant_status"].text = "Assistant response received."
+            render_assistant_transcript(ui_state)
+
+        doc.add_next_tick_callback(_finish)
+
+    future = assistant_executor.submit(_worker)
+    future.add_done_callback(_on_done)
 
 
 # endregion
@@ -1299,7 +1498,7 @@ slide_info = Div(
 def gather_ui_elements(  # noqa: PLR0915
     vstate: ViewerState,
     win_num: int,
-) -> tuple[Column, Column, dict]:
+) -> tuple[Column, Column, Column, dict]:
     """Gather all the ui elements into a dict.
 
     Defines and gathers the main UI elements for a window, excluding any
@@ -1310,8 +1509,8 @@ def gather_ui_elements(  # noqa: PLR0915
         win_num: the window number (0 or 1)
 
     Returns:
-        A tuple containing the layouts for the main and extra options tabs of the UI,
-        and a dict containing all the UI elements for ease of acess.
+        A tuple containing the layouts for the main tab, extra options tab,
+        assistant tab, and a dict containing all UI elements for ease of access.
 
     """
     # Define all the various widgets
@@ -1568,6 +1767,78 @@ def gather_ui_elements(  # noqa: PLR0915
         name=f"opt_buttons{win_num}",
     )
 
+    assistant_endpoint = TextInput(
+        title="Endpoint URL",
+        value=get_from_config(
+            ["assistant", "endpoint"],
+            os.environ.get(
+                "TIATOOLBOX_ASSISTANT_ENDPOINT",
+                DEFAULT_HISTOGRAPH_ENDPOINT,
+            ),
+        ),
+        sizing_mode="stretch_width",
+        name=f"assistant_endpoint{win_num}",
+    )
+    assistant_temperature = Slider(
+        title="Temperature",
+        start=0,
+        end=2,
+        step=0.1,
+        value=get_from_config(["assistant", "temperature"], 0.2),
+        sizing_mode="stretch_width",
+        name=f"assistant_temp{win_num}",
+    )
+    assistant_stream = Toggle(
+        label="Stream (not yet supported)",
+        active=False,
+        button_type="default",
+        sizing_mode="stretch_width",
+        name=f"assistant_stream{win_num}",
+    )
+    assistant_include_context = Toggle(
+        label="Include viewer context",
+        active=bool(get_from_config(["assistant", "include_context"], 1)),
+        button_type="success",
+        sizing_mode="stretch_width",
+        name=f"assistant_ctx{win_num}",
+    )
+    assistant_transcript = Div(
+        text=(
+            "<div class='assistant-empty'>"
+            "Ask about this slide, overlays, or ROIs."
+            "</div>"
+        ),
+        sizing_mode="stretch_both",
+        height=360,
+        css_classes=["assistant-transcript"],
+        name=f"assistant_transcript{win_num}",
+    )
+    assistant_status = Div(
+        text="Ready.",
+        sizing_mode="stretch_width",
+        css_classes=["assistant-status"],
+        name=f"assistant_status{win_num}",
+    )
+    assistant_input = TextAreaInput(
+        title="Message",
+        placeholder="Ask a question about this slide...",
+        rows=4,
+        sizing_mode="stretch_width",
+        name=f"assistant_input{win_num}",
+    )
+    assistant_send_button = Button(
+        label="Send",
+        button_type="primary",
+        sizing_mode="stretch_width",
+        name=f"assistant_send{win_num}",
+    )
+    assistant_clear_button = Button(
+        label="Clear",
+        button_type="default",
+        sizing_mode="stretch_width",
+        name=f"assistant_clear{win_num}",
+    )
+
     # Associate callback functions to the widgets
     slide_alpha.on_change("value", slide_alpha_cb)
     overlay_alpha.on_change("value", overlay_alpha_cb)
@@ -1588,6 +1859,16 @@ def gather_ui_elements(  # noqa: PLR0915
     filter_input.on_change("value", filter_input_cb)
     cprop_input.on_change("value", cprop_input_cb)
     type_cmap_select.on_change("value", type_cmap_cb)
+    current_win_idx = int(win_num)
+
+    def _assistant_send_click(_: ButtonClick) -> None:
+        send_assistant_prompt_cb(current_win_idx)
+
+    def _assistant_clear_click(_: ButtonClick) -> None:
+        clear_assistant_history_cb(current_win_idx)
+
+    assistant_send_button.on_click(_assistant_send_click)
+    assistant_clear_button.on_click(_assistant_clear_click)
 
     # Create some layouts
     type_column = column(children=layer_boxes, name=f"type_column{win_num}")
@@ -1610,6 +1891,32 @@ def gather_ui_elements(  # noqa: PLR0915
     type_select_row = row(
         children=[type_column, color_column],
         sizing_mode="stretch_width",
+    )
+
+    assistant_buttons = row(
+        [assistant_send_button, assistant_clear_button],
+        sizing_mode="stretch_width",
+    )
+    assistant_settings = column(
+        [
+            assistant_endpoint,
+            assistant_temperature,
+            assistant_include_context,
+            assistant_stream,
+        ],
+        sizing_mode="stretch_width",
+        css_classes=["assistant-settings"],
+    )
+    assistant_layout = column(
+        [
+            assistant_transcript,
+            assistant_status,
+            assistant_input,
+            assistant_buttons,
+            assistant_settings,
+        ],
+        sizing_mode="stretch_both",
+        css_classes=["assistant-panel"],
     )
 
     # Make element dictionaries
@@ -1698,9 +2005,17 @@ def gather_ui_elements(  # noqa: PLR0915
         "overlay_alpha": overlay_alpha,
         "cmap_select": cmap_select,
         "slide_alpha": slide_alpha,
+        "assistant_endpoint_input": assistant_endpoint,
+        "assistant_temperature": assistant_temperature,
+        "assistant_stream_toggle": assistant_stream,
+        "assistant_include_context": assistant_include_context,
+        "assistant_transcript": assistant_transcript,
+        "assistant_status": assistant_status,
+        "assistant_input": assistant_input,
+        "assistant_send_button": assistant_send_button,
     }
 
-    return ui_layout, extra_options, elements_dict
+    return ui_layout, extra_options, assistant_layout, elements_dict
 
 
 def make_window(vstate: ViewerState) -> dict:  # noqa: PLR0915
@@ -1848,7 +2163,10 @@ def make_window(vstate: ViewerState) -> dict:  # noqa: PLR0915
     vstate.cprop = get_from_config(["default_cprop"], "type")
 
     # Define UI elements
-    ui_layout, extra_options, elements_dict = gather_ui_elements(vstate, win_num)
+    ui_layout, extra_options, assistant_layout, elements_dict = gather_ui_elements(
+        vstate,
+        win_num,
+    )
 
     if len(windows) == 0:
         # Setting up the first window
@@ -1858,6 +2176,7 @@ def make_window(vstate: ViewerState) -> dict:  # noqa: PLR0915
                     tabs=[
                         TabPanel(child=ui_layout, title="Main"),
                         TabPanel(child=extra_options, title="More Opts"),
+                        TabPanel(child=assistant_layout, title="Assistant"),
                     ],
                 ),
                 title="window 1",
@@ -1872,6 +2191,7 @@ def make_window(vstate: ViewerState) -> dict:  # noqa: PLR0915
                 tabs=[
                     TabPanel(child=ui_layout, title="Main"),
                     TabPanel(child=extra_options, title="More Opts"),
+                    TabPanel(child=assistant_layout, title="Assistant"),
                 ],
             ),
             title="window 2",
@@ -1892,6 +2212,8 @@ def make_window(vstate: ViewerState) -> dict:  # noqa: PLR0915
         "hover": hover,
         "user": user,
         "color_bar": color_bar,
+        "assistant_history": [],
+        "assistant_pending": False,
     }
 
 

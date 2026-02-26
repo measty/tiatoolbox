@@ -30,6 +30,34 @@ If you need to change the port on which the interface is launched from the defau
 
 Though in most cases this should not be necessary.
 
+Assistant (HistoGraph) Integration
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+The visualization UI includes an **Assistant** tab (inside each window's right-hand panel) that can send prompts to an OpenAI-compatible endpoint such as HistoGraph.
+
+By default, the endpoint is:
+
+.. code-block:: text
+
+    http://localhost:8000/v1/chat/completions
+
+To run locally, start HistoGraph first (example command may vary by your setup), then start TIAToolbox visualize:
+
+.. code-block:: console
+
+    # Terminal 1: run HistoGraph OpenAI-compatible API
+    # (example) uvicorn agent.openai_api:app --host 0.0.0.0 --port 8000
+
+    # Terminal 2: run TIAToolbox viewer
+    tiatoolbox visualize --slides path/to/slides --overlays path/to/overlays
+
+You can override the assistant endpoint either by:
+
+- editing the endpoint field in the Assistant tab, or
+- setting the environment variable ``TIATOOLBOX_ASSISTANT_ENDPOINT`` before launching the viewer.
+
+When **Include viewer context** is enabled, TIAToolbox injects compact JSON context into a hidden system message (current slide path/name, dimensions/mpp, current view bounds, selected ROI if any, and loaded layers) so prompts such as "describe this slide" can be interpreted correctly.
+
 Launching on a Remote Machine
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
@@ -454,6 +482,12 @@ There are settings to control the initial values of some UI settings:
         "nodes_on": 1,              # graph nodes are shown or hidden by default
         "colorbar_on": 1,           # whether color bar is shown below main window
         "hover_on": 1
+    },
+    "assistant": {
+        "endpoint": "http://localhost:8000/v1/chat/completions",
+        "temperature": 0.2,
+        "include_context": 1,
+        "model": "histograph"
     },
 
 and the ability to toggle on or off specific UI elements:
