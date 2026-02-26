@@ -21,6 +21,18 @@
         position: absolute;
         top: 0;
         right: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        padding: 8px;
+        box-sizing: border-box;
+        overflow: hidden;
+    }
+    .ui-controls {
+      flex: 1 1 auto;
+      min-height: 0;
+      overflow: auto;
+      padding-right: 2px;
     }
     .description {
         width: 78%;
@@ -30,19 +42,32 @@
         left: 2%;
         margin: 10px 0;
     }
-    .assistant-panel {
-      gap: 10px;
-      padding: 6px 2px;
-      /* Bokeh layouts are flex-based; this helps keep the transcript contained */
+
+    .assistant-template-panel {
+      flex: 0 0 auto;
+      border: 1px solid #d9e2ec;
+      border-radius: 8px;
+      background: #ffffff;
+      padding: 8px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
       min-height: 0;
+      box-sizing: border-box;
+    }
+
+    .assistant-template-header {
+      font-weight: 700;
+      font-size: 13px;
+      color: #1f2937;
+      margin: 0;
     }
 
     .assistant-transcript {
-      /* Force a bounded, scrollable transcript area (Bokeh may set inline overflow). */
-      height: 460px;
-      max-height: 55vh;
-      overflow: auto !important;
-      overflow-x: hidden !important;
+      height: 300px;
+      max-height: 50vh;
+      overflow: auto;
+      overflow-x: hidden;
       background: #f8fafc;
       border: 1px solid #d9e2ec;
       border-radius: 8px;
@@ -90,8 +115,59 @@
     .assistant-status {
       color: #374151;
       font-size: 12px;
-      padding: 2px 0;
       min-height: 18px;
+    }
+
+    .assistant-input {
+      width: 100%;
+      min-height: 72px;
+      resize: vertical;
+      border: 1px solid #cbd5e1;
+      border-radius: 6px;
+      padding: 8px;
+      font-size: 12px;
+      box-sizing: border-box;
+      font-family: inherit;
+    }
+
+    .assistant-actions {
+      display: flex;
+      gap: 8px;
+    }
+
+    .assistant-actions button {
+      flex: 1 1 auto;
+    }
+
+    .assistant-settings {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      font-size: 12px;
+    }
+
+    .assistant-settings label {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      color: #111827;
+      font-weight: 600;
+    }
+
+    .assistant-settings input[type='text'],
+    .assistant-settings input[type='number'] {
+      border: 1px solid #cbd5e1;
+      border-radius: 6px;
+      padding: 6px;
+      font-size: 12px;
+      font-weight: 400;
+    }
+
+    .assistant-inline-check {
+      flex-direction: row !important;
+      align-items: center;
+      gap: 8px !important;
+      font-weight: 500 !important;
     }
 
     .hidden {
@@ -148,16 +224,165 @@
     <button class="btn btn-primary" id="close-popup">Close</button>
   </div>
 </div>
-<div class="slide"> {{ embed(roots.slide_windows) }} </div><div class="ui"> {{ embed(roots.ui_layout) }} </div>
-<div class="description"> {{ embed(roots.description) }} </div>
+<div class="slide">{{ embed(roots.slide_windows) }}</div>
+<div class="ui">
+  <div class="ui-controls">{{ embed(roots.ui_layout) }}</div>
+
+  <div class="assistant-template-panel" id="assistant-panel">
+    <p class="assistant-template-header">Assistant</p>
+    <div id="assistant-transcript" class="assistant-transcript">
+      <div class="assistant-empty">Connecting to assistant bridge...</div>
+    </div>
+    <div id="assistant-status" class="assistant-status">Connecting...</div>
+
+    <textarea
+      id="assistant-input"
+      class="assistant-input"
+      placeholder="Ask a question about this slide..."
+    ></textarea>
+
+    <div class="assistant-actions">
+      <button id="assistant-send" class="btn btn-primary" type="button" disabled>Send</button>
+      <button id="assistant-clear" class="btn btn-default" type="button" disabled>Clear</button>
+    </div>
+
+    <div class="assistant-settings">
+      <label>
+        Endpoint URL
+        <input id="assistant-endpoint" type="text" value="" />
+      </label>
+      <label>
+        Temperature
+        <input id="assistant-temperature" type="number" min="0" max="2" step="0.1" value="0.2" />
+      </label>
+      <label class="assistant-inline-check">
+        <input id="assistant-include-context" type="checkbox" checked />
+        Include viewer context
+      </label>
+    </div>
+  </div>
+</div>
+<div class="description">{{ embed(roots.description) }}</div>
 <script>
   const closePopupBtn = document.getElementById('close-popup');
-  const popup = document.getElementById('popup');
   const popupContent = document.querySelector('.popup-content');
   const popupHeader = document.querySelector('.popup-header');
 
+  const assistantTranscriptEl = document.getElementById('assistant-transcript');
+  const assistantStatusEl = document.getElementById('assistant-status');
+  const assistantInputEl = document.getElementById('assistant-input');
+  const assistantSendBtn = document.getElementById('assistant-send');
+  const assistantClearBtn = document.getElementById('assistant-clear');
+  const assistantEndpointEl = document.getElementById('assistant-endpoint');
+  const assistantTempEl = document.getElementById('assistant-temperature');
+  const assistantIncludeContextEl = document.getElementById('assistant-include-context');
+
   let isDragging = false;
   let offsetX, offsetY;
+  let assistantBridge = null;
+
+  function bridgeScalar(data, key, fallbackValue) {
+    const value = data[key];
+    if (Array.isArray(value) && value.length > 0) {
+      return value[0];
+    }
+    return fallbackValue;
+  }
+
+  function setBridgeData(updates) {
+    if (!assistantBridge) {
+      return;
+    }
+    const data = { ...assistantBridge.data };
+    Object.entries(updates).forEach(([k, v]) => {
+      data[k] = [v];
+    });
+    assistantBridge.data = data;
+    assistantBridge.change.emit();
+  }
+
+  function syncAssistantFromBridge() {
+    if (!assistantBridge) {
+      return;
+    }
+
+    const data = assistantBridge.data || {};
+    assistantTranscriptEl.innerHTML = bridgeScalar(data, 'transcript_html', "<div class='assistant-empty'>Ask about this slide, overlays, or ROIs.</div>");
+    assistantStatusEl.textContent = String(bridgeScalar(data, 'status', 'Ready.'));
+
+    if (document.activeElement !== assistantEndpointEl) {
+      assistantEndpointEl.value = String(bridgeScalar(data, 'endpoint', assistantEndpointEl.value || ''));
+    }
+    if (document.activeElement !== assistantTempEl) {
+      assistantTempEl.value = String(bridgeScalar(data, 'temperature', assistantTempEl.value || 0.2));
+    }
+    assistantIncludeContextEl.checked = Boolean(Number(bridgeScalar(data, 'include_context', 1)));
+
+    assistantTranscriptEl.scrollTop = assistantTranscriptEl.scrollHeight;
+    assistantSendBtn.disabled = false;
+    assistantClearBtn.disabled = false;
+  }
+
+  function connectAssistantBridge() {
+    if (!window.Bokeh || !Array.isArray(Bokeh.documents) || Bokeh.documents.length === 0) {
+      setTimeout(connectAssistantBridge, 100);
+      return;
+    }
+
+    const doc = Bokeh.documents[0];
+    const source = doc.get_model_by_name('assistant_bridge');
+    if (!source) {
+      setTimeout(connectAssistantBridge, 100);
+      return;
+    }
+
+    assistantBridge = source;
+    assistantBridge.change.connect(syncAssistantFromBridge);
+    syncAssistantFromBridge();
+  }
+
+  function sendAssistantPrompt() {
+    if (!assistantBridge) {
+      return;
+    }
+
+    const prompt = assistantInputEl.value.trim();
+    if (!prompt) {
+      assistantStatusEl.textContent = 'Please enter a message.';
+      return;
+    }
+
+    const currentData = assistantBridge.data || {};
+    const nextPendingNonce = Number(bridgeScalar(currentData, 'pending_nonce', 0)) + 1;
+    const endpoint = assistantEndpointEl.value.trim() || String(bridgeScalar(currentData, 'endpoint', ''));
+    const tempInput = Number.parseFloat(assistantTempEl.value);
+    const temperature = Number.isFinite(tempInput) ? tempInput : Number(bridgeScalar(currentData, 'temperature', 0.2));
+    const includeContext = assistantIncludeContextEl.checked ? 1 : 0;
+
+    setBridgeData({
+      pending_prompt: prompt,
+      pending_nonce: nextPendingNonce,
+      endpoint,
+      temperature,
+      include_context: includeContext,
+      status: 'Sending request to assistant...',
+    });
+
+    assistantInputEl.value = '';
+    assistantSendBtn.disabled = true;
+  }
+
+  function clearAssistantConversation() {
+    if (!assistantBridge) {
+      return;
+    }
+
+    const currentData = assistantBridge.data || {};
+    const nextClearNonce = Number(bridgeScalar(currentData, 'clear_nonce', 0)) + 1;
+    setBridgeData({
+      clear_nonce: nextClearNonce,
+    });
+  }
 
   closePopupBtn.addEventListener('click', function() {
       popupContent.classList.add('hidden');
@@ -174,12 +399,22 @@
           popupContent.style.left = (e.clientX - offsetX) + 'px';
           popupContent.style.top = (e.clientY - offsetY) + 'px';
           popupContent.style.position = 'fixed';
-          console.log('New position is:', popupContent.style.left, popupContent.style.top);
       }
   });
 
   document.addEventListener('mouseup', function() {
       isDragging = false;
   });
+
+  assistantSendBtn.addEventListener('click', sendAssistantPrompt);
+  assistantClearBtn.addEventListener('click', clearAssistantConversation);
+  assistantInputEl.addEventListener('keydown', function(event) {
+    if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
+      event.preventDefault();
+      sendAssistantPrompt();
+    }
+  });
+
+  connectAssistantBridge();
 </script>
 {% endblock %}

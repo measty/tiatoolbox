@@ -33,7 +33,7 @@ Though in most cases this should not be necessary.
 Assistant (HistoGraph) Integration
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-The visualization UI includes an **Assistant** tab (inside each window's right-hand panel) that can send prompts to an OpenAI-compatible endpoint such as HistoGraph.
+The visualization UI includes an **Assistant** panel at the bottom of the right-hand controls area. This panel can send prompts to an OpenAI-compatible endpoint such as HistoGraph.
 
 By default, the endpoint is:
 
@@ -53,10 +53,10 @@ To run locally, start HistoGraph first (example command may vary by your setup),
 
 You can override the assistant endpoint either by:
 
-- editing the endpoint field in the Assistant tab, or
+- editing the endpoint field in the Assistant panel, or
 - setting the environment variable ``TIATOOLBOX_ASSISTANT_ENDPOINT`` before launching the viewer.
 
-When **Include viewer context** is enabled, TIAToolbox injects compact JSON context into a hidden system message (current slide path/name, dimensions/mpp, current view bounds, selected ROI if any, and loaded layers) so prompts such as "describe this slide" can be interpreted correctly.
+When **Include viewer context** is enabled, TIAToolbox injects compact JSON context into a hidden system message (current slide path/name, dimensions/mpp, current view bounds, selected ROI if any, and loaded layers) so prompts such as "describe this slide" can be interpreted correctly. In dual-window mode, this context is taken from the currently active window tab.
 
 Launching on a Remote Machine
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
