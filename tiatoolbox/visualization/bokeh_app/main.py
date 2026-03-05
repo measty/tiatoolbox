@@ -79,6 +79,7 @@ from tiatoolbox.visualization.bokeh_app.histograph_client import (
     extract_workflow_artifact,
     normalize_base_url,
     request_chat_completion,
+    run_comfyui_workflow_from_artifact,
     upload_workflow_artifact_to_comfyui,
 )
 from tiatoolbox.visualization.ui_utils import get_level_by_extent
@@ -102,6 +103,7 @@ NO_UPDATE = 0
 PENDING_UPDATE = 1
 DO_UPDATE = 2
 ASSISTANT_HISTORY_LIMIT = 24
+ASSISTANT_IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".tif", ".tiff", ".webp"}
 assistant_executor = ThreadPoolExecutor(max_workers=4)
 
 
@@ -806,8 +808,14 @@ def _assistant_session_state() -> dict[str, Any]:
                 "history_by_user": {},
                 "pending_by_user": {},
                 "active_nonce_by_user": {},
+                "run_pending_by_user": {},
+                "active_run_nonce_by_user": {},
                 "last_pending_nonce": 0,
                 "last_clear_nonce": 0,
+                "last_run_nonce": 0,
+                "last_load_overlay_nonce": 0,
+                "last_load_slide_nonce": 0,
+                "last_load_outputs_nonce": 0,
             },
         )
     return getattr(doc, "_assistant_state")
@@ -827,6 +835,9 @@ def _reset_workflow_bridge_fields(data: dict[str, Any]) -> None:
     data["workflow_available"] = [0]
     data["workflow_artifact_url"] = [""]
     data["workflow_uploaded_name"] = [""]
+    data["last_run_prompt_id"] = [""]
+    data["comfyui_outputs_json"] = ["[]"]
+    data["selected_output_indices"] = ["[]"]
 
 
 def _update_assistant_bridge(
@@ -835,6 +846,11 @@ def _update_assistant_bridge(
     workflow_available: int | None = None,
     workflow_artifact_url: str | None = None,
     workflow_uploaded_name: str | None = None,
+    last_run_prompt_id: str | None = None,
+    comfyui_outputs_json: str | None = None,
+    selected_output_indices: str | None = None,
+    overlay_path: str | None = None,
+    slide_path: str | None = None,
 ) -> None:
     """Push transcript/status updates to assistant bridge model."""
     if len(win_dicts) == 0:
@@ -855,6 +871,16 @@ def _update_assistant_bridge(
         data["workflow_artifact_url"] = [str(workflow_artifact_url)]
     if workflow_uploaded_name is not None:
         data["workflow_uploaded_name"] = [str(workflow_uploaded_name)]
+    if last_run_prompt_id is not None:
+        data["last_run_prompt_id"] = [str(last_run_prompt_id)]
+    if comfyui_outputs_json is not None:
+        data["comfyui_outputs_json"] = [str(comfyui_outputs_json)]
+    if selected_output_indices is not None:
+        data["selected_output_indices"] = [str(selected_output_indices)]
+    if overlay_path is not None:
+        data["overlay_path"] = [str(overlay_path)]
+    if slide_path is not None:
+        data["slide_path"] = [str(slide_path)]
     assistant_bridge_source.data = data
 
 
@@ -873,6 +899,9 @@ def clear_assistant_history_cb() -> None:
         workflow_available=0,
         workflow_artifact_url="",
         workflow_uploaded_name="",
+        last_run_prompt_id="",
+        comfyui_outputs_json="[]",
+        selected_output_indices="[]",
     )
 
 
@@ -914,6 +943,9 @@ def send_assistant_prompt_cb(
         workflow_available=0,
         workflow_artifact_url="",
         workflow_uploaded_name="",
+        last_run_prompt_id="",
+        comfyui_outputs_json="[]",
+        selected_output_indices="[]",
     )
 
     payload_messages = []
@@ -1023,6 +1055,268 @@ def send_assistant_prompt_cb(
     future.add_done_callback(_on_done)
 
 
+def load_overlay_from_path(path: str) -> None:
+    """Load an overlay directly from filesystem path."""
+    path = path.strip()
+    if path == "":
+        _update_assistant_bridge(status="Overlay path is empty.")
+        return
+
+    overlay_path = Path(path).expanduser()
+    if not overlay_path.exists():
+        _update_assistant_bridge(status=f"Overlay path not found: {overlay_path}")
+        return
+    if not overlay_path.is_file():
+        _update_assistant_bridge(status=f"Overlay path is not a file: {overlay_path}")
+        return
+
+    try:
+        layer_drop_cb(DummyAttr(str(overlay_path)))
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("failed loading overlay from path", exc_info=exc)
+        _update_assistant_bridge(status=f"Failed to load overlay: {exc}")
+        return
+
+    # Add to overlay menu for convenience.
+    existing_values = [
+        str(item[1])
+        for item in UI["layer_drop"].menu
+        if isinstance(item, (tuple, list)) and len(item) > 1
+    ]
+    if str(overlay_path) not in existing_values:
+        UI["layer_drop"].menu = [
+            *UI["layer_drop"].menu,
+            (overlay_path.name, str(overlay_path)),
+        ]
+
+    _update_assistant_bridge(
+        status=f"Loaded overlay: {overlay_path}",
+        overlay_path=str(overlay_path),
+    )
+
+
+def load_slide_from_path(path: str) -> None:
+    """Load a slide directly from filesystem path."""
+    path = path.strip()
+    if path == "":
+        _update_assistant_bridge(status="Slide path is empty.")
+        return
+
+    slide_path = Path(path).expanduser()
+    if not slide_path.exists():
+        _update_assistant_bridge(status=f"Slide path not found: {slide_path}")
+        return
+    if not slide_path.is_file():
+        _update_assistant_bridge(status=f"Slide path is not a file: {slide_path}")
+        return
+
+    try:
+        slide_select_cb(None, "", [str(slide_path)])
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("failed loading slide from path", exc_info=exc)
+        _update_assistant_bridge(status=f"Failed to load slide: {exc}")
+        return
+
+    _update_assistant_bridge(
+        status=f"Loaded slide: {slide_path}",
+        slide_path=str(slide_path),
+    )
+
+
+def load_comfyui_outputs_from_indices(indices_json: str) -> None:
+    """Load selected ComfyUI output items as overlays."""
+    raw_outputs = str(
+        _bridge_scalar(assistant_bridge_source.data, "comfyui_outputs_json", "[]"),
+    )
+    try:
+        output_items = json.loads(raw_outputs)
+    except json.JSONDecodeError:
+        output_items = []
+
+    if not isinstance(output_items, list) or len(output_items) == 0:
+        _update_assistant_bridge(status="No ComfyUI outputs available to load.")
+        return
+
+    try:
+        selected_indices = json.loads(indices_json)
+    except json.JSONDecodeError:
+        selected_indices = []
+
+    if not isinstance(selected_indices, list) or len(selected_indices) == 0:
+        _update_assistant_bridge(status="No output selected to load as overlay.")
+        return
+
+    loaded = 0
+    skipped_non_image = 0
+    for raw_idx in selected_indices:
+        try:
+            idx = int(raw_idx)
+        except (TypeError, ValueError):
+            continue
+        if idx < 0 or idx >= len(output_items):
+            continue
+
+        item = output_items[idx]
+        if not isinstance(item, dict):
+            continue
+
+        resolved_path = str(item.get("resolved_path", "")).strip()
+        if resolved_path == "":
+            continue
+
+        suffix = Path(resolved_path).suffix.lower()
+        if suffix not in ASSISTANT_IMAGE_EXTENSIONS:
+            skipped_non_image += 1
+            continue
+
+        load_overlay_from_path(resolved_path)
+        loaded += 1
+
+    if loaded == 0:
+        if skipped_non_image > 0:
+            _update_assistant_bridge(
+                status=(
+                    "Selected outputs are not image overlays "
+                    f"({skipped_non_image} skipped)."
+                ),
+            )
+        else:
+            _update_assistant_bridge(status="No valid selected output paths could be loaded.")
+        return
+
+    msg = f"Loaded {loaded} ComfyUI output overlay(s)."
+    if skipped_non_image > 0:
+        msg += f" Skipped {skipped_non_image} non-image output(s)."
+    _update_assistant_bridge(status=msg)
+
+
+def run_assistant_workflow_cb(run_nonce: int) -> None:
+    """Queue and run latest generated workflow on ComfyUI headlessly."""
+    if len(win_dicts) == 0:
+        return
+
+    ui_state = win_dicts[_assistant_active_window_idx()]
+    user_id = _assistant_user_id(ui_state)
+    session_state = _assistant_session_state()
+    if session_state["run_pending_by_user"].get(user_id, False):
+        _update_assistant_bridge(status="A headless workflow run is already in progress.")
+        return
+
+    workflow_uploaded_name = str(
+        _bridge_scalar(assistant_bridge_source.data, "workflow_uploaded_name", ""),
+    ).strip()
+    workflow_artifact_url = str(
+        _bridge_scalar(assistant_bridge_source.data, "workflow_artifact_url", ""),
+    ).strip()
+    comfyui_url = normalize_base_url(
+        str(_bridge_scalar(assistant_bridge_source.data, "comfyui_url", "http://127.0.0.1:8188")),
+        default="http://127.0.0.1:8188",
+    )
+    comfyui_output_dir = str(
+        _bridge_scalar(
+            assistant_bridge_source.data,
+            "comfyui_output_dir",
+            str(
+                get_from_config(
+                    ["assistant", "comfyui_output_dir"],
+                    os.environ.get("TIATOOLBOX_COMFYUI_OUTPUT_DIR", ""),
+                ),
+            ),
+        ),
+    ).strip()
+
+    if workflow_uploaded_name == "" or workflow_artifact_url == "":
+        _update_assistant_bridge(
+            status="No uploaded workflow is available to run yet.",
+        )
+        return
+
+    session_state["run_pending_by_user"][user_id] = True
+    session_state["active_run_nonce_by_user"][user_id] = run_nonce
+    doc = curdoc()
+
+    _update_assistant_bridge(
+        status="Queueing workflow in ComfyUI...",
+        comfyui_outputs_json="[]",
+        selected_output_indices="[]",
+        last_run_prompt_id="",
+    )
+
+    def _worker() -> dict[str, Any]:
+        def _on_prompt_queued(prompt_id: str) -> None:
+            def _queued_update() -> None:
+                fresh_state = _assistant_session_state()
+                if fresh_state["active_run_nonce_by_user"].get(user_id) != run_nonce:
+                    return
+                _update_assistant_bridge(
+                    status=(
+                        "Workflow queued in ComfyUI "
+                        f"(prompt_id: {prompt_id}); running..."
+                    ),
+                    last_run_prompt_id=prompt_id,
+                )
+
+            doc.add_next_tick_callback(_queued_update)
+
+        return run_comfyui_workflow_from_artifact(
+            artifact_url=workflow_artifact_url,
+            comfyui_url=comfyui_url,
+            comfyui_output_dir=comfyui_output_dir or None,
+            wait_timeout_s=float(
+                get_from_config(["assistant", "comfyui_run_timeout_s"], 300.0),
+            ),
+            poll_interval_s=float(
+                get_from_config(["assistant", "comfyui_poll_interval_s"], 1.5),
+            ),
+            on_prompt_queued=_on_prompt_queued,
+        )
+
+    def _on_done(future: Future) -> None:
+        def _finish() -> None:
+            fresh_state = _assistant_session_state()
+            if fresh_state["active_run_nonce_by_user"].get(user_id) != run_nonce:
+                return
+
+            fresh_state["run_pending_by_user"][user_id] = False
+            try:
+                result = future.result()
+            except Exception as exc:  # noqa: BLE001
+                _update_assistant_bridge(status=f"Headless run failed: {exc}")
+                logger.exception("assistant headless run failed", exc_info=exc)
+                return
+
+            prompt_id = str(result.get("prompt_id", "")).strip()
+            outputs = result.get("outputs", [])
+            if not isinstance(outputs, list):
+                outputs = []
+
+            output_summary = result.get("output_summary", {})
+            if not isinstance(output_summary, dict):
+                output_summary = {}
+            export_found = int(output_summary.get("export_found", 0) or 0)
+            history_found = int(output_summary.get("history_found", 0) or 0)
+            total_found = int(output_summary.get("total_found", len(outputs)) or 0)
+
+            status_msg = (
+                f"Headless run completed (prompt_id: {prompt_id}). "
+                f"Found {export_found} exported output(s), "
+                f"{history_found} history output(s), {total_found} total existing file(s)."
+            )
+
+            _update_assistant_bridge(
+                status=status_msg,
+                last_run_prompt_id=prompt_id,
+                comfyui_outputs_json=json.dumps(outputs),
+                selected_output_indices="[]",
+            )
+
+        doc.add_next_tick_callback(_finish)
+
+    future = assistant_executor.submit(_worker)
+    _update_assistant_bridge(status="Workflow running in ComfyUI...")
+    future.add_done_callback(_on_done)
+
+
 def assistant_bridge_data_cb(attr: str, old: dict[str, Any], new: dict[str, Any]) -> None:  # noqa: ARG001
     """Bridge callback to route template UI events to python handlers."""
     session_state = _assistant_session_state()
@@ -1066,6 +1360,41 @@ def assistant_bridge_data_cb(attr: str, old: dict[str, Any], new: dict[str, Any]
         session_state["last_clear_nonce"] = clear_nonce
         clear_assistant_history_cb()
 
+    try:
+        run_nonce = int(_bridge_scalar(new, "run_nonce", 0))
+    except (TypeError, ValueError):
+        run_nonce = session_state["last_run_nonce"]
+    if run_nonce != session_state["last_run_nonce"]:
+        session_state["last_run_nonce"] = run_nonce
+        run_assistant_workflow_cb(run_nonce)
+
+    try:
+        load_overlay_nonce = int(_bridge_scalar(new, "load_overlay_nonce", 0))
+    except (TypeError, ValueError):
+        load_overlay_nonce = session_state["last_load_overlay_nonce"]
+    if load_overlay_nonce != session_state["last_load_overlay_nonce"]:
+        session_state["last_load_overlay_nonce"] = load_overlay_nonce
+        overlay_path = str(_bridge_scalar(new, "overlay_path", "")).strip()
+        load_overlay_from_path(overlay_path)
+
+    try:
+        load_slide_nonce = int(_bridge_scalar(new, "load_slide_nonce", 0))
+    except (TypeError, ValueError):
+        load_slide_nonce = session_state["last_load_slide_nonce"]
+    if load_slide_nonce != session_state["last_load_slide_nonce"]:
+        session_state["last_load_slide_nonce"] = load_slide_nonce
+        slide_path = str(_bridge_scalar(new, "slide_path", "")).strip()
+        load_slide_from_path(slide_path)
+
+    try:
+        load_outputs_nonce = int(_bridge_scalar(new, "load_outputs_nonce", 0))
+    except (TypeError, ValueError):
+        load_outputs_nonce = session_state["last_load_outputs_nonce"]
+    if load_outputs_nonce != session_state["last_load_outputs_nonce"]:
+        session_state["last_load_outputs_nonce"] = load_outputs_nonce
+        selected_indices = str(_bridge_scalar(new, "selected_output_indices", "[]"))
+        load_comfyui_outputs_from_indices(selected_indices)
+
 
 def init_assistant_bridge_for_session() -> None:
     """Initialize assistant bridge defaults for this session."""
@@ -1082,6 +1411,10 @@ def init_assistant_bridge_for_session() -> None:
         ["assistant", "comfyui_url"],
         os.environ.get("TIATOOLBOX_COMFYUI_URL", "http://127.0.0.1:8188"),
     )
+    comfyui_output_dir = get_from_config(
+        ["assistant", "comfyui_output_dir"],
+        os.environ.get("TIATOOLBOX_COMFYUI_OUTPUT_DIR", ""),
+    )
 
     data = dict(assistant_bridge_source.data)
     data["pending_prompt"] = [""]
@@ -1093,6 +1426,14 @@ def init_assistant_bridge_for_session() -> None:
     data["comfyui_url"] = [
         normalize_base_url(str(comfyui_url), default="http://127.0.0.1:8188")
     ]
+    data["comfyui_output_dir"] = [str(comfyui_output_dir or "")]
+    data["run_nonce"] = [0]
+    data["load_overlay_nonce"] = [0]
+    data["load_slide_nonce"] = [0]
+    data["load_outputs_nonce"] = [0]
+    data["overlay_path"] = [""]
+    data["slide_path"] = [""]
+    data["selected_output_indices"] = ["[]"]
     data["transcript_html"] = [render_assistant_transcript_html([])]
     data["status"] = ["Ready."]
     _reset_workflow_bridge_fields(data)
@@ -1102,8 +1443,20 @@ def init_assistant_bridge_for_session() -> None:
     session_state["history_by_user"] = {}
     session_state["pending_by_user"] = {}
     session_state["active_nonce_by_user"] = {}
+    session_state["run_pending_by_user"] = {}
+    session_state["active_run_nonce_by_user"] = {}
     session_state["last_pending_nonce"] = int(_bridge_scalar(data, "pending_nonce", 0))
     session_state["last_clear_nonce"] = int(_bridge_scalar(data, "clear_nonce", 0))
+    session_state["last_run_nonce"] = int(_bridge_scalar(data, "run_nonce", 0))
+    session_state["last_load_overlay_nonce"] = int(
+        _bridge_scalar(data, "load_overlay_nonce", 0),
+    )
+    session_state["last_load_slide_nonce"] = int(
+        _bridge_scalar(data, "load_slide_nonce", 0),
+    )
+    session_state["last_load_outputs_nonce"] = int(
+        _bridge_scalar(data, "load_outputs_nonce", 0),
+    )
 
 
 # endregion
@@ -1732,9 +2085,19 @@ assistant_bridge_source = ColumnDataSource(
         "temperature": [0.2],
         "include_context": [1],
         "comfyui_url": ["http://127.0.0.1:8188"],
+        "comfyui_output_dir": [""],
         "workflow_available": [0],
         "workflow_artifact_url": [""],
         "workflow_uploaded_name": [""],
+        "run_nonce": [0],
+        "load_overlay_nonce": [0],
+        "load_slide_nonce": [0],
+        "load_outputs_nonce": [0],
+        "overlay_path": [""],
+        "slide_path": [""],
+        "last_run_prompt_id": [""],
+        "comfyui_outputs_json": ["[]"],
+        "selected_output_indices": ["[]"],
         "clear_nonce": [0],
         "transcript_html": [
             "<div class='assistant-empty'>"

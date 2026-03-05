@@ -197,6 +197,27 @@
       font-size: 12px;
     }
 
+    .assistant-inline-row {
+      display: flex;
+      gap: 6px;
+      align-items: center;
+    }
+
+    .assistant-inline-row input,
+    .assistant-inline-row select {
+      flex: 1 1 auto;
+      min-width: 0;
+      border: 1px solid #cbd5e1;
+      border-radius: 6px;
+      padding: 6px;
+      font-size: 12px;
+    }
+
+    .assistant-inline-row button {
+      flex: 0 0 auto;
+      white-space: nowrap;
+    }
+
     .assistant-settings label {
       display: flex;
       flex-direction: column;
@@ -323,11 +344,35 @@
       <button id="assistant-open-comfyui" class="btn btn-default" type="button" disabled>
         Open ComfyUI
       </button>
+      <button id="assistant-run-workflow" class="btn btn-success" type="button" disabled>
+        Headless Run
+      </button>
     </div>
 
     <div id="assistant-workflow-status" class="assistant-workflow-status"></div>
 
     <div class="assistant-settings">
+      <label>
+        Overlay path
+        <div class="assistant-inline-row">
+          <input id="assistant-overlay-path" type="text" value="" placeholder="/path/to/overlay.png" />
+          <button id="assistant-load-overlay" class="btn btn-default" type="button" disabled>Load overlay</button>
+        </div>
+      </label>
+      <label>
+        Slide path
+        <div class="assistant-inline-row">
+          <input id="assistant-slide-path" type="text" value="" placeholder="/path/to/slide.svs" />
+          <button id="assistant-load-slide" class="btn btn-default" type="button" disabled>Load slide</button>
+        </div>
+      </label>
+      <label>
+        ComfyUI outputs
+        <div class="assistant-inline-row">
+          <select id="assistant-output-list" multiple size="4"></select>
+          <button id="assistant-load-output" class="btn btn-default" type="button" disabled>Load selected</button>
+        </div>
+      </label>
       <label>
         Endpoint URL
         <input id="assistant-endpoint" type="text" value="" />
@@ -359,7 +404,14 @@
   const assistantTempEl = document.getElementById('assistant-temperature');
   const assistantIncludeContextEl = document.getElementById('assistant-include-context');
   const assistantOpenComfyuiBtn = document.getElementById('assistant-open-comfyui');
+  const assistantRunWorkflowBtn = document.getElementById('assistant-run-workflow');
   const assistantWorkflowStatusEl = document.getElementById('assistant-workflow-status');
+  const assistantOverlayPathEl = document.getElementById('assistant-overlay-path');
+  const assistantLoadOverlayBtn = document.getElementById('assistant-load-overlay');
+  const assistantSlidePathEl = document.getElementById('assistant-slide-path');
+  const assistantLoadSlideBtn = document.getElementById('assistant-load-slide');
+  const assistantOutputListEl = document.getElementById('assistant-output-list');
+  const assistantLoadOutputBtn = document.getElementById('assistant-load-output');
   const assistantDrawerEl = document.getElementById('assistant-drawer');
   const assistantDrawerToggleEl = document.getElementById('assistant-drawer-toggle');
 
@@ -406,6 +458,15 @@
     assistantBridge.change.emit();
   }
 
+  function parseJsonArray(rawValue, fallback = []) {
+    try {
+      const parsed = JSON.parse(String(rawValue || '[]'));
+      return Array.isArray(parsed) ? parsed : fallback;
+    } catch (_error) {
+      return fallback;
+    }
+  }
+
   function syncAssistantFromBridge() {
     if (!assistantBridge) {
       return;
@@ -428,6 +489,7 @@
 
     const workflowAvailable = Number(bridgeScalar(data, 'workflow_available', 0)) === 1;
     const workflowUploadedName = String(bridgeScalar(data, 'workflow_uploaded_name', '')).trim();
+    const lastRunPromptId = String(bridgeScalar(data, 'last_run_prompt_id', '')).trim();
     if (workflowAvailable && workflowUploadedName) {
       assistantWorkflowStatusEl.textContent = `Workflow uploaded to ComfyUI as ${workflowUploadedName}`;
     } else if (workflowAvailable && assistantWorkflowArtifactUrl) {
@@ -435,11 +497,54 @@
     } else {
       assistantWorkflowStatusEl.textContent = '';
     }
+    if (lastRunPromptId) {
+      assistantWorkflowStatusEl.textContent = `${assistantWorkflowStatusEl.textContent} Last run prompt_id: ${lastRunPromptId}`.trim();
+    }
 
+    if (document.activeElement !== assistantOverlayPathEl) {
+      assistantOverlayPathEl.value = String(bridgeScalar(data, 'overlay_path', assistantOverlayPathEl.value || ''));
+    }
+    if (document.activeElement !== assistantSlidePathEl) {
+      assistantSlidePathEl.value = String(bridgeScalar(data, 'slide_path', assistantSlidePathEl.value || ''));
+    }
+
+    const outputItems = parseJsonArray(bridgeScalar(data, 'comfyui_outputs_json', '[]'));
+    const selectedIndices = parseJsonArray(bridgeScalar(data, 'selected_output_indices', '[]'));
+    const selectedIndexSet = new Set(selectedIndices.map((v) => Number(v)));
+    const imageExts = new Set(['.png', '.jpg', '.jpeg', '.tif', '.tiff', '.webp']);
+
+    assistantOutputListEl.innerHTML = '';
+    let imageOutputCount = 0;
+    outputItems.forEach((item, idx) => {
+      const resolvedPath = String(item.resolved_path || '');
+      const filename = String(item.filename || '');
+      const pathForExt = resolvedPath || filename;
+      const lastDot = pathForExt.lastIndexOf('.');
+      const suffix = lastDot >= 0 ? pathForExt.slice(lastDot).toLowerCase() : '';
+      if (!imageExts.has(suffix)) {
+        return;
+      }
+
+      imageOutputCount += 1;
+      const option = document.createElement('option');
+      const itemName = String(item.display_name || filename || `output_${idx}`);
+      option.value = String(idx);
+      option.textContent = resolvedPath ? `${itemName} (${resolvedPath})` : itemName;
+      if (selectedIndexSet.has(idx)) {
+        option.selected = true;
+      }
+      assistantOutputListEl.appendChild(option);
+    });
+
+    const hasUploadedWorkflow = Boolean(workflowUploadedName);
     assistantTranscriptEl.scrollTop = assistantTranscriptEl.scrollHeight;
     assistantSendBtn.disabled = false;
     assistantClearBtn.disabled = false;
     assistantOpenComfyuiBtn.disabled = false;
+    assistantRunWorkflowBtn.disabled = !hasUploadedWorkflow;
+    assistantLoadOverlayBtn.disabled = false;
+    assistantLoadSlideBtn.disabled = false;
+    assistantLoadOutputBtn.disabled = imageOutputCount === 0;
   }
 
   function connectAssistantBridge() {
@@ -503,6 +608,57 @@
     });
   }
 
+  function runHeadlessWorkflow() {
+    if (!assistantBridge) {
+      return;
+    }
+    const currentData = assistantBridge.data || {};
+    const nextRunNonce = Number(bridgeScalar(currentData, 'run_nonce', 0)) + 1;
+    setBridgeData({
+      run_nonce: nextRunNonce,
+      status: 'Queueing workflow in ComfyUI...',
+    });
+  }
+
+  function requestLoadOverlayFromPath() {
+    if (!assistantBridge) {
+      return;
+    }
+    const currentData = assistantBridge.data || {};
+    const overlayPath = assistantOverlayPathEl.value.trim();
+    const nextNonce = Number(bridgeScalar(currentData, 'load_overlay_nonce', 0)) + 1;
+    setBridgeData({
+      overlay_path: overlayPath,
+      load_overlay_nonce: nextNonce,
+    });
+  }
+
+  function requestLoadSlideFromPath() {
+    if (!assistantBridge) {
+      return;
+    }
+    const currentData = assistantBridge.data || {};
+    const slidePath = assistantSlidePathEl.value.trim();
+    const nextNonce = Number(bridgeScalar(currentData, 'load_slide_nonce', 0)) + 1;
+    setBridgeData({
+      slide_path: slidePath,
+      load_slide_nonce: nextNonce,
+    });
+  }
+
+  function requestLoadSelectedOutputs() {
+    if (!assistantBridge) {
+      return;
+    }
+    const currentData = assistantBridge.data || {};
+    const selectedIndices = Array.from(assistantOutputListEl.selectedOptions || []).map((opt) => Number(opt.value));
+    const nextNonce = Number(bridgeScalar(currentData, 'load_outputs_nonce', 0)) + 1;
+    setBridgeData({
+      selected_output_indices: JSON.stringify(selectedIndices),
+      load_outputs_nonce: nextNonce,
+    });
+  }
+
   function openComfyuiTab() {
     const url = (assistantComfyuiUrl || 'http://127.0.0.1:8188').trim();
     if (!url) {
@@ -544,10 +700,26 @@
   assistantSendBtn.addEventListener('click', sendAssistantPrompt);
   assistantClearBtn.addEventListener('click', clearAssistantConversation);
   assistantOpenComfyuiBtn.addEventListener('click', openComfyuiTab);
+  assistantRunWorkflowBtn.addEventListener('click', runHeadlessWorkflow);
+  assistantLoadOverlayBtn.addEventListener('click', requestLoadOverlayFromPath);
+  assistantLoadSlideBtn.addEventListener('click', requestLoadSlideFromPath);
+  assistantLoadOutputBtn.addEventListener('click', requestLoadSelectedOutputs);
   assistantInputEl.addEventListener('keydown', function(event) {
     if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
       event.preventDefault();
       sendAssistantPrompt();
+    }
+  });
+  assistantOverlayPathEl.addEventListener('keydown', function(event) {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      requestLoadOverlayFromPath();
+    }
+  });
+  assistantSlidePathEl.addEventListener('keydown', function(event) {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      requestLoadSlideFromPath();
     }
   });
 
