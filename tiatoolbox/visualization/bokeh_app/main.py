@@ -27,6 +27,7 @@ from bokeh.layouts import column, row
 from bokeh.models import (
     BasicTickFormatter,
     BoxEditTool,
+    BoxZoomTool,
     Button,
     CheckboxButtonGroup,
     Circle,
@@ -90,25 +91,13 @@ from tiatoolbox.visualization.ui_utils import get_level_by_extent
 from tiatoolbox.wsicore.wsireader import WSIReader
 
 JSON_SCHEMA = {
-    "colour_dict": {
-        str: list[int]
-    },
-    "initial_views": {
-        str: list[int]
-            },
+    "colour_dict": {str: list[int]},
+    "initial_views": {str: list[int]},
     "auto_load": int,
     "first_slide": str,
     "default_cprop": str,
-    "UI_settings": {
-        "blur_radius": int,
-        "edge_thickness": int,
-        "max_scale": int
-    },
-    "opts": {
-        "edges_on": int,
-        "nodes_on": int,
-        "colorbar_on": int
-    },
+    "UI_settings": {"blur_radius": int, "edge_thickness": int, "max_scale": int},
+    "opts": {"edges_on": int, "nodes_on": int, "colorbar_on": int},
     "ui_elements_1": {
         "slide_select": int,
         "layer_drop": int,
@@ -119,20 +108,19 @@ JSON_SCHEMA = {
         "cmap_row": int,
         "type_cmap_select": int,
         "model_row": int,
-        "type_select_row": int
+        "type_select_row": int,
     },
     "ui_elements_2": {
         "opt_buttons": int,
         "pt_size_spinner": int,
         "edge_size_spinner": int,
-        "res_switch": int
+        "res_switch": int,
     },
     "allow_upload": int,
     "password": str,
-    "cohorts": {
-        str: list[str]
-    }
-    }
+    "cohorts": {str: list[str]},
+}
+
 
 def to_str_or_num(val):
     out = str(val, "utf-8")
@@ -142,8 +130,9 @@ def to_str_or_num(val):
         if out.is_integer():
             out = int(out)
     except ValueError:
-        pass      
+        pass
     return out
+
 
 # try to import ollama if its available
 try:
@@ -386,7 +375,7 @@ def override_config_from_url(config: dict, req_args: dict) -> None:
                 sub_dict[keys_and_subkeys[1]] = to_str_or_num(v[0])
                 config[main_key] = sub_dict
             else:
-                config[k] = to_str_or_num(v[0])              
+                config[k] = to_str_or_num(v[0])
 
 
 class NodeScaler:
@@ -957,9 +946,13 @@ def initialise_slide() -> None:
     else:
         x_start, x_end, y_start, y_end = get_view_bounds(UI["vstate"].dims, plot_size)
         UI["p"].x_range.start = x_start
+        UI["p"].x_range.reset_start = x_start
         UI["p"].x_range.end = x_end
+        UI["p"].x_range.reset_end = x_end
         UI["p"].y_range.start = y_start
+        UI["p"].y_range.reset_start = y_start
         UI["p"].y_range.end = y_end
+        UI["p"].y_range.reset_end = y_end
 
     init_z = get_level_by_extent((0, UI["p"].y_range.start, UI["p"].x_range.end, 0))
     UI["vstate"].init_z = init_z
@@ -1676,7 +1669,9 @@ def update_ui_on_new_annotations(ann_types: list[str]) -> None:
         UI["type_cmap_select"].options.append("graph_overlay")
     UI["cprop_input"].options = UI["vstate"].props
     UI["cprop_input"].options.append("None")
-    if (UI["vstate"].props != UI["vstate"].props_old) and UI["vstate"].props_old is not None:
+    if (UI["vstate"].props != UI["vstate"].props_old) and UI[
+        "vstate"
+    ].props_old is not None:
         # If color by prop no longer exists, reset to type
         if (
             len(UI["cprop_input"].value) == 0
@@ -2676,9 +2671,9 @@ def make_window(vstate: ViewerState) -> dict:  # noqa: PLR0915
             active_scroll="wheel_zoom",
             output_backend="webgl",
             hidpi=True,
-            match_aspect=False,
+            match_aspect=True,
             lod_factor=200000,
-            sizing_mode="stretch_both",
+            sizing_mode="scale_both",
             name=f"slide_window{win_num}",
         )
         init_z = first_z[0]
@@ -2694,9 +2689,9 @@ def make_window(vstate: ViewerState) -> dict:  # noqa: PLR0915
             active_scroll="wheel_zoom",
             output_backend="webgl",
             hidpi=True,
-            match_aspect=False,
+            match_aspect=True,
             lod_factor=200000,
-            sizing_mode="stretch_both",
+            sizing_mode="scale_both",
             name=f"slide_window{win_num}",
         )
         init_z = get_level_by_extent((0, p.y_range.start, p.x_range.end, 0))
@@ -2779,6 +2774,7 @@ def make_window(vstate: ViewerState) -> dict:  # noqa: PLR0915
             description="Clear",
         ),
     )
+    p.add_tools(BoxZoomTool(match_aspect=True))
 
     if get_from_config(["opts", "hover_on"], 0) == 0:
         p.toolbar.active_inspect = None
@@ -2990,7 +2986,7 @@ dialog_content = Column(
 
 color_cycler = ColorCycler()
 tg = TileGroup()
-tool_str = "pan,wheel_zoom,save,copy,fullscreen"
+tool_str = "pan,wheel_zoom,save,copy,fullscreen,reset,zoom_in,zoom_out"
 req_args = []
 do_doc = False
 if curdoc().session_context is not None:
