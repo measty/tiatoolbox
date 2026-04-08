@@ -59,6 +59,9 @@ def encode_annotation_layer(
     tile_bounds: tuple[float, float, float, float],
     extent: int = DEFAULT_MVT_EXTENT,
     buffer: int = DEFAULT_MVT_BUFFER,
+    simplify_tolerance: float = 0.0,
+    min_line_length: float = 0.0,
+    min_polygon_area: float = 0.0,
 ) -> bytes:
     """Encode annotation geometries and properties into an MVT layer.
 
@@ -73,6 +76,14 @@ def encode_annotation_layer(
             MVT extent for tile-local coordinates.
         buffer:
             Tile buffer in MVT coordinate space.
+        simplify_tolerance:
+            Tolerance, in slide pixel coordinates, used to simplify line and polygon
+            geometry before MVT encoding.
+        min_line_length:
+            Minimum line length, in slide pixel coordinates, to keep after clipping.
+        min_polygon_area:
+            Minimum polygon area, in slide pixel coordinates squared, to keep after
+            clipping. Thin polygons are retained if they still span a visible edge.
 
     Returns:
         bytes:
@@ -89,7 +100,13 @@ def encode_annotation_layer(
     values: list[bytes] = []
 
     for geometry, properties in annotations:
-        for simple_geometry in _prepare_geometries(geometry, clip_geometry):
+        for simple_geometry in _prepare_geometries(
+            geometry,
+            clip_geometry,
+            simplify_tolerance=simplify_tolerance,
+            min_line_length=min_line_length,
+            min_polygon_area=min_polygon_area,
+        ):
             encoded_geometry, geom_type = _encode_geometry(simple_geometry, envelope)
             if not encoded_geometry or geom_type == _GEOM_UNKNOWN:
                 continue
@@ -148,6 +165,10 @@ def _buffered_clip_geometry(envelope: _TileEnvelope, buffer: int) -> Polygon:
 def _prepare_geometries(
     geometry: BaseGeometry,
     clip_geometry: Polygon,
+    *,
+    simplify_tolerance: float = 0.0,
+    min_line_length: float = 0.0,
+    min_polygon_area: float = 0.0,
 ) -> Iterator[Point | LineString | Polygon]:
     """Clip and split geometries into simple MVT-supported parts."""
     if geometry.is_empty:
@@ -164,7 +185,57 @@ def _prepare_geometries(
     ):
         candidate = geometry.intersection(clip_geometry)
 
-    yield from _iter_simple_geometries(candidate)
+    candidate = _simplify_geometry(candidate, simplify_tolerance)
+    yield from _iter_renderable_geometries(
+        candidate,
+        min_line_length=min_line_length,
+        min_polygon_area=min_polygon_area,
+    )
+
+
+def _simplify_geometry(geometry: BaseGeometry, tolerance: float) -> BaseGeometry:
+    """Simplify non-point geometry prior to MVT quantisation."""
+    if tolerance <= 0 or isinstance(geometry, (Point, MultiPoint)):
+        return geometry
+    return geometry.simplify(tolerance, preserve_topology=True)
+
+
+def _iter_renderable_geometries(
+    geometry: BaseGeometry,
+    *,
+    min_line_length: float = 0.0,
+    min_polygon_area: float = 0.0,
+) -> Iterator[Point | LineString | Polygon]:
+    """Yield simple geometries which remain visible at the current tile scale."""
+    for simple_geometry in _iter_simple_geometries(geometry):
+        if _is_renderable_geometry(
+            simple_geometry,
+            min_line_length=min_line_length,
+            min_polygon_area=min_polygon_area,
+        ):
+            yield simple_geometry
+
+
+def _is_renderable_geometry(
+    geometry: Point | LineString | Polygon,
+    *,
+    min_line_length: float = 0.0,
+    min_polygon_area: float = 0.0,
+) -> bool:
+    """Cull geometries which are too small to survive tile rendering."""
+    if isinstance(geometry, Point):
+        return True
+
+    if isinstance(geometry, LineString):
+        return geometry.length >= min_line_length
+
+    if isinstance(geometry, Polygon):
+        if geometry.area >= min_polygon_area:
+            return True
+        bounds = geometry.bounds
+        return max(bounds[2] - bounds[0], bounds[3] - bounds[1]) >= min_line_length
+
+    return False
 
 
 def _iter_simple_geometries(

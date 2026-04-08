@@ -979,6 +979,7 @@ def test_get_layers_metadata(app: TileServer) -> None:
         assert overlay["vector_format"] == "mvt"
         assert overlay["vector_url"].endswith("/mvt/{z}/{x}/{y}.pbf")
         assert overlay["vector_tile_extent"] == 4096
+        assert overlay["vector_revision"] == 0
 
 
 def test_session_id_preserves_default_layers(app_alt: TileServer) -> None:
@@ -1064,7 +1065,16 @@ def test_get_annotations_mvt(app_alt: TileServer) -> None:
         )
         assert response.status_code == 200
         assert response.content_type == "application/vnd.mapbox-vector-tile"
+        assert response.headers["Cache-Control"] == "private, max-age=300"
+        assert response.headers["ETag"]
         assert len(response.data) > 0
+
+        cached_response = client.get(
+            "/tileserver/layer/layer-1/default/mvt/0/0/0.pbf",
+            query_string={"where": json.dumps(None)},
+            headers={"If-None-Match": response.headers["ETag"]},
+        )
+        assert cached_response.status_code == 304
 
         empty_response = client.get(
             "/tileserver/layer/layer-1/default/mvt/0/0/0.pbf",
@@ -1073,6 +1083,29 @@ def test_get_annotations_mvt(app_alt: TileServer) -> None:
         assert empty_response.status_code == 200
         assert len(empty_response.data) > 0
         assert response.data != empty_response.data
+
+
+def test_annotation_overlay_reload_bumps_vector_revision(app: TileServer) -> None:
+    """Reloading an annotation overlay should invalidate cached vector tiles."""
+    with app.test_client() as client:
+        initial_layers = client.get("/tileserver/layers").get_json()
+        initial_overlay = next(
+            layer for layer in initial_layers if layer["name"] == "overlay"
+        )
+
+        response = client.put(
+            "/tileserver/overlay",
+            data={"overlay_path": initial_overlay["path"]},
+        )
+        assert response.status_code == 200
+
+        updated_layers = client.get("/tileserver/layers").get_json()
+        updated_overlay = next(
+            layer for layer in updated_layers if layer["name"] == "overlay"
+        )
+        assert updated_overlay["vector_revision"] == (
+            initial_overlay["vector_revision"] + 1
+        )
 
 
 def test_get_property_summary(app_alt: TileServer) -> None:

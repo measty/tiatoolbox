@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ast
 import copy
+import hashlib
 import io
 import json
 import os
@@ -79,6 +80,9 @@ PROJECT_OVERLAY_EXTENSIONS = (
     *RASTER_OVERLAY_EXTENSIONS,
     *ANNOTATION_OVERLAY_EXTENSIONS,
 )
+MVT_CACHE_MAX_AGE_SECONDS = 300
+MVT_SIMPLIFICATION_PIXEL_TOLERANCE = 0.5
+MVT_MIN_VISIBLE_GEOMETRY_PIXELS = 0.75
 
 
 class TileServer(Flask):
@@ -146,6 +150,7 @@ class TileServer(Flask):
         self.slide_mpps = {}
         self.renderers = {}
         self.overlaps = {}
+        self.annotation_revisions = {}
         self.project_config = self._load_project_config(project_config)
 
         # Generic layer names if none provided.
@@ -163,6 +168,7 @@ class TileServer(Flask):
             self.layers["default"] = {}
             self.pyramids["default"] = {}
             self.renderers["default"] = copy.deepcopy(self.renderer)
+            self.annotation_revisions["default"] = 0
         for i, (key, layer) in enumerate(layers.items()):
             layer = self._get_layer_as_wsireader(layer, meta)  # noqa: PLW2901
 
@@ -399,6 +405,7 @@ class TileServer(Flask):
                 f"{session_id}/mvt/{{z}}/{{x}}/{{y}}.pbf",
                 "vector_tile_extent": DEFAULT_MVT_EXTENT,
                 "vector_tile_buffer": DEFAULT_MVT_BUFFER,
+                "vector_revision": int(self.annotation_revisions.get(session_id, 0)),
             }
         else:
             kind = "slide" if name == "slide" else "raster"
@@ -614,6 +621,28 @@ class TileServer(Flask):
         max_y = min(height, min_y + tile_width)
         return (min_x, min_y, max_x, max_y)
 
+    @staticmethod
+    def _get_annotation_mvt_hints(
+        pyramid: AnnotationTileGenerator,
+        z: int,
+    ) -> dict[str, float]:
+        """Return scale-aware simplification thresholds for annotation MVT tiles."""
+        slide_units_per_pixel = float(max(1, pyramid.level_downsample(z)))
+        min_geometry_size = slide_units_per_pixel * MVT_MIN_VISIBLE_GEOMETRY_PIXELS
+        return {
+            "simplify_tolerance": 0.0
+            if slide_units_per_pixel <= 1
+            else slide_units_per_pixel * MVT_SIMPLIFICATION_PIXEL_TOLERANCE,
+            "min_line_length": min_geometry_size,
+            "min_polygon_area": min_geometry_size**2,
+        }
+
+    def _bump_annotation_revision(self: TileServer, session_id: str) -> None:
+        """Invalidate cached annotation tile URLs for a session."""
+        self.annotation_revisions[session_id] = (
+            int(self.annotation_revisions.get(session_id, 0)) + 1
+        )
+
     def get_ann_layer(
         self: TileServer,
         session_id: str,
@@ -670,6 +699,7 @@ class TileServer(Flask):
         self.overlaps.setdefault(session_id, 0)
         self.layers.setdefault(session_id, {})
         self.pyramids.setdefault(session_id, {})
+        self.annotation_revisions.setdefault(session_id, 0)
         return resp
 
     def get_project(self: TileServer) -> Response:
@@ -694,6 +724,7 @@ class TileServer(Flask):
         del self.slide_mpps[session_id]
         del self.renderers[session_id]
         del self.overlaps[session_id]
+        self.annotation_revisions.pop(session_id, None)
         return "done"
 
     def change_slide(self: TileServer) -> str:
@@ -709,6 +740,7 @@ class TileServer(Flask):
         if self.layers[session_id]["slide"].info.mpp is None:
             self.layers[session_id]["slide"].info.mpp = [1, 1]
         self.slide_mpps[session_id] = self.layers[session_id]["slide"].info.mpp
+        self._bump_annotation_revision(session_id)
 
         return "done"
 
@@ -720,6 +752,7 @@ class TileServer(Flask):
         self.pyramids[session_id] = {
             "slide": ZoomifyGenerator(slide_layer, tile_size=256),
         }
+        self._bump_annotation_revision(session_id)
         return "done"
 
     def change_mapper(self: TileServer) -> str:
@@ -784,6 +817,7 @@ class TileServer(Flask):
                 to_add = SQLiteStore(file_path)
                 layer.store.append_many(list(to_add.values()))
                 to_add.close()
+                self._bump_annotation_revision(session_id)
                 types = self.update_types(layer.store)
                 return json.dumps(types)
 
@@ -796,6 +830,7 @@ class TileServer(Flask):
             overlap=self.overlaps[session_id],
         )
         self.layers[session_id]["overlay"] = self.pyramids[session_id]["overlay"]
+        self._bump_annotation_revision(session_id)
         types = self.update_types(sq)
         return json.dumps(types)
 
@@ -937,6 +972,7 @@ class TileServer(Flask):
         for layer in self.pyramids[session_id].values():
             if isinstance(layer, AnnotationTileGenerator):
                 layer.store = sq
+                self._bump_annotation_revision(session_id)
                 logger.info("Loaded %d annotations.", len(sq))
                 types = self.update_types(sq)
                 return json.dumps(types)
@@ -948,6 +984,7 @@ class TileServer(Flask):
             overlap=self.overlaps[session_id],
         )
         self.layers[session_id]["overlay"] = self.pyramids[session_id]["overlay"]
+        self._bump_annotation_revision(session_id)
         logger.info(
             "Loaded %d annotations.", len(self.pyramids[session_id]["overlay"].store)
         )
@@ -1151,10 +1188,12 @@ class TileServer(Flask):
             return Response("Tile not found", status=404)
 
         tile_bounds = self._get_annotation_tile_bounds(ann_layer, z, x, y)
+        render_hints = self._get_annotation_mvt_hints(ann_layer, z)
         try:
             annotations = ann_layer.store.query(
                 geometry=tile_bounds,
                 where=where,
+                geometry_predicate="bbox_intersects",
             )
         except ValueError:
             annotations = {}
@@ -1166,6 +1205,7 @@ class TileServer(Flask):
                 tile_bounds=tile_bounds,
                 extent=DEFAULT_MVT_EXTENT,
                 buffer=DEFAULT_MVT_BUFFER,
+                **render_hints,
             )
             if annotations
             else encode_empty_annotation_layer(
@@ -1173,7 +1213,13 @@ class TileServer(Flask):
                 extent=DEFAULT_MVT_EXTENT,
             )
         )
-        return Response(payload, mimetype="application/vnd.mapbox-vector-tile")
+        response = Response(payload, mimetype="application/vnd.mapbox-vector-tile")
+        response.headers["Cache-Control"] = (
+            f"private, max-age={MVT_CACHE_MAX_AGE_SECONDS}"
+        )
+        response.set_etag(hashlib.blake2b(payload, digest_size=16).hexdigest())
+        response.make_conditional(request)
+        return response
 
     def get_overlay(self: TileServer) -> Response:
         """Get the overlay info."""

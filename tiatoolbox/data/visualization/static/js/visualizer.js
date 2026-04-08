@@ -47,6 +47,7 @@
     annotationMeta: null,
     annotationPropertySummary: null,
     annotationSource: null,
+    annotationStyleCache: new Map(),
     baseLayerMeta: null,
     categoryColorCache: {},
     map: null,
@@ -132,6 +133,7 @@
 
     elements.colorProperty.addEventListener("change", async () => {
       state.annotationPropertySummary = null;
+      resetAnnotationStyleCache();
       if (state.annotationLayer) {
         state.annotationLayer.changed();
       }
@@ -146,6 +148,7 @@
     });
 
     elements.annotationOpacity.addEventListener("input", () => {
+      resetAnnotationStyleCache();
       if (state.annotationLayer) {
         state.annotationLayer.changed();
       }
@@ -271,6 +274,7 @@
     state.annotationMeta = annotationLayerMeta || null;
     state.annotationSource = annotationLayer ? annotationLayer.getSource() : null;
     state.rasterLayers = rasterLayers;
+    resetAnnotationStyleCache();
 
     toggleEmptyState(null);
   }
@@ -394,6 +398,7 @@
       const params = new URLSearchParams();
       params.set("layer_name", metadata.name);
       params.set("where", JSON.stringify(state.annotationFilter || null));
+      params.set("rev", String(metadata.vector_revision || 0));
       const vectorUrl = `${metadata.vector_url}?${params.toString()}`;
 
       return new ol.layer.VectorTile({
@@ -592,38 +597,55 @@
   function annotationStyle(feature) {
     const color = featureColor(feature);
     const rgb = toRgb(color);
-    const strokeColor = toRgba(rgb, Math.min(1, Number(elements.annotationOpacity.value) + 0.2));
-    const fillColor = toRgba(rgb, Number(elements.annotationOpacity.value) * 0.28);
+    const opacity = Number(elements.annotationOpacity.value);
+    const strokeAlpha = Math.min(1, opacity + 0.2);
+    const fillAlpha = opacity * 0.28;
     const geometryType = feature.getGeometry().getType();
+    const cacheKey = `${geometryType}:${rgb.join(",")}:${strokeAlpha.toFixed(3)}:${fillAlpha.toFixed(3)}`;
 
+    if (state.annotationStyleCache.has(cacheKey)) {
+      return state.annotationStyleCache.get(cacheKey);
+    }
+
+    let style;
     if (geometryType.includes("Point")) {
-      return new ol.style.Style({
+      style = new ol.style.Style({
         image: new ol.style.Circle({
           radius: 4,
-          fill: new ol.style.Fill({ color: fillColor }),
-          stroke: new ol.style.Stroke({ color: strokeColor, width: 1.2 }),
+          fill: new ol.style.Fill({ color: toRgba(rgb, fillAlpha) }),
+          stroke: new ol.style.Stroke({ color: toRgba(rgb, strokeAlpha), width: 1.2 }),
         }),
       });
+      state.annotationStyleCache.set(cacheKey, style);
+      return style;
     }
 
     if (geometryType.includes("LineString")) {
-      return new ol.style.Style({
+      style = new ol.style.Style({
         stroke: new ol.style.Stroke({
-          color: strokeColor,
+          color: toRgba(rgb, strokeAlpha),
           width: 2,
         }),
       });
+      state.annotationStyleCache.set(cacheKey, style);
+      return style;
     }
 
-    return new ol.style.Style({
+    style = new ol.style.Style({
       fill: new ol.style.Fill({
-        color: fillColor,
+        color: toRgba(rgb, fillAlpha),
       }),
       stroke: new ol.style.Stroke({
-        color: strokeColor,
+        color: toRgba(rgb, strokeAlpha),
         width: 1.4,
       }),
     });
+    state.annotationStyleCache.set(cacheKey, style);
+    return style;
+  }
+
+  function resetAnnotationStyleCache() {
+    state.annotationStyleCache.clear();
   }
 
   function featureColor(feature) {
