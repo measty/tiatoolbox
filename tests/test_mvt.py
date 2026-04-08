@@ -15,6 +15,8 @@ _MVT_MODULE = importlib.util.module_from_spec(_MVT_SPEC)
 assert _MVT_SPEC.loader is not None
 _MVT_SPEC.loader.exec_module(_MVT_MODULE)
 
+_TileEnvelope = _MVT_MODULE._TileEnvelope
+_quantize_xy = _MVT_MODULE._quantize_xy
 encode_annotation_layer = _MVT_MODULE.encode_annotation_layer
 encode_empty_annotation_layer = _MVT_MODULE.encode_empty_annotation_layer
 
@@ -56,3 +58,16 @@ def test_encode_annotation_layer_culls_tiny_polygons() -> None:
     )
 
     assert payload == encode_empty_annotation_layer("overlay")
+
+
+def test_quantize_xy_preserves_slide_y_direction() -> None:
+    """Tile-local MVT y should increase downward with slide coordinates."""
+    envelope = _TileEnvelope(100.0, 200.0, 200.0, 300.0, extent=4096)
+
+    top = _quantize_xy(120.0, 200.0, envelope)
+    middle = _quantize_xy(120.0, 250.0, envelope)
+    bottom = _quantize_xy(120.0, 300.0, envelope)
+
+    assert top == (819, 0)
+    assert middle == (819, 2048)
+    assert bottom == (819, 4096)

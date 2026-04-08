@@ -349,7 +349,7 @@ def _encode_ring(
 
 def _quantize_xy(x: float, y: float, envelope: _TileEnvelope) -> tuple[int, int]:
     local_x = int(round((x - envelope.min_x) * envelope.scale_x))
-    local_y = int(round((envelope.max_y - y) * envelope.scale_y))
+    local_y = int(round((y - envelope.min_y) * envelope.scale_y))
     return local_x, local_y
 
 
