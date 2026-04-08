@@ -232,7 +232,11 @@
     let annotationLayer = null;
 
     if (annotationLayerMeta) {
-      annotationLayer = createAnnotationLayer(annotationLayerMeta, baseLayer.getSource());
+      annotationLayer = createAnnotationLayer(
+        annotationLayerMeta,
+        baseLayer.getSource(),
+        slideLayerMeta,
+      );
       olLayers.push(annotationLayer);
     }
 
@@ -271,13 +275,9 @@
     toggleEmptyState(null);
   }
 
-  function createMap(layers, baseLayer, slideLayerMeta, viewState, fitView) {
-    if (state.map) {
-      state.map.setTarget(null);
-    }
-
-    const tileGrid = baseLayer.getSource().getTileGrid();
-    const projection = new ol.proj.Projection({
+  function createSlideProjection(baseSource, slideLayerMeta) {
+    const tileGrid = baseSource.getTileGrid();
+    return new ol.proj.Projection({
       code: "TIAZoomifyProjection",
       units: "pixels",
       extent: tileGrid.getExtent(),
@@ -286,6 +286,15 @@
         return resolution;
       },
     });
+  }
+
+  function createMap(layers, baseLayer, slideLayerMeta, viewState, fitView) {
+    if (state.map) {
+      state.map.setTarget(null);
+    }
+
+    const tileGrid = baseLayer.getSource().getTileGrid();
+    const projection = createSlideProjection(baseLayer.getSource(), slideLayerMeta);
     const view = new ol.View({
       projection: projection,
       resolutions: tileGrid.getResolutions(),
@@ -368,13 +377,43 @@
     });
   }
 
-  function createAnnotationLayer(metadata, baseSource) {
+  function buildAnnotationUrl(path, metadata) {
+    const url = new URL(path, window.location.origin);
+    const annotationMeta = metadata || state.annotationMeta;
+    if (annotationMeta && annotationMeta.name) {
+      url.searchParams.set("layer_name", annotationMeta.name);
+    }
+    return url;
+  }
+
+  function createAnnotationLayer(metadata, baseSource, slideLayerMeta) {
     const tileGrid = baseSource.getTileGrid();
+    const projection = createSlideProjection(baseSource, slideLayerMeta);
+
+    if (metadata.vector_format === "mvt" && metadata.vector_url) {
+      const params = new URLSearchParams();
+      params.set("layer_name", metadata.name);
+      params.set("where", JSON.stringify(state.annotationFilter || null));
+      const vectorUrl = `${metadata.vector_url}?${params.toString()}`;
+
+      return new ol.layer.VectorTile({
+        title: metadata.name,
+        source: new ol.source.VectorTile({
+          format: new ol.format.MVT(),
+          projection: projection,
+          tileGrid: tileGrid,
+          url: vectorUrl,
+          zDirection: -1,
+        }),
+        style: annotationStyle,
+      });
+    }
+
     const vectorSource = new ol.source.Vector({
       format: new ol.format.GeoJSON(),
       strategy: ol.loadingstrategy.tile(tileGrid),
       loader: function (extent, resolution, projection, success, failure) {
-        loadAnnotationExtent(vectorSource, extent, success, failure);
+        loadAnnotationExtent(vectorSource, extent, metadata, success, failure);
       },
     });
 
@@ -385,8 +424,8 @@
     });
   }
 
-  async function loadAnnotationExtent(source, extent, success, failure) {
-    const url = new URL("/tileserver/annotations/geojson", window.location.origin);
+  async function loadAnnotationExtent(source, extent, metadata, success, failure) {
+    const url = buildAnnotationUrl("/tileserver/annotations/geojson", metadata);
     url.searchParams.set(
       "bounds",
       JSON.stringify(extentToSlideBounds(extent, state.baseLayerMeta.size)),
@@ -428,7 +467,9 @@
     elements.applyFilter.disabled = false;
     elements.resetFilter.disabled = false;
 
-    const properties = await fetchJson("/tileserver/prop_names/all");
+    const properties = await fetchJson(
+      buildAnnotationUrl("/tileserver/prop_names/all"),
+    );
     renderColorPropertyOptions(properties);
     await updateLegend();
   }
@@ -476,9 +517,8 @@
       return;
     }
 
-    const url = new URL(
+    const url = buildAnnotationUrl(
       `/tileserver/prop_summary/${encodeURIComponent(property)}/all`,
-      window.location.origin,
     );
     url.searchParams.set("where", JSON.stringify(state.annotationFilter || null));
     state.annotationPropertySummary = await fetchJson(url);

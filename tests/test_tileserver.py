@@ -975,6 +975,11 @@ def test_get_layers_metadata(app: TileServer) -> None:
         assert kinds["tile"] == "raster"
         assert kinds["overlay"] == "annotation"
 
+        overlay = next(layer for layer in layers if layer["name"] == "overlay")
+        assert overlay["vector_format"] == "mvt"
+        assert overlay["vector_url"].endswith("/mvt/{z}/{x}/{y}.pbf")
+        assert overlay["vector_tile_extent"] == 4096
+
 
 def test_session_id_preserves_default_layers(app_alt: TileServer) -> None:
     """Test that default-session apps keep their initial layers."""
@@ -1039,6 +1044,7 @@ def test_get_annotations_geojson(app_alt: TileServer) -> None:
             query_string={
                 "bounds": json.dumps([0, 0, 20, 20]),
                 "where": json.dumps(None),
+                "layer_name": "layer-1",
             },
         )
         assert response.status_code == 200
@@ -1049,10 +1055,30 @@ def test_get_annotations_geojson(app_alt: TileServer) -> None:
         assert min(coord[1] for coord in ring) <= -10
 
 
+def test_get_annotations_mvt(app_alt: TileServer) -> None:
+    """Test the MVT endpoint used by the OpenLayers frontend."""
+    with app_alt.test_client() as client:
+        response = client.get(
+            "/tileserver/layer/layer-1/default/mvt/0/0/0.pbf",
+            query_string={"where": json.dumps(None)},
+        )
+        assert response.status_code == 200
+        assert response.content_type == "application/vnd.mapbox-vector-tile"
+        assert len(response.data) > 0
+
+        empty_response = client.get(
+            "/tileserver/layer/layer-1/default/mvt/0/0/0.pbf",
+            query_string={"where": json.dumps('props["prob"] > 0.99')},
+        )
+        assert empty_response.status_code == 200
+        assert len(empty_response.data) > 0
+        assert response.data != empty_response.data
+
+
 def test_get_property_summary(app_alt: TileServer) -> None:
     """Test property summary generation for frontend legends."""
     with app_alt.test_client() as client:
-        response = client.get("/tileserver/prop_summary/prob/all")
+        response = client.get("/tileserver/prop_summary/prob/all", query_string={"layer_name": "layer-1"})
         assert response.status_code == 200
         payload = response.get_json()
         assert payload["kind"] == "numeric"

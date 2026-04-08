@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import copy
 import io
 import json
@@ -27,6 +28,12 @@ from tiatoolbox.tools.pyramid import AnnotationTileGenerator, ZoomifyGenerator
 from tiatoolbox.utils.misc import store_from_dat
 from tiatoolbox.utils.postproc_defs import MultichannelToRGB
 from tiatoolbox.utils.visualization import AnnotationRenderer, colourise_image
+from tiatoolbox.visualization.mvt import (
+    DEFAULT_MVT_BUFFER,
+    DEFAULT_MVT_EXTENT,
+    encode_annotation_layer,
+    encode_empty_annotation_layer,
+)
 from tiatoolbox.wsicore.wsireader import (
     OpenSlideWSIReader,
     TransformedWSIReader,
@@ -212,6 +219,10 @@ class TileServer(Flask):
         self.route("/tileserver/annotations/geojson", methods=["GET"])(
             self.get_annotations_geojson,
         )
+        self.route(
+            "/tileserver/layer/<layer>/<session_id>/mvt/<int:z>/<int:x>/<int:y>.pbf",
+            methods=["GET"],
+        )(self.get_annotations_mvt)
         self.route("/tileserver/overlay", methods=["GET"])(self.get_overlay)
         self.route("/tileserver/renderer/<prop>", methods=["GET"])(self.get_renderer)
         self.route("/tileserver/secondary_cmap", methods=["GET"])(
@@ -259,7 +270,10 @@ class TileServer(Flask):
         try:
             ann_value = json.loads(ann_type)
         except json.JSONDecodeError:
-            ann_value = ann_type
+            try:
+                ann_value = ast.literal_eval(ann_type)
+            except (ValueError, SyntaxError):
+                ann_value = ann_type
         return f'props["type"] == {json.dumps(ann_value)}'
 
     @staticmethod
@@ -370,14 +384,22 @@ class TileServer(Flask):
         self: TileServer,
         name: str,
         session_id: str,
-    ) -> dict[str, str | list[int] | float]:
+    ) -> dict[str, str | list[int] | float | int]:
         """Serialise layer metadata for the frontend."""
         layer = self.layers[session_id][name]
         pyramid = self.pyramids[session_id][name]
+        metadata: dict[str, str | list[int] | float | int] = {}
         if isinstance(pyramid, AnnotationTileGenerator):
             kind = "annotation"
             slide_dimensions = pyramid.info.slide_dimensions
             source_path = str(pyramid.store.path)
+            metadata = {
+                "vector_format": "mvt",
+                "vector_url": f"/tileserver/layer/{urllib.parse.quote(name, safe='')}/"
+                f"{session_id}/mvt/{{z}}/{{x}}/{{y}}.pbf",
+                "vector_tile_extent": DEFAULT_MVT_EXTENT,
+                "vector_tile_buffer": DEFAULT_MVT_BUFFER,
+            }
         else:
             kind = "slide" if name == "slide" else "raster"
             slide_dimensions = layer.info.slide_dimensions
@@ -393,6 +415,7 @@ class TileServer(Flask):
             "{TileGroup}/{z}-{x}-{y}@1x.jpg",
             "size": [int(x) for x in slide_dimensions],
             "mpp": float(np.mean(mpp)),
+            **metadata,
         }
 
     def _serialise_layers(self: TileServer, session_id: str | None) -> list[dict]:
@@ -569,13 +592,42 @@ class TileServer(Flask):
         """Decode a URL-safe name."""
         return Path(urllib.parse.unquote(name).replace("\\", os.sep))
 
+    @staticmethod
+    def decode_layer_name(name: str) -> str:
+        """Decode a URL-safe layer name."""
+        return urllib.parse.unquote(name)
+
+    @staticmethod
+    def _get_annotation_tile_bounds(
+        pyramid: AnnotationTileGenerator,
+        z: int,
+        x: int,
+        y: int,
+    ) -> tuple[float, float, float, float]:
+        """Return tile bounds in baseline slide coordinates."""
+        width, height = pyramid.info.slide_dimensions
+        scale = pyramid.level_downsample(z)
+        tile_width = pyramid.tile_size * scale
+        min_x = x * tile_width
+        min_y = y * tile_width
+        max_x = min(width, min_x + tile_width)
+        max_y = min(height, min_y + tile_width)
+        return (min_x, min_y, max_x, max_y)
+
     def get_ann_layer(
         self: TileServer,
         session_id: str,
+        layer_name: str | None = None,
     ) -> AnnotationTileGenerator | ValueError:
         """Get the annotation layer for a session_id."""
-        for layer in self.pyramids[session_id].values():
+        if layer_name is not None:
+            layer = self.pyramids[session_id].get(layer_name)
             if isinstance(layer, AnnotationTileGenerator):
+                return layer
+        for name, layer in self.pyramids[session_id].items():
+            if isinstance(layer, AnnotationTileGenerator) and (
+                layer_name is None or name == layer_name
+            ):
                 return layer
         msg = "No annotation layer found."
         raise ValueError(msg)
@@ -913,8 +965,9 @@ class TileServer(Flask):
 
         """
         session_id = self._get_session_id()
+        layer_name = request.args.get("layer_name")
         where = self._annotation_type_where_clause(ann_type)
-        ann_props = self.get_ann_layer(session_id).store.pquery(
+        ann_props = self.get_ann_layer(session_id, layer_name=layer_name).store.pquery(
             select="*",
             where=where,
             unique=False,
@@ -935,10 +988,13 @@ class TileServer(Flask):
             str: A jsonified list of the values of the property.
         """
         session_id = self._get_session_id()
+        layer_name = request.args.get("layer_name")
         where = self._annotation_type_where_clause(ann_type)
-        if "overlay" not in self.pyramids[session_id]:
+        try:
+            ann_layer = self.get_ann_layer(session_id, layer_name=layer_name)
+        except ValueError:
             return json.dumps([])
-        ann_props = self.get_ann_layer(session_id).store.pquery(
+        ann_props = ann_layer.store.pquery(
             select=f"props['{prop}']",
             where=where,
             unique=True,
@@ -948,15 +1004,18 @@ class TileServer(Flask):
     def get_property_summary(self: TileServer, prop: str, ann_type: str) -> Response:
         """Summarise a property for frontend legend generation."""
         session_id = self._get_session_id()
+        layer_name = request.args.get("layer_name")
         where = self._annotation_type_where_clause(ann_type)
         extra_where = self._decode_optional_json(request.args.get("where"))
         if extra_where is not None:
             where = extra_where if where is None else f"({where}) and ({extra_where})"
-        if "overlay" not in self.pyramids[session_id]:
+        try:
+            ann_layer = self.get_ann_layer(session_id, layer_name=layer_name)
+        except ValueError:
             return jsonify({"kind": "empty", "values": []})
 
         values = list(
-            self.get_ann_layer(session_id).store.pquery(
+            ann_layer.store.pquery(
                 select=f"props['{prop}']",
                 where=where,
                 unique=True,
@@ -1044,8 +1103,9 @@ class TileServer(Flask):
     def get_annotations_geojson(self: TileServer) -> Response:
         """Get annotations as GeoJSON with coordinates aligned to OpenLayers."""
         session_id = self._get_session_id()
+        layer_name = request.args.get("layer_name")
         try:
-            ann_layer = self.get_ann_layer(session_id)
+            ann_layer = self.get_ann_layer(session_id, layer_name=layer_name)
         except ValueError:
             return jsonify({"type": "FeatureCollection", "features": []})
 
@@ -1067,6 +1127,53 @@ class TileServer(Flask):
                 },
             )
         return jsonify({"type": "FeatureCollection", "features": features})
+
+    def get_annotations_mvt(
+        self: TileServer,
+        layer: str,
+        session_id: str,
+        z: int,
+        x: int,
+        y: int,
+    ) -> Response:
+        """Serve an MVT tile for an annotation layer."""
+        layer_name = self.decode_layer_name(layer)
+        where = self._decode_optional_json(request.args.get("where"))
+        try:
+            ann_layer = self.get_ann_layer(session_id, layer_name=layer_name)
+            grid_width, grid_height = ann_layer.tile_grid_size(z)
+        except KeyError:
+            return Response("Layer not found", status=404)
+        except (IndexError, ValueError):
+            return Response("Tile not found", status=404)
+
+        if x < 0 or y < 0 or x >= grid_width or y >= grid_height:
+            return Response("Tile not found", status=404)
+
+        tile_bounds = self._get_annotation_tile_bounds(ann_layer, z, x, y)
+        try:
+            annotations = ann_layer.store.query(
+                geometry=tile_bounds,
+                where=where,
+            )
+        except ValueError:
+            annotations = {}
+
+        payload = (
+            encode_annotation_layer(
+                layer_name,
+                ((ann.geometry, ann.properties) for ann in annotations.values()),
+                tile_bounds=tile_bounds,
+                extent=DEFAULT_MVT_EXTENT,
+                buffer=DEFAULT_MVT_BUFFER,
+            )
+            if annotations
+            else encode_empty_annotation_layer(
+                layer_name,
+                extent=DEFAULT_MVT_EXTENT,
+            )
+        )
+        return Response(payload, mimetype="application/vnd.mapbox-vector-tile")
 
     def get_overlay(self: TileServer) -> Response:
         """Get the overlay info."""
