@@ -5,8 +5,9 @@ from __future__ import annotations
 import importlib.resources as importlib_resources
 import os
 import subprocess
+import webbrowser
 from pathlib import Path
-from threading import Thread
+from threading import Thread, Timer
 
 import click
 from flask_cors import CORS
@@ -58,6 +59,57 @@ def run_bokeh(img_input: list[str], port: int, *, noshow: bool) -> None:
     subprocess.run(cmd, check=True, cwd=str(Path.cwd()), env=os.environ)  # noqa: S603
 
 
+def resolve_visualization_paths(
+    base_path: str | None,
+    slides: str | None,
+    overlays: str | None,
+) -> tuple[Path, Path]:
+    """Resolve and validate visualize CLI paths."""
+    if base_path is None and (slides is None or overlays is None):
+        msg = "Must specify either base-path or both slides and overlays."
+        raise ValueError(msg)
+
+    if base_path is not None:
+        slide_path = Path(base_path) / "slides"
+        overlay_path = Path(base_path) / "overlays"
+        paths_to_check = [Path(base_path), slide_path, overlay_path]
+    else:
+        slide_path = Path(slides)
+        overlay_path = Path(overlays)
+        paths_to_check = [slide_path, overlay_path]
+
+    for input_path in paths_to_check:
+        if not input_path.exists():
+            msg = f"{input_path} does not exist"
+            raise FileNotFoundError(msg)
+
+    return slide_path, overlay_path
+
+
+def run_visualizer(slides: Path, overlays: Path, port: int, *, noshow: bool) -> None:
+    """Run the Flask/OpenLayers visualization frontend."""
+    from tiatoolbox.visualization.tileserver import TileServer  # noqa: PLC0415
+
+    app = TileServer(
+        title="TIAToolbox Visualizer",
+        layers={},
+        project_config={
+            "slide_folder": slides,
+            "overlay_folder": overlays,
+        },
+    )
+    app.json.sort_keys = False
+    CORS(app, send_wildcard=True)
+
+    if not noshow:  # pragma: no cover
+        Timer(
+            1,
+            lambda: webbrowser.open_new_tab(f"http://127.0.0.1:{port}/"),
+        ).start()
+
+    app.run(host="127.0.0.1", port=port, threaded=True)
+
+
 @tiatoolbox_cli.command()
 @click.option(
     "--base-path",
@@ -107,18 +159,5 @@ def visualize(
         noshow (bool): Do not launch in browser (mainly intended for testing).
 
     """
-    # sanity check the input args
-    if base_path is None and (slides is None or overlays is None):
-        msg = "Must specify either base-path or both slides and overlays."
-        raise ValueError(msg)
-    img_input = [base_path, slides, overlays]
-    img_input = [p for p in img_input if p is not None]
-    # check that the input paths exist
-    for input_path in img_input:
-        if not Path(input_path).exists():
-            msg = f"{input_path} does not exist"
-            raise FileNotFoundError(msg)
-
-    # start servers
-    run_tileserver()  # pragma: no cover
-    run_bokeh(img_input, port, noshow=noshow)  # pragma: no cover
+    slide_path, overlay_path = resolve_visualization_paths(base_path, slides, overlays)
+    run_visualizer(slide_path, overlay_path, port, noshow=noshow)  # pragma: no cover

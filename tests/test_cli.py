@@ -8,6 +8,7 @@ import click
 import pytest
 from click.testing import CliRunner
 
+from tiatoolbox import cli
 from tiatoolbox.cli.common import (
     cli_class_dict,
     cli_input_resolutions,
@@ -15,6 +16,7 @@ from tiatoolbox.cli.common import (
     parse_bool_list,
     prepare_model_cli,
 )
+from tiatoolbox.cli.visualize import resolve_visualization_paths
 
 
 @click.command()
@@ -231,3 +233,50 @@ def test_masks_is_file() -> None:
     assert files == [img_input]
     assert masks_all == [masks]
     assert out == output_path
+
+
+def test_resolve_visualization_paths_base_path(tmp_path: Path) -> None:
+    """resolve_visualization_paths should derive slides/overlays from base-path."""
+    base_path = tmp_path / "project"
+    slide_path = base_path / "slides"
+    overlay_path = base_path / "overlays"
+    slide_path.mkdir(parents=True)
+    overlay_path.mkdir()
+
+    resolved_slide_path, resolved_overlay_path = resolve_visualization_paths(
+        str(base_path),
+        None,
+        None,
+    )
+
+    assert resolved_slide_path == slide_path
+    assert resolved_overlay_path == overlay_path
+
+
+def test_visualize_cli_uses_openlayers_runner(tmp_path: Path) -> None:
+    """The visualize CLI should launch the Flask/OpenLayers runner."""
+    base_path = tmp_path / "project"
+    slide_path = base_path / "slides"
+    overlay_path = base_path / "overlays"
+    slide_path.mkdir(parents=True)
+    overlay_path.mkdir()
+
+    runner = CliRunner()
+    with patch("tiatoolbox.cli.visualize.run_visualizer") as mock_run_visualizer:
+        result = runner.invoke(
+            cli.main,
+            [
+                "visualize",
+                "--base-path",
+                str(base_path),
+                "--noshow",
+            ],
+        )
+
+    assert result.exit_code == 0
+    mock_run_visualizer.assert_called_once_with(
+        slide_path,
+        overlay_path,
+        5006,
+        noshow=True,
+    )

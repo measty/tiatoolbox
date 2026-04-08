@@ -962,3 +962,98 @@ def test_enhance_set_nopostproc(app: TileServer) -> None:
         )
         assert response.status_code == 200
         assert response.data.decode() == "done"
+
+
+def test_get_layers_metadata(app: TileServer) -> None:
+    """Test the current layer metadata endpoint."""
+    with app.test_client() as client:
+        response = client.get("/tileserver/layers")
+        assert response.status_code == 200
+        layers = response.get_json()
+        kinds = {layer["name"]: layer["kind"] for layer in layers}
+        assert kinds["slide"] == "slide"
+        assert kinds["tile"] == "raster"
+        assert kinds["overlay"] == "annotation"
+
+
+def test_session_id_preserves_default_layers(app_alt: TileServer) -> None:
+    """Test that default-session apps keep their initial layers."""
+    with app_alt.test_client() as client:
+        response = client.get("/tileserver/session_id")
+        assert response.status_code == 200
+
+        layers = client.get("/tileserver/layers").get_json()
+        assert len(layers) == 2
+        assert {layer["kind"] for layer in layers} == {"slide", "annotation"}
+
+
+def test_project_endpoints(track_tmp_path: Path) -> None:
+    """Test project discovery endpoints for the OpenLayers frontend."""
+    slide_dir = track_tmp_path / "slides"
+    overlay_dir = track_tmp_path / "overlays"
+    slide_dir.mkdir()
+    overlay_dir.mkdir()
+
+    slide_path = slide_dir / "case-1.svs"
+    overlay_path = overlay_dir / "case-1_annotations.db"
+    slide_path.write_text("")
+    overlay_path.write_text("")
+
+    app = TileServer(
+        "Testing TileServer",
+        {},
+        project_config={
+            "slide_folder": slide_dir,
+            "overlay_folder": overlay_dir,
+        },
+    )
+    app.config.from_mapping({"TESTING": True})
+
+    with app.test_client() as client:
+        response = client.get("/tileserver/project")
+        assert response.status_code == 200
+        project = response.get_json()
+        assert project["default_slide"] == str(slide_path)
+        assert project["slides"][0]["label"] == "case-1.svs"
+
+        response = client.get(
+            "/tileserver/project/overlays",
+            query_string={"slide_path": str(slide_path)},
+        )
+        assert response.status_code == 200
+        overlays = response.get_json()
+        assert overlays == [
+            {
+                "kind": "annotation",
+                "label": "case-1_annotations.db",
+                "path": str(overlay_path),
+            },
+        ]
+
+
+def test_get_annotations_geojson(app_alt: TileServer) -> None:
+    """Test the vector GeoJSON endpoint used by the OpenLayers frontend."""
+    with app_alt.test_client() as client:
+        response = client.get(
+            "/tileserver/annotations/geojson",
+            query_string={
+                "bounds": json.dumps([0, 0, 20, 20]),
+                "where": json.dumps(None),
+            },
+        )
+        assert response.status_code == 200
+        feature_collection = response.get_json()
+        assert feature_collection["type"] == "FeatureCollection"
+        assert len(feature_collection["features"]) == 1
+        ring = feature_collection["features"][0]["geometry"]["coordinates"][0]
+        assert min(coord[1] for coord in ring) <= -10
+
+
+def test_get_property_summary(app_alt: TileServer) -> None:
+    """Test property summary generation for frontend legends."""
+    with app_alt.test_client() as client:
+        response = client.get("/tileserver/prop_summary/prob/all")
+        assert response.status_code == 200
+        payload = response.get_json()
+        assert payload["kind"] == "numeric"
+        assert payload["min"] <= payload["max"]

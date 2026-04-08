@@ -3,7 +3,7 @@
 Visualization Interface Usage
 =============================
 
-TIAToolbox provides a flexible visualization tool for viewing slides and overlaying associated model outputs or annotations. It is a browser-based UI built using TIAToolbox and `Bokeh <https://bokeh.org/>`_. The following assumes TIAToolbox has been installed per the instructions here: :ref:`Installation <installation>`.
+TIAToolbox provides a browser-based visualization tool for viewing slides and overlaying associated model outputs or annotations. The current default frontend is a pure HTML/JavaScript OpenLayers application served directly by the Flask tile server. The following assumes TIAToolbox has been installed per the instructions here: :ref:`Installation <installation>`.
 
 1. Launching the Interface
 --------------------------
@@ -33,15 +33,27 @@ Though in most cases this should not be necessary.
 Launching on a Remote Machine
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-As the UI is browser-based, you can launch the interface on a remote machine by logging in via SSH and forwarding the relevant ports so that the visualization of the remote slides and overlays can be viewed in the browser on your local machine. For example, connect via SSH to your remote machine:
+As the UI is browser-based, you can launch the interface on a remote machine by logging in via SSH and forwarding the visualization port so that the remote slides and overlays can be viewed in the browser on your local machine. For example, connect via SSH to your remote machine:
 
 .. code-block:: console
 
-    ssh -L 5006:localhost:5006 -L 5000:localhost:5000 user@remote_machine
+    ssh -L 5006:localhost:5006 user@remote_machine
 
-This will start an SSH session where the two ports the interface uses by default (5006 and 5000) are forwarded.
+This will start an SSH session where the default visualization port is forwarded.
 
 You can then launch the interface on the remote machine as above (TIAToolbox must be installed on the remote machine) and open the browser on your local machine. Navigate to ``localhost:5006`` to view the interface.
+
+Current Migration Status
+^^^^^^^^^^^^^^^^^^^^^^^^
+
+The OpenLayers frontend is currently the default launch path for ``tiatoolbox visualize``. The first migration phase focuses on the high-value viewing workflow:
+
+* whole-slide viewing backed by the existing tile server
+* raster overlays served from the existing tile endpoints
+* SQLiteStore-backed annotation overlays rendered as browser vectors
+* property-based coloring and filter expressions for annotation overlays
+
+Some Bokeh-era features are not yet available in the OpenLayers frontend, including model-running controls, dual-window workflows, graph overlays, and the full set of advanced annotation rendering options. Those remain follow-up migration work rather than regressions hidden from the user.
 
 .. _interface:
 
@@ -53,9 +65,9 @@ You can then launch the interface on the remote machine as above (TIAToolbox mus
     :align: center
     :alt: visualize interface
 
-The interface is split into two main sections. The left-hand side contains the main window, which displays the slide and overlays (or potentially a linked pair of slide views), and the right-hand side contains a number of UI elements to control the display of the overlays.
+The interface is split into two main sections. The main window displays the slide together with any active raster or vector overlays, and the side panel contains the controls for slide selection, overlay loading, annotation coloring/filtering, and slide metadata.
 
-The main window can be zoomed in and out using the mouse wheel and panned by clicking and dragging. The slide can be changed using the slide dropdown menu. The overlay can be changed, or additional overlays added using the overlay dropdown menu. Note: overlays involving a large number of annotations may take a short while to load. The alpha of the slide and overlay can be controlled using the slide and overlay alpha sliders respectively.
+The main window can be zoomed in and out using the mouse wheel and panned by clicking and dragging. The slide can be changed using the slide dropdown menu. Matching overlays can be added from the overlay menu. Raster overlay opacity and annotation opacity can be adjusted directly in the side panel. For SQLiteStore-backed annotations, the browser will request vector data for the current view and draw the features client-side.
 
 Information about the currently open slide can be found below the main window, including slide name, dimensions, and level resolution information.
 
@@ -67,16 +79,16 @@ Type and Layer Select
     :align: right
     :alt: type select example
 
-If annotations have a type property, this will be used to populate the type select boxes. This allows you to toggle on/off annotations of a specific type. You can also modify the default colors that each type is displayed in by using the color picker widgets next to each type name (note these will only have an effect if the property to color by is selected as 'type'). Individual image overlays or graph overlays will also get their own toggle, labeled for example 'layer_i' or 'nodes', that can be used to toggle the respective overlays on or off.
+If annotations have a ``type`` property, it can be used as the active color property and will appear in the annotation property selector. The OpenLayers frontend currently focuses on property-driven coloring and filter expressions rather than the older per-type widget set. Active layers can still be toggled in the map layer switcher.
 
 Colormaps/Coloring by Property Values
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-Once you have selected a slide with the slide dropdown, you can add overlays by repeatedly choosing files containing overlays from the overlay drop menu. They will be overlaid on the slide as separate layers. In the case of segmentations, if your segmentations have the 'type' property as one of their properties, this can additionally be used to show/hide annotations of that specific type. Colors can be individually selected for each type if the randomly generated color scheme is not suitable.
+Once you have selected a slide with the slide dropdown, you can add overlays by repeatedly choosing files containing overlays from the overlay menu. Raster overlays are added as tile layers. Annotation overlays backed by SQLiteStore, ``.dat``, or GeoJSON inputs are loaded through the annotation store path and displayed as vectors in the browser.
 
 You can select the property that will be used to color annotations in the color_by box. The corresponding property should be either categorical (strings or ints), in which case a dict-based color mapping should be used, or a float between 0-1 in which case a matplotlib colormap should be applied. There is also the option for the special case 'color' to be used. If your annotations have a property called color, this will be assumed to be an RGB value in the form of a tuple (R, G, B) of floats between 0-1 for each annotation which will be used directly without any mapping.
 
-The 'color type by property' box allows annotations of the specified type to be colored by a different property to the 'global' one. For example, this could be used to have all detections colored according to their type, but for Glands, color by some feature describing them instead (their area, for example).
+Filter expressions use the same annotation-store query DSL as the legacy interface, for example ``props['score'] > 0.5``.
 
 Running Models
 ^^^^^^^^^^^^^^

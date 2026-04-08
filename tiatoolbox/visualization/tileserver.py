@@ -18,6 +18,7 @@ from flask import Flask, Response, jsonify, make_response, request, send_file
 from flask.templating import render_template
 from matplotlib import colormaps
 from PIL import Image
+from shapely.affinity import scale as scale_geometry
 from shapely.geometry import Point
 
 from tiatoolbox import data, logger
@@ -38,6 +39,39 @@ if TYPE_CHECKING:  # pragma: no cover
 
     from tiatoolbox.annotation.storage import Annotation
     from tiatoolbox.wsicore import WSIMeta
+
+
+SLIDE_EXTENSIONS = (
+    ".svs",
+    ".ndpi",
+    ".tiff",
+    ".mrxs",
+    ".jpg",
+    ".png",
+    ".tif",
+    ".qptiff",
+    ".dcm",
+)
+RASTER_OVERLAY_EXTENSIONS = (
+    ".jpg",
+    ".png",
+    ".tiff",
+    ".svs",
+    ".ndpi",
+    ".mrxs",
+    ".tif",
+    ".npy",
+    ".mha",
+)
+ANNOTATION_OVERLAY_EXTENSIONS = (
+    ".db",
+    ".dat",
+    ".geojson",
+)
+PROJECT_OVERLAY_EXTENSIONS = (
+    *RASTER_OVERLAY_EXTENSIONS,
+    *ANNOTATION_OVERLAY_EXTENSIONS,
+)
 
 
 class TileServer(Flask):
@@ -75,6 +109,7 @@ class TileServer(Flask):
         title: str,
         layers: dict[str, WSIReader | str] | list[WSIReader | str],
         renderer: AnnotationRenderer | None = None,
+        project_config: dict | None = None,
     ) -> None:
         """Initialize :class:`TileServer`."""
         super().__init__(
@@ -104,6 +139,7 @@ class TileServer(Flask):
         self.slide_mpps = {}
         self.renderers = {}
         self.overlaps = {}
+        self.project_config = self._load_project_config(project_config)
 
         # Generic layer names if none provided.
         if isinstance(layers, list):
@@ -142,6 +178,11 @@ class TileServer(Flask):
         )
         self.route("/")(self.index)
         self.route("/tileserver/session_id")(self.session_id)
+        self.route("/tileserver/project", methods=["GET"])(self.get_project)
+        self.route("/tileserver/project/overlays", methods=["GET"])(
+            self.get_project_overlays,
+        )
+        self.route("/tileserver/layers", methods=["GET"])(self.get_layers)
         self.route("/tileserver/color_prop", methods=["PUT"])(self.change_prop)
         self.route("/tileserver/slide", methods=["PUT"])(self.change_slide)
         self.route("/tileserver/clear_overlays", methods=["PUT"])(self.clear_overlays)
@@ -161,10 +202,16 @@ class TileServer(Flask):
         self.route("/tileserver/prop_values/<prop>/<ann_type>")(
             self.get_property_values,
         )
+        self.route("/tileserver/prop_summary/<prop>/<ann_type>")(
+            self.get_property_summary,
+        )
         self.route("/tileserver/color_prop", methods=["GET"])(self.get_color_prop)
         self.route("/tileserver/slide", methods=["GET"])(self.get_slide)
         self.route("/tileserver/cmap", methods=["GET"])(self.get_mapper)
         self.route("/tileserver/annotations", methods=["GET"])(self.get_annotations)
+        self.route("/tileserver/annotations/geojson", methods=["GET"])(
+            self.get_annotations_geojson,
+        )
         self.route("/tileserver/overlay", methods=["GET"])(self.get_overlay)
         self.route("/tileserver/renderer/<prop>", methods=["GET"])(self.get_renderer)
         self.route("/tileserver/secondary_cmap", methods=["GET"])(
@@ -189,6 +236,188 @@ class TileServer(Flask):
         if self.default_session_id:
             return "default"
         return request.cookies.get("session_id")
+
+    @staticmethod
+    def _discover_files(
+        root: Path | None,
+        extensions: tuple[str, ...],
+    ) -> list[Path]:
+        """Discover files recursively for a set of suffixes."""
+        if root is None or not root.exists():
+            return []
+        return sorted(
+            path
+            for path in root.rglob("*")
+            if path.is_file() and path.suffix.lower() in extensions
+        )
+
+    @staticmethod
+    def _annotation_type_where_clause(ann_type: str) -> str | None:
+        """Build a where clause for a specific annotation type."""
+        if ann_type == "all":
+            return None
+        try:
+            ann_value = json.loads(ann_type)
+        except json.JSONDecodeError:
+            ann_value = ann_type
+        return f'props["type"] == {json.dumps(ann_value)}'
+
+    @staticmethod
+    def _decode_optional_json(value: str | None) -> str | list | dict | None:
+        """Decode JSON string values used by the frontend."""
+        if value in (None, "", "null", "None"):
+            return None
+        return json.loads(value)
+
+    def _load_project_config(self: TileServer, project_config: dict | None) -> dict:
+        """Load visualization project configuration for the OpenLayers UI."""
+        if project_config is None:
+            return {}
+
+        slide_folder = Path(project_config["slide_folder"]).expanduser().resolve()
+        overlay_folder = Path(project_config["overlay_folder"]).expanduser().resolve()
+        config = {
+            "base_folder": str(slide_folder.parent),
+            "slide_folder": str(slide_folder),
+            "overlay_folder": str(overlay_folder),
+            "auto_load": False,
+            "default_cprop": "type",
+            "color_dict": {},
+            "initial_views": {},
+        }
+
+        config_files = sorted(overlay_folder.glob("*config.json"))
+        if config_files:
+            config.update(json.loads(config_files[0].read_text()))
+
+        config.update(
+            {
+                key: value
+                for key, value in project_config.items()
+                if key not in {"slide_folder", "overlay_folder"}
+            },
+        )
+        config["slide_folder"] = str(slide_folder)
+        config["overlay_folder"] = str(overlay_folder)
+        config["base_folder"] = str(slide_folder.parent)
+        config["auto_load"] = bool(int(config["auto_load"])) if isinstance(
+            config["auto_load"],
+            str,
+        ) else bool(config["auto_load"])
+        return config
+
+    def _get_project_slides(self: TileServer) -> list[dict[str, str]]:
+        """Discover available project slides."""
+        slide_root = self.project_config.get("slide_folder")
+        if slide_root is None:
+            return []
+        slide_root = Path(slide_root)
+        return [
+            {
+                "label": str(path.relative_to(slide_root)),
+                "path": str(path),
+                "stem": path.stem,
+            }
+            for path in self._discover_files(slide_root, SLIDE_EXTENSIONS)
+        ]
+
+    def _get_project_default_slide(self: TileServer, slides: list[dict]) -> str | None:
+        """Resolve the default slide to load."""
+        requested_slide = request.args.get("slide") or self.project_config.get(
+            "first_slide",
+        )
+        if requested_slide is not None:
+            for slide in slides:
+                if requested_slide in {slide["label"], slide["path"]}:
+                    return slide["path"]
+        if slides:
+            return slides[0]["path"]
+        return None
+
+    @staticmethod
+    def _overlay_kind(overlay_path: Path) -> str:
+        """Classify a project overlay for the OpenLayers UI."""
+        if overlay_path.suffix.lower() in ANNOTATION_OVERLAY_EXTENSIONS:
+            return "annotation"
+        if overlay_path.suffix.lower() in {".npy", ".mha"}:
+            return "transform"
+        return "raster"
+
+    def _get_project_overlays_for_slide(self: TileServer, slide_path: str) -> list[dict]:
+        """Discover overlays associated with a slide path."""
+        overlay_root = self.project_config.get("overlay_folder")
+        if overlay_root is None:
+            return []
+
+        slide_path = Path(slide_path)
+        overlay_root = Path(overlay_root)
+        overlays = self._discover_files(overlay_root, PROJECT_OVERLAY_EXTENSIONS)
+        matching = []
+        for overlay in overlays:
+            overlay_label = str(overlay.relative_to(overlay_root))
+            if slide_path.stem not in overlay_label:
+                continue
+            matching.append(
+                {
+                    "label": overlay_label,
+                    "path": str(overlay),
+                    "kind": self._overlay_kind(overlay),
+                },
+            )
+        return matching
+
+    def _serialise_layer(
+        self: TileServer,
+        name: str,
+        session_id: str,
+    ) -> dict[str, str | list[int] | float]:
+        """Serialise layer metadata for the frontend."""
+        layer = self.layers[session_id][name]
+        pyramid = self.pyramids[session_id][name]
+        if isinstance(pyramid, AnnotationTileGenerator):
+            kind = "annotation"
+            slide_dimensions = pyramid.info.slide_dimensions
+            source_path = str(pyramid.store.path)
+        else:
+            kind = "slide" if name == "slide" else "raster"
+            slide_dimensions = layer.info.slide_dimensions
+            source_path = str(layer.info.file_path)
+
+        mpp = [1, 1] if getattr(layer.info, "mpp", None) is None else layer.info.mpp
+        return {
+            "name": name,
+            "kind": kind,
+            "path": source_path,
+            "url": f"/tileserver/layer/{urllib.parse.quote(name, safe='')}/"
+            f"{session_id}/zoomify/"
+            "{TileGroup}/{z}-{x}-{y}@1x.jpg",
+            "size": [int(x) for x in slide_dimensions],
+            "mpp": float(np.mean(mpp)),
+        }
+
+    def _serialise_layers(self: TileServer, session_id: str | None) -> list[dict]:
+        """Serialise all current layers for a session."""
+        if session_id is None or session_id not in self.layers:
+            return []
+        return [
+            self._serialise_layer(name, session_id)
+            for name in self.layers[session_id]
+        ]
+
+    def _serialise_project(self: TileServer) -> dict:
+        """Serialise project configuration for the OpenLayers frontend."""
+        slides = self._get_project_slides()
+        return {
+            "slides": slides,
+            "default_slide": self._get_project_default_slide(slides),
+            "slide_folder": self.project_config.get("slide_folder"),
+            "overlay_folder": self.project_config.get("overlay_folder"),
+            "base_folder": self.project_config.get("base_folder"),
+            "auto_load": self.project_config.get("auto_load", False),
+            "default_cprop": self.project_config.get("default_cprop", "type"),
+            "color_dict": self.project_config.get("color_dict", {}),
+            "initial_views": self.project_config.get("initial_views", {}),
+        }
 
     @staticmethod
     def _get_cmap(cmap: str | dict) -> Colormap:
@@ -359,22 +588,16 @@ class TileServer(Flask):
                 The index page.
 
         """
-        session_id = self._get_session_id()
-        layers = [
-            {
-                "name": name,
-                "url": f"/tileserver/layer/{name}/default/zoomify/"
-                "{TileGroup}/{z}-{x}-{y}@1x.jpg",
-                "size": [int(x) for x in layer.info.slide_dimensions],
-                "mpp": float(np.mean(layer.info.mpp)),
-            }
-            for name, layer in self.layers[session_id].items()
-        ]
+        frontend_config = {
+            "default_session_id": self.default_session_id,
+            "initial_layers": self._serialise_layers(self._get_session_id()),
+            "project": self._serialise_project(),
+        }
 
         return render_template(
             "index.html",
             title=self.title,
-            layers=json.dumps(layers),
+            frontend_config=json.dumps(frontend_config),
         )
 
     def change_prop(self: TileServer) -> str:
@@ -391,11 +614,26 @@ class TileServer(Flask):
         resp = make_response("done")
         session_id = "default" if self.default_session_id else secrets.token_urlsafe(16)
         resp.set_cookie("session_id", session_id, httponly=True)  # skipcq: PTC-W6003
-        self.renderers[session_id] = copy.deepcopy(self.renderer)
-        self.overlaps[session_id] = 0
-        self.layers[session_id] = {}
-        self.pyramids[session_id] = {}
+        self.renderers.setdefault(session_id, copy.deepcopy(self.renderer))
+        self.overlaps.setdefault(session_id, 0)
+        self.layers.setdefault(session_id, {})
+        self.pyramids.setdefault(session_id, {})
         return resp
+
+    def get_project(self: TileServer) -> Response:
+        """Get project discovery metadata for the OpenLayers frontend."""
+        return jsonify(self._serialise_project())
+
+    def get_project_overlays(self: TileServer) -> Response:
+        """Get overlays associated with a project slide."""
+        slide_path = request.args.get("slide_path")
+        if slide_path is None:
+            return jsonify([])
+        return jsonify(self._get_project_overlays_for_slide(slide_path))
+
+    def get_layers(self: TileServer) -> Response:
+        """Get current layer metadata for the active session."""
+        return jsonify(self._serialise_layers(self._get_session_id()))
 
     def reset(self: TileServer, session_id: str) -> str:
         """Reset the tileserver."""
@@ -675,9 +913,7 @@ class TileServer(Flask):
 
         """
         session_id = self._get_session_id()
-        where = None
-        if ann_type != "all":
-            where = f'props["type"]=={ann_type}'
+        where = self._annotation_type_where_clause(ann_type)
         ann_props = self.get_ann_layer(session_id).store.pquery(
             select="*",
             where=where,
@@ -699,9 +935,7 @@ class TileServer(Flask):
             str: A jsonified list of the values of the property.
         """
         session_id = self._get_session_id()
-        where = None
-        if ann_type != "all":
-            where = f'props["type"]=={ann_type}'
+        where = self._annotation_type_where_clause(ann_type)
         if "overlay" not in self.pyramids[session_id]:
             return json.dumps([])
         ann_props = self.get_ann_layer(session_id).store.pquery(
@@ -710,6 +944,43 @@ class TileServer(Flask):
             unique=True,
         )
         return json.dumps(list(ann_props))
+
+    def get_property_summary(self: TileServer, prop: str, ann_type: str) -> Response:
+        """Summarise a property for frontend legend generation."""
+        session_id = self._get_session_id()
+        where = self._annotation_type_where_clause(ann_type)
+        extra_where = self._decode_optional_json(request.args.get("where"))
+        if extra_where is not None:
+            where = extra_where if where is None else f"({where}) and ({extra_where})"
+        if "overlay" not in self.pyramids[session_id]:
+            return jsonify({"kind": "empty", "values": []})
+
+        values = list(
+            self.get_ann_layer(session_id).store.pquery(
+                select=f"props['{prop}']",
+                where=where,
+                unique=True,
+            ),
+        )
+        values = [value for value in values if value is not None]
+        if not values:
+            return jsonify({"kind": "empty", "values": []})
+
+        if all(isinstance(value, (int, float)) for value in values):
+            return jsonify(
+                {
+                    "kind": "numeric",
+                    "min": min(values),
+                    "max": max(values),
+                },
+            )
+
+        return jsonify(
+            {
+                "kind": "categorical",
+                "values": sorted(str(value) for value in values),
+            },
+        )
 
     def commit_db(self: TileServer) -> str:
         """Commit changes to the current store.
@@ -769,6 +1040,33 @@ class TileServer(Flask):
             for ann in annotations.values()
         ]
         return jsonify(annotations)
+
+    def get_annotations_geojson(self: TileServer) -> Response:
+        """Get annotations as GeoJSON with coordinates aligned to OpenLayers."""
+        session_id = self._get_session_id()
+        try:
+            ann_layer = self.get_ann_layer(session_id)
+        except ValueError:
+            return jsonify({"type": "FeatureCollection", "features": []})
+
+        bounds = self._decode_optional_json(request.args.get("bounds"))
+        where = self._decode_optional_json(request.args.get("where"))
+        annotations = ann_layer.store.query(
+            geometry=bounds,
+            where=where,
+        )
+        features = []
+        for key, ann in annotations.items():
+            geometry = scale_geometry(ann.geometry, xfact=1, yfact=-1, origin=(0, 0))
+            features.append(
+                {
+                    "id": key,
+                    "type": "Feature",
+                    "geometry": geometry.__geo_interface__,
+                    "properties": ann.properties,
+                },
+            )
+        return jsonify({"type": "FeatureCollection", "features": features})
 
     def get_overlay(self: TileServer) -> Response:
         """Get the overlay info."""
