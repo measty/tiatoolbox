@@ -631,6 +631,32 @@ def test_sqlite_pquery_nowarn_index(
     assert "Query is not using an index." not in caplog.text
 
 
+def test_sqlite_property_metadata_queries() -> None:
+    """Test SQLite JSON1 helpers for annotation property metadata."""
+    store = SQLiteStore()
+    store.append_many(
+        [
+            Annotation(Point(0, 0), properties={"class": 1, "label": "a"}),
+            Annotation(Point(1, 1), properties={"class": 2, "label": "b"}),
+            Annotation(Point(2, 2), properties={}),
+        ],
+    )
+
+    assert store.property_names() == {"class", "label"}
+    assert store.property_names(where="props['class'] == 1") == {"class", "label"}
+    assert store.property_values("class") == {1, 2, None}
+    assert store.property_summary("class") == {
+        "kind": "numeric",
+        "min": 1,
+        "max": 2,
+    }
+    assert store.property_summary("label") == {
+        "kind": "categorical",
+        "values": ["a", "b"],
+    }
+    assert store.property_summary("missing") == {"kind": "empty", "values": []}
+
+
 def test_sqlite_store_indexes(fill_store: Callable, track_tmp_path: Path) -> None:
     """Test getting a list of index names."""
     _, store = fill_store(SQLiteStore, track_tmp_path / "polygon.db")

@@ -11,6 +11,7 @@ import os
 import secrets
 import sys
 import tempfile
+import time
 import urllib
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -83,6 +84,7 @@ PROJECT_OVERLAY_EXTENSIONS = (
 MVT_CACHE_MAX_AGE_SECONDS = 300
 MVT_SIMPLIFICATION_PIXEL_TOLERANCE = 0.5
 MVT_MIN_VISIBLE_GEOMETRY_PIXELS = 0.75
+ANNOTATION_PERF_LOG_THRESHOLD_SECONDS = 0.1
 
 
 class TileServer(Flask):
@@ -151,6 +153,7 @@ class TileServer(Flask):
         self.renderers = {}
         self.overlaps = {}
         self.annotation_revisions = {}
+        self.annotation_metadata_cache = {}
         self.project_config = self._load_project_config(project_config)
 
         # Generic layer names if none provided.
@@ -253,6 +256,21 @@ class TileServer(Flask):
         if self.default_session_id:
             return "default"
         return request.cookies.get("session_id")
+
+    @staticmethod
+    def _log_annotation_perf(
+        event: str,
+        elapsed_seconds: float,
+        **fields: object,
+    ) -> None:
+        """Log annotation performance measurements with low default noise."""
+        field_text = " ".join(f"{key}={value}" for key, value in fields.items())
+        message = "Annotation perf: event=%s elapsed_ms=%.1f %s"
+        args = (event, elapsed_seconds * 1000, field_text)
+        if elapsed_seconds >= ANNOTATION_PERF_LOG_THRESHOLD_SECONDS:
+            logger.info(message, *args)
+            return
+        logger.debug(message, *args)
 
     @staticmethod
     def _discover_files(
@@ -363,7 +381,10 @@ class TileServer(Flask):
             return "transform"
         return "raster"
 
-    def _get_project_overlays_for_slide(self: TileServer, slide_path: str) -> list[dict]:
+    def _get_project_overlays_for_slide(
+        self: TileServer,
+        slide_path: str,
+    ) -> list[dict]:
         """Discover overlays associated with a slide path."""
         overlay_root = self.project_config.get("overlay_folder")
         if overlay_root is None:
@@ -642,6 +663,23 @@ class TileServer(Flask):
         self.annotation_revisions[session_id] = (
             int(self.annotation_revisions.get(session_id, 0)) + 1
         )
+        self.annotation_metadata_cache = {
+            key: value
+            for key, value in self.annotation_metadata_cache.items()
+            if key[0] != session_id
+        }
+
+    def _annotation_metadata_cache_key(
+        self: TileServer,
+        session_id: str,
+        layer_name: str | None,
+        event: str,
+        *parts: object,
+    ) -> tuple[object, ...]:
+        """Return a cache key for annotation metadata derived from a store revision."""
+        revision = int(self.annotation_revisions.get(session_id, 0))
+        tokens = tuple(repr(part) for part in parts)
+        return (session_id, layer_name, revision, event, *tokens)
 
     def get_ann_layer(
         self: TileServer,
@@ -725,6 +763,11 @@ class TileServer(Flask):
         del self.renderers[session_id]
         del self.overlaps[session_id]
         self.annotation_revisions.pop(session_id, None)
+        self.annotation_metadata_cache = {
+            key: value
+            for key, value in self.annotation_metadata_cache.items()
+            if key[0] != session_id
+        }
         return "done"
 
     def change_slide(self: TileServer) -> str:
@@ -1001,18 +1044,72 @@ class TileServer(Flask):
             str: A jsonified list of the properties.
 
         """
+        request_start = time.perf_counter()
         session_id = self._get_session_id()
         layer_name = request.args.get("layer_name")
         where = self._annotation_type_where_clause(ann_type)
-        ann_props = self.get_ann_layer(session_id, layer_name=layer_name).store.pquery(
-            select="*",
-            where=where,
-            unique=False,
+        cache_key = self._annotation_metadata_cache_key(
+            session_id,
+            layer_name,
+            "properties",
+            where,
         )
-        props = []
-        for prop_dict in ann_props.values():
-            props.extend(list(prop_dict.keys()))
-        return json.dumps(list(set(props)))
+        cached = self.annotation_metadata_cache.get(cache_key)
+        if cached is not None:
+            result = json.dumps(cached)
+            self._log_annotation_perf(
+                "properties",
+                time.perf_counter() - request_start,
+                layer=layer_name,
+                ann_type=ann_type,
+                properties=len(cached),
+                cache=True,
+            )
+            return result
+
+        query_start = time.perf_counter()
+        ann_layer = self.get_ann_layer(session_id, layer_name=layer_name)
+        if isinstance(ann_layer.store, SQLiteStore):
+            try:
+                unique_props = ann_layer.store.property_names(where=where)
+                rows = None
+            except TypeError:
+                ann_props = ann_layer.store.pquery(
+                    select="*",
+                    where=where,
+                    unique=False,
+                )
+                props = []
+                for prop_dict in ann_props.values():
+                    props.extend(list(prop_dict.keys()))
+                unique_props = set(props)
+                rows = len(ann_props)
+        else:
+            ann_props = ann_layer.store.pquery(
+                select="*",
+                where=where,
+                unique=False,
+            )
+            props = []
+            for prop_dict in ann_props.values():
+                props.extend(list(prop_dict.keys()))
+            unique_props = set(props)
+            rows = len(ann_props)
+        query_elapsed = time.perf_counter() - query_start
+        result_values = list(unique_props)
+        self.annotation_metadata_cache[cache_key] = result_values
+        result = json.dumps(result_values)
+        self._log_annotation_perf(
+            "properties",
+            time.perf_counter() - request_start,
+            layer=layer_name,
+            ann_type=ann_type,
+            rows=rows,
+            properties=len(unique_props),
+            cache=False,
+            query_ms=f"{query_elapsed * 1000:.1f}",
+        )
+        return result
 
     def get_property_values(self: TileServer, prop: str, ann_type: str) -> str:
         """Get all the values of a property in the store.
@@ -1024,32 +1121,127 @@ class TileServer(Flask):
         Returns:
             str: A jsonified list of the values of the property.
         """
+        request_start = time.perf_counter()
         session_id = self._get_session_id()
         layer_name = request.args.get("layer_name")
         where = self._annotation_type_where_clause(ann_type)
+        cache_key = self._annotation_metadata_cache_key(
+            session_id,
+            layer_name,
+            "property_values",
+            prop,
+            where,
+        )
+        cached = self.annotation_metadata_cache.get(cache_key)
+        if cached is not None:
+            result = json.dumps(cached)
+            self._log_annotation_perf(
+                "property_values",
+                time.perf_counter() - request_start,
+                layer=layer_name,
+                ann_type=ann_type,
+                property=prop,
+                values=len(cached),
+                cache=True,
+            )
+            return result
+
         try:
             ann_layer = self.get_ann_layer(session_id, layer_name=layer_name)
         except ValueError:
             return json.dumps([])
-        ann_props = ann_layer.store.pquery(
-            select=f"props['{prop}']",
-            where=where,
-            unique=True,
+        query_start = time.perf_counter()
+        if isinstance(ann_layer.store, SQLiteStore):
+            try:
+                ann_props = ann_layer.store.property_values(prop, where=where)
+            except TypeError:
+                ann_props = ann_layer.store.pquery(
+                    select=f"props['{prop}']",
+                    where=where,
+                    unique=True,
+                )
+        else:
+            ann_props = ann_layer.store.pquery(
+                select=f"props['{prop}']",
+                where=where,
+                unique=True,
+            )
+        query_elapsed = time.perf_counter() - query_start
+        values = list(ann_props)
+        self.annotation_metadata_cache[cache_key] = values
+        result = json.dumps(values)
+        self._log_annotation_perf(
+            "property_values",
+            time.perf_counter() - request_start,
+            layer=layer_name,
+            ann_type=ann_type,
+            property=prop,
+            values=len(values),
+            cache=False,
+            query_ms=f"{query_elapsed * 1000:.1f}",
         )
-        return json.dumps(list(ann_props))
+        return result
 
     def get_property_summary(self: TileServer, prop: str, ann_type: str) -> Response:
         """Summarise a property for frontend legend generation."""
+        request_start = time.perf_counter()
         session_id = self._get_session_id()
         layer_name = request.args.get("layer_name")
         where = self._annotation_type_where_clause(ann_type)
         extra_where = self._decode_optional_json(request.args.get("where"))
         if extra_where is not None:
             where = extra_where if where is None else f"({where}) and ({extra_where})"
+        cache_key = self._annotation_metadata_cache_key(
+            session_id,
+            layer_name,
+            "property_summary",
+            prop,
+            ann_type,
+            where,
+        )
+        cached = self.annotation_metadata_cache.get(cache_key)
+        if cached is not None:
+            self._log_annotation_perf(
+                "property_summary",
+                time.perf_counter() - request_start,
+                layer=layer_name,
+                ann_type=ann_type,
+                property=prop,
+                kind=cached.get("kind"),
+                values=len(cached.get("values", [])),
+                filtered=extra_where is not None,
+                cache=True,
+            )
+            return jsonify(cached)
+
         try:
             ann_layer = self.get_ann_layer(session_id, layer_name=layer_name)
         except ValueError:
             return jsonify({"kind": "empty", "values": []})
+
+        query_start = time.perf_counter()
+        summary = None
+        if isinstance(ann_layer.store, SQLiteStore):
+            try:
+                summary = ann_layer.store.property_summary(prop, where=where)
+            except TypeError:
+                summary = None
+        if summary is not None:
+            query_elapsed = time.perf_counter() - query_start
+            self.annotation_metadata_cache[cache_key] = summary
+            self._log_annotation_perf(
+                "property_summary",
+                time.perf_counter() - request_start,
+                layer=layer_name,
+                ann_type=ann_type,
+                property=prop,
+                kind=summary["kind"],
+                values=len(summary.get("values", [])),
+                filtered=extra_where is not None,
+                cache=False,
+                query_ms=f"{query_elapsed * 1000:.1f}",
+            )
+            return jsonify(summary)
 
         values = list(
             ann_layer.store.pquery(
@@ -1058,25 +1250,67 @@ class TileServer(Flask):
                 unique=True,
             ),
         )
+        query_elapsed = time.perf_counter() - query_start
         values = [value for value in values if value is not None]
         if not values:
-            return jsonify({"kind": "empty", "values": []})
+            summary = {"kind": "empty", "values": []}
+            response = jsonify(summary)
+            self.annotation_metadata_cache[cache_key] = summary
+            self._log_annotation_perf(
+                "property_summary",
+                time.perf_counter() - request_start,
+                layer=layer_name,
+                ann_type=ann_type,
+                property=prop,
+                kind="empty",
+                values=0,
+                filtered=extra_where is not None,
+                cache=False,
+                query_ms=f"{query_elapsed * 1000:.1f}",
+            )
+            return response
 
         if all(isinstance(value, (int, float)) for value in values):
-            return jsonify(
-                {
-                    "kind": "numeric",
-                    "min": min(values),
-                    "max": max(values),
-                },
+            summary = {
+                "kind": "numeric",
+                "min": min(values),
+                "max": max(values),
+            }
+            response = jsonify(summary)
+            self.annotation_metadata_cache[cache_key] = summary
+            self._log_annotation_perf(
+                "property_summary",
+                time.perf_counter() - request_start,
+                layer=layer_name,
+                ann_type=ann_type,
+                property=prop,
+                kind="numeric",
+                values=len(values),
+                filtered=extra_where is not None,
+                cache=False,
+                query_ms=f"{query_elapsed * 1000:.1f}",
             )
+            return response
 
-        return jsonify(
-            {
-                "kind": "categorical",
-                "values": sorted(str(value) for value in values),
-            },
+        summary = {
+            "kind": "categorical",
+            "values": sorted(str(value) for value in values),
+        }
+        response = jsonify(summary)
+        self.annotation_metadata_cache[cache_key] = summary
+        self._log_annotation_perf(
+            "property_summary",
+            time.perf_counter() - request_start,
+            layer=layer_name,
+            ann_type=ann_type,
+            property=prop,
+            kind="categorical",
+            values=len(values),
+            filtered=extra_where is not None,
+            cache=False,
+            query_ms=f"{query_elapsed * 1000:.1f}",
         )
+        return response
 
     def commit_db(self: TileServer) -> str:
         """Commit changes to the current store.
@@ -1174,6 +1408,7 @@ class TileServer(Flask):
         y: int,
     ) -> Response:
         """Serve an MVT tile for an annotation layer."""
+        request_start = time.perf_counter()
         layer_name = self.decode_layer_name(layer)
         where = self._decode_optional_json(request.args.get("where"))
         try:
@@ -1189,6 +1424,7 @@ class TileServer(Flask):
 
         tile_bounds = self._get_annotation_tile_bounds(ann_layer, z, x, y)
         render_hints = self._get_annotation_mvt_hints(ann_layer, z)
+        query_start = time.perf_counter()
         try:
             annotations = ann_layer.store.query(
                 geometry=tile_bounds,
@@ -1197,7 +1433,9 @@ class TileServer(Flask):
             )
         except ValueError:
             annotations = {}
+        query_elapsed = time.perf_counter() - query_start
 
+        encode_start = time.perf_counter()
         payload = (
             encode_annotation_layer(
                 layer_name,
@@ -1213,12 +1451,32 @@ class TileServer(Flask):
                 extent=DEFAULT_MVT_EXTENT,
             )
         )
+        encode_elapsed = time.perf_counter() - encode_start
+        etag_start = time.perf_counter()
+        etag = hashlib.blake2b(payload, digest_size=16).hexdigest()
+        etag_elapsed = time.perf_counter() - etag_start
         response = Response(payload, mimetype="application/vnd.mapbox-vector-tile")
         response.headers["Cache-Control"] = (
             f"private, max-age={MVT_CACHE_MAX_AGE_SECONDS}"
         )
-        response.set_etag(hashlib.blake2b(payload, digest_size=16).hexdigest())
+        response.set_etag(etag)
         response.make_conditional(request)
+        self._log_annotation_perf(
+            "mvt_tile",
+            time.perf_counter() - request_start,
+            layer=layer_name,
+            z=z,
+            x=x,
+            y=y,
+            candidates=len(annotations),
+            bytes=len(payload),
+            filtered=where is not None,
+            query_ms=f"{query_elapsed * 1000:.1f}",
+            encode_ms=f"{encode_elapsed * 1000:.1f}",
+            etag_ms=f"{etag_elapsed * 1000:.1f}",
+            simplify=f"{render_hints['simplify_tolerance']:.2f}",
+            min_area=f"{render_hints['min_polygon_area']:.2f}",
+        )
         return response
 
     def get_overlay(self: TileServer) -> Response:

@@ -3523,6 +3523,161 @@ class SQLiteStore(AnnotationStore):
             return result[0]
         return result
 
+    @staticmethod
+    def _json_path_for_property(prop: str) -> str:
+        """Return a SQLite JSON path for a top-level property name."""
+        escaped = prop.replace("\\", "\\\\").replace('"', '\\"')
+        return f'$."{escaped}"'
+
+    @staticmethod
+    def _coerce_sqlite_json_value(
+        value: object,
+        value_type: str | None,
+    ) -> object:
+        """Coerce SQLite JSON1 values to the Python shape returned by ``json``."""
+        if value_type in {"array", "object"} and isinstance(value, str):
+            return json.loads(value)
+        if value_type == "true":
+            return True
+        if value_type == "false":
+            return False
+        return value
+
+    @staticmethod
+    def _property_query_where_sql(
+        where: Predicate | None,
+        query_parameters: dict[str, object],
+    ) -> str | None:
+        """Convert a supported annotation property predicate into SQL."""
+        if where is None:
+            return ""
+        if isinstance(where, bytes):
+            query_parameters["where"] = where
+            return "pickle_expression(:where, properties)"
+        if isinstance(where, str):
+            sql_predicate = eval(  # skipcq: PYL-W0123,  # noqa: S307
+                where,
+                SQL_GLOBALS,
+                {},
+            )
+            return str(sql_predicate)
+        return None
+
+    def property_names(self: SQLiteStore, where: Predicate | None = None) -> set[str]:
+        """Return distinct top-level annotation property names.
+
+        This uses SQLite JSON1 directly to avoid materialising every
+        annotation property dictionary in Python.
+        """
+        query_parameters: dict[str, object] = {}
+        where_sql = self._property_query_where_sql(where, query_parameters)
+        if where_sql is None:
+            msg = "Callable predicates are not supported for property_names."
+            raise TypeError(msg)
+
+        query = """
+            SELECT DISTINCT json_each.key
+              FROM annotations, json_each(annotations.properties)
+        """
+        if where_sql:
+            query += f"\nWHERE {where_sql}"
+        cur = self.con.execute(query, query_parameters)
+        return {key for (key,) in cur.fetchall()}
+
+    def property_values(
+        self: SQLiteStore,
+        prop: str,
+        where: Predicate | None = None,
+    ) -> set[Properties]:
+        """Return distinct values for a top-level annotation property."""
+        query_parameters: dict[str, object] = {
+            "property_path": self._json_path_for_property(prop),
+        }
+        where_sql = self._property_query_where_sql(where, query_parameters)
+        if where_sql is None:
+            msg = "Callable predicates are not supported for property_values."
+            raise TypeError(msg)
+
+        query = """
+            SELECT DISTINCT
+                   json_extract(properties, :property_path),
+                   json_type(properties, :property_path)
+              FROM annotations
+        """
+        if where_sql:
+            query += f"\nWHERE {where_sql}"
+        cur = self.con.execute(query, query_parameters)
+        return {
+            self._coerce_sqlite_json_value(value, value_type)
+            for value, value_type in cur.fetchall()
+        }
+
+    def property_summary(
+        self: SQLiteStore,
+        prop: str,
+        where: Predicate | None = None,
+    ) -> dict[str, Any]:
+        """Return a compact summary for a top-level annotation property."""
+        query_parameters: dict[str, object] = {
+            "property_path": self._json_path_for_property(prop),
+        }
+        where_sql = self._property_query_where_sql(where, query_parameters)
+        if where_sql is None:
+            msg = "Callable predicates are not supported for property_summary."
+            raise TypeError(msg)
+
+        value_sql = "json_extract(properties, :property_path)"
+        type_sql = "json_type(properties, :property_path)"
+        predicates = [f"{type_sql} IS NOT NULL", f"{value_sql} IS NOT NULL"]
+        if where_sql:
+            predicates.append(where_sql)
+        predicate_sql = " AND ".join(f"({predicate})" for predicate in predicates)
+
+        type_query = """
+            SELECT DISTINCT json_type(properties, :property_path)
+              FROM annotations
+             WHERE
+        """ + predicate_sql  # noqa: S608
+        cur = self.con.execute(type_query, query_parameters)
+        value_types = {value_type for (value_type,) in cur.fetchall()}
+        if not value_types:
+            return {"kind": "empty", "values": []}
+
+        if value_types <= {"integer", "real", "true", "false"}:
+            summary_query = """
+                SELECT
+                    MIN(json_extract(properties, :property_path)),
+                    MAX(json_extract(properties, :property_path))
+                  FROM annotations
+                 WHERE
+            """ + predicate_sql
+            min_value, max_value = self.con.execute(
+                summary_query,
+                query_parameters,
+            ).fetchone()
+            return {
+                "kind": "numeric",
+                "min": min_value,
+                "max": max_value,
+            }
+
+        values_query = """
+            SELECT DISTINCT
+                   json_extract(properties, :property_path),
+                   json_type(properties, :property_path)
+              FROM annotations
+             WHERE
+        """ + predicate_sql  # noqa: S608
+        cur = self.con.execute(values_query, query_parameters)
+        values = [
+            self._coerce_sqlite_json_value(value, value_type)
+            for value, value_type in cur.fetchall()
+        ]
+        return {
+            "kind": "categorical",
+            "values": sorted(str(value) for value in values),
+        }
+
     def __len__(self: SQLiteStore) -> int:
         """Return number of annotations in the store."""
         cur = self.con.cursor()
