@@ -861,6 +861,36 @@ def test_query_min_area_no_area_column(fill_store: Callable) -> None:
         store.query((0, 0, 1000, 1000), min_area=1)
 
 
+def test_sqlite_query_renderable_geometries_prefilter() -> None:
+    """Test scale-aware renderable geometry prefiltering for SQLiteStore."""
+    store = SQLiteStore()
+    large_polygon = Polygon.from_bounds(0, 0, 10, 10)
+    small_polygon = Polygon.from_bounds(20, 0, 21, 1)
+    threshold_polygon = Polygon.from_bounds(20, 5, 22, 10)
+    thin_polygon = Polygon.from_bounds(0, 20, 20, 20.1)
+    point = Point(30, 30)
+    line = LineString([(40, 40), (45, 45)])
+    keys = store.append_many(
+        [
+            Annotation(large_polygon, properties={"name": "large"}),
+            Annotation(small_polygon, properties={"name": "small"}),
+            Annotation(threshold_polygon, properties={"name": "threshold"}),
+            Annotation(thin_polygon, properties={"name": "thin"}),
+            Annotation(point, properties={"name": "point"}),
+            Annotation(line, properties={"name": "line"}),
+        ],
+    )
+
+    result = store.query_renderable_geometries(
+        (0, 0, 100, 100),
+        min_area=10,
+        min_bbox_size=5,
+        geometry_predicate="bbox_intersects",
+    )
+
+    assert set(result) == {keys[0], keys[2], keys[3], keys[4], keys[5]}
+
+
 def test_auto_commit(fill_store: Callable, track_tmp_path: Path) -> None:
     """Test auto commit.
 

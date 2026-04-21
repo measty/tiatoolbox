@@ -44,6 +44,8 @@ from tiatoolbox.wsicore.wsireader import (
 )
 
 if TYPE_CHECKING:  # pragma: no cover
+    from collections.abc import Iterator
+
     from matplotlib.colors import Colormap
 
     from tiatoolbox.annotation.storage import Annotation
@@ -1425,24 +1427,56 @@ class TileServer(Flask):
         tile_bounds = self._get_annotation_tile_bounds(ann_layer, z, x, y)
         render_hints = self._get_annotation_mvt_hints(ann_layer, z)
         query_start = time.perf_counter()
+        prefiltered = isinstance(ann_layer.store, SQLiteStore)
         try:
-            annotations = ann_layer.store.query(
-                geometry=tile_bounds,
-                where=where,
-                geometry_predicate="bbox_intersects",
-            )
+            if isinstance(ann_layer.store, SQLiteStore):
+                try:
+                    annotations = ann_layer.store.query_renderable_geometries(
+                        geometry=tile_bounds,
+                        where=where,
+                        geometry_predicate="bbox_intersects",
+                        min_area=render_hints["min_polygon_area"],
+                        min_bbox_size=render_hints["min_line_length"],
+                    )
+                except ValueError as exc:
+                    if "without an area column" not in str(exc):
+                        raise
+                    prefiltered = False
+                    annotations = ann_layer.store.query(
+                        geometry=tile_bounds,
+                        where=where,
+                        geometry_predicate="bbox_intersects",
+                    )
+            else:
+                annotations = ann_layer.store.query(
+                    geometry=tile_bounds,
+                    where=where,
+                    geometry_predicate="bbox_intersects",
+                )
         except ValueError:
             annotations = {}
         query_elapsed = time.perf_counter() - query_start
+
+        geometry_decode_elapsed = 0.0
+        mvt_timings: dict[str, float | int] = {}
+
+        def _iter_mvt_annotations() -> Iterator[tuple[object, dict]]:
+            nonlocal geometry_decode_elapsed
+            for ann in annotations.values():
+                geometry_decode_start = time.perf_counter()
+                geometry = ann.geometry
+                geometry_decode_elapsed += time.perf_counter() - geometry_decode_start
+                yield geometry, ann.properties
 
         encode_start = time.perf_counter()
         payload = (
             encode_annotation_layer(
                 layer_name,
-                ((ann.geometry, ann.properties) for ann in annotations.values()),
+                _iter_mvt_annotations(),
                 tile_bounds=tile_bounds,
                 extent=DEFAULT_MVT_EXTENT,
                 buffer=DEFAULT_MVT_BUFFER,
+                timing=mvt_timings,
                 **render_hints,
             )
             if annotations
@@ -1472,7 +1506,19 @@ class TileServer(Flask):
             bytes=len(payload),
             filtered=where is not None,
             query_ms=f"{query_elapsed * 1000:.1f}",
+            prefiltered=prefiltered,
             encode_ms=f"{encode_elapsed * 1000:.1f}",
+            geometry_decode_ms=f"{geometry_decode_elapsed * 1000:.1f}",
+            prepare_ms=f"{float(mvt_timings.get('prepare_s', 0)) * 1000:.1f}",
+            mvt_geometry_ms=(
+                f"{float(mvt_timings.get('geometry_encode_s', 0)) * 1000:.1f}"
+            ),
+            mvt_tags_ms=f"{float(mvt_timings.get('tag_encode_s', 0)) * 1000:.1f}",
+            mvt_feature_ms=(
+                f"{float(mvt_timings.get('feature_build_s', 0)) * 1000:.1f}"
+            ),
+            mvt_layer_ms=f"{float(mvt_timings.get('layer_build_s', 0)) * 1000:.1f}",
+            output_features=int(mvt_timings.get("output_features", 0)),
             etag_ms=f"{etag_elapsed * 1000:.1f}",
             simplify=f"{render_hints['simplify_tolerance']:.2f}",
             min_area=f"{render_hints['min_polygon_area']:.2f}",

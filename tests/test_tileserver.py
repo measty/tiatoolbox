@@ -1111,7 +1111,10 @@ def test_annotation_overlay_reload_bumps_vector_revision(app: TileServer) -> Non
 def test_get_property_summary(app_alt: TileServer) -> None:
     """Test property summary generation for frontend legends."""
     with app_alt.test_client() as client:
-        response = client.get("/tileserver/prop_summary/prob/all", query_string={"layer_name": "layer-1"})
+        response = client.get(
+            "/tileserver/prop_summary/prob/all",
+            query_string={"layer_name": "layer-1"},
+        )
         assert response.status_code == 200
         payload = response.get_json()
         assert payload["kind"] == "numeric"

@@ -3,13 +3,25 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Iterable, Iterator
+import time
 from numbers import Integral, Real
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from shapely.geometry import GeometryCollection, LineString, MultiLineString, MultiPoint
-from shapely.geometry import MultiPolygon, Point, Polygon, box
-from shapely.geometry.base import BaseGeometry
+from shapely.geometry import (
+    GeometryCollection,
+    LineString,
+    MultiLineString,
+    MultiPoint,
+    MultiPolygon,
+    Point,
+    Polygon,
+    box,
+)
+
+if TYPE_CHECKING:  # pragma: no cover
+    from collections.abc import Iterable, Iterator
+
+    from shapely.geometry.base import BaseGeometry
 
 DEFAULT_MVT_EXTENT = 4096
 DEFAULT_MVT_BUFFER = 256
@@ -62,6 +74,7 @@ def encode_annotation_layer(
     simplify_tolerance: float = 0.0,
     min_line_length: float = 0.0,
     min_polygon_area: float = 0.0,
+    timing: dict[str, float | int] | None = None,
 ) -> bytes:
     """Encode annotation geometries and properties into an MVT layer.
 
@@ -84,6 +97,8 @@ def encode_annotation_layer(
         min_polygon_area:
             Minimum polygon area, in slide pixel coordinates squared, to keep after
             clipping. Thin polygons are retained if they still span a visible edge.
+        timing:
+            Optional mutable dictionary populated with timing counters in seconds.
 
     Returns:
         bytes:
@@ -99,18 +114,39 @@ def encode_annotation_layer(
     keys: list[str] = []
     values: list[bytes] = []
 
+    input_features = 0
+    output_features = 0
+    prepare_elapsed = 0.0
+    geometry_encode_elapsed = 0.0
+    tag_encode_elapsed = 0.0
+    feature_build_elapsed = 0.0
+
     for geometry, properties in annotations:
-        for simple_geometry in _prepare_geometries(
-            geometry,
-            clip_geometry,
-            simplify_tolerance=simplify_tolerance,
-            min_line_length=min_line_length,
-            min_polygon_area=min_polygon_area,
-        ):
+        input_features += 1
+        prepare_start = time.perf_counter()
+        simple_geometries = tuple(
+            _prepare_geometries(
+                geometry,
+                clip_geometry,
+                simplify_tolerance=simplify_tolerance,
+                min_line_length=min_line_length,
+                min_polygon_area=min_polygon_area,
+            ),
+        )
+        prepare_elapsed += time.perf_counter() - prepare_start
+
+        for simple_geometry in simple_geometries:
+            geometry_encode_start = time.perf_counter()
             encoded_geometry, geom_type = _encode_geometry(simple_geometry, envelope)
+            geometry_encode_elapsed += time.perf_counter() - geometry_encode_start
             if not encoded_geometry or geom_type == _GEOM_UNKNOWN:
                 continue
+
+            tag_encode_start = time.perf_counter()
             tags = _encode_tags(properties, key_index, value_index, keys, values)
+            tag_encode_elapsed += time.perf_counter() - tag_encode_start
+
+            feature_build_start = time.perf_counter()
             feature = bytearray()
             if tags:
                 feature.extend(_field_key(2, 2))
@@ -119,7 +155,10 @@ def encode_annotation_layer(
             feature.extend(_field_key(4, 2))
             feature.extend(_encode_length_delimited(_encode_packed_uint32(encoded_geometry)))
             features.append(bytes(feature))
+            feature_build_elapsed += time.perf_counter() - feature_build_start
+            output_features += 1
 
+    layer_build_start = time.perf_counter()
     layer = bytearray()
     layer.extend(_encode_string_field(1, layer_name))
     for feature in features:
@@ -133,6 +172,20 @@ def encode_annotation_layer(
 
     tile = bytearray()
     tile.extend(_encode_message_field(3, bytes(layer)))
+    layer_build_elapsed = time.perf_counter() - layer_build_start
+
+    if timing is not None:
+        timing.update(
+            {
+                "input_features": input_features,
+                "output_features": output_features,
+                "prepare_s": prepare_elapsed,
+                "geometry_encode_s": geometry_encode_elapsed,
+                "tag_encode_s": tag_encode_elapsed,
+                "feature_build_s": feature_build_elapsed,
+                "layer_build_s": layer_build_elapsed,
+            },
+        )
     return bytes(tile)
 
 

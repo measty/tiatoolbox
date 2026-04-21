@@ -2888,7 +2888,7 @@ class SQLiteStore(AnnotationStore):
                 stacklevel=2,
             )
 
-    def _query(
+    def _query(  # noqa: PLR0912, PLR0913
         self: SQLiteStore,
         columns: str,
         geometry: Geometry | None = None,
@@ -2901,6 +2901,8 @@ class SQLiteStore(AnnotationStore):
         unique: bool = False,
         no_constraints_ok: bool = False,
         index_warning: bool = False,
+        min_area_keep_non_polygons: bool = False,
+        min_bbox_size: float | None = None,
     ) -> sqlite3.Cursor:
         """Common query construction logic for `query` and `iquery`.
 
@@ -2936,6 +2938,12 @@ class SQLiteStore(AnnotationStore):
             min_area (float or None):
                 Minimum area of the annotations to be returned.
                 Defaults to None.
+            min_area_keep_non_polygons (bool):
+                Whether to keep non-polygon annotations when applying
+                the minimum area filter. Defaults to False.
+            min_bbox_size (float or None):
+                Minimum width or height of the annotation bounding box to
+                keep when applying the minimum area filter. Defaults to None.
             distance (float):
                 Distance used when performing a distance based query.
                 E.g. "centers_within_k" geometry predicate.
@@ -2982,7 +2990,24 @@ class SQLiteStore(AnnotationStore):
 
         # Add area column constraint to query if min_area is specified
         if min_area is not None and "area" in self.table_columns:
-            query_string += f"\nAND area > {min_area}"
+            query_parameters["min_area"] = min_area
+            if min_area_keep_non_polygons:
+                area_filters = ["area >= :min_area"]
+                if min_bbox_size is not None:
+                    query_parameters["min_bbox_size"] = min_bbox_size
+                    area_filters.extend(
+                        [
+                            "(max_x - min_x) >= :min_bbox_size",
+                            "(max_y - min_y) >= :min_bbox_size",
+                        ],
+                    )
+                area_filter_sql = " OR ".join(area_filters)
+                query_string += (
+                    "\nAND (objtype NOT IN ('Polygon', 'MultiPolygon') OR "
+                    f"{area_filter_sql})"
+                )
+            else:
+                query_string += "\nAND area > :min_area"
         elif min_area is not None:
             msg = (
                 "Cannot use `min_area` without an area column.\n"
@@ -3097,6 +3122,49 @@ class SQLiteStore(AnnotationStore):
             geometry_predicate=geometry_predicate,
             where=where,
             min_area=min_area,
+            distance=distance,
+        )
+        if callable(where):
+            return {
+                key: Annotation(
+                    properties=json.loads(properties),
+                    wkb=self._unpack_wkb(blob, cx, cy),
+                )
+                for key, properties, cx, cy, blob in cur.fetchall()
+                if where(json.loads(properties))
+            }
+        return {
+            key: Annotation(
+                properties=json.loads(properties),
+                wkb=self._unpack_wkb(blob, cx, cy),
+            )
+            for key, properties, cx, cy, blob in cur.fetchall()
+        }
+
+    def query_renderable_geometries(
+        self: SQLiteStore,
+        geometry: QueryGeometry | None = None,
+        where: Predicate | None = None,
+        geometry_predicate: str = "intersects",
+        min_area: float | None = None,
+        min_bbox_size: float | None = None,
+        distance: float = 0,
+    ) -> dict[str, Annotation]:
+        """Query annotations likely to remain renderable at a target scale.
+
+        Unlike :meth:`query` with ``min_area``, this keeps non-polygon
+        geometries and keeps thin polygons whose bounding box can still span a
+        visible edge. This is intended for tiled renderers that do their final
+        clip/simplify/cull pass after database candidate selection.
+        """
+        cur = self._query(
+            columns="[key], properties, cx, cy, geometry",
+            geometry=geometry,
+            geometry_predicate=geometry_predicate,
+            where=where,
+            min_area=min_area,
+            min_area_keep_non_polygons=True,
+            min_bbox_size=min_bbox_size,
             distance=distance,
         )
         if callable(where):
