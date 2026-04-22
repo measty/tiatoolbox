@@ -13,6 +13,7 @@ import sys
 import tempfile
 import time
 import urllib
+from collections import defaultdict
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -22,10 +23,12 @@ from flask.templating import render_template
 from matplotlib import colormaps
 from PIL import Image
 from shapely.affinity import scale as scale_geometry
-from shapely.geometry import Point
+from shapely.geometry import Point, box
 
 from tiatoolbox import data, logger
 from tiatoolbox.annotation import AnnotationStore, SQLiteStore
+from tiatoolbox.annotation.storage import Annotation
+from tiatoolbox.annotation.storage import Annotation
 from tiatoolbox.tools.pyramid import AnnotationTileGenerator, ZoomifyGenerator
 from tiatoolbox.utils.misc import store_from_dat
 from tiatoolbox.utils.postproc_defs import MultichannelToRGB
@@ -48,7 +51,6 @@ if TYPE_CHECKING:  # pragma: no cover
 
     from matplotlib.colors import Colormap
 
-    from tiatoolbox.annotation.storage import Annotation
     from tiatoolbox.wsicore import WSIMeta
 
 
@@ -87,10 +89,13 @@ MVT_CACHE_MAX_AGE_SECONDS = 300
 MVT_SIMPLIFICATION_PIXEL_TOLERANCE = 0.5
 MVT_MIN_VISIBLE_GEOMETRY_PIXELS = 0.75
 ANNOTATION_PERF_LOG_THRESHOLD_SECONDS = 0.1
+ANNOTATION_MVT_OVERVIEW_REPRESENTATION = "overview"
 ANNOTATION_MVT_FULL_REPRESENTATION = "full"
 ANNOTATION_MVT_CENTROID_REPRESENTATION = "centroids"
 ANNOTATION_MVT_LOW_ZOOM_POINT_MIN_FEATURES = 5000
+ANNOTATION_MVT_CENTROID_MAX_DOWNSAMPLE = 16.0
 ANNOTATION_MVT_FULL_GEOMETRY_MAX_DOWNSAMPLE = 8.0
+ANNOTATION_MVT_OVERVIEW_GRID_PIXEL_SIZE = 24
 
 
 class TileServer(Flask):
@@ -670,6 +675,7 @@ class TileServer(Flask):
         slide_units_per_pixel = float(max(1, pyramid.level_downsample(z)))
         min_geometry_size = slide_units_per_pixel * MVT_MIN_VISIBLE_GEOMETRY_PIXELS
         return {
+            "slide_units_per_pixel": slide_units_per_pixel,
             "simplify_tolerance": 0.0
             if slide_units_per_pixel <= 1
             else slide_units_per_pixel * MVT_SIMPLIFICATION_PIXEL_TOLERANCE,
@@ -692,17 +698,89 @@ class TileServer(Flask):
         return f"{prefix}/{representation}/{{z}}/{{x}}/{{y}}.pbf"
 
     @staticmethod
+    def _get_annotation_min_zoom_for_downsample(
+        pyramid: AnnotationTileGenerator,
+        max_downsample: float,
+    ) -> int:
+        """Return the first zoom level whose downsample meets a threshold."""
+        for zoom in range(pyramid.level_count):
+            if pyramid.level_downsample(zoom) <= max_downsample:
+                return zoom
+        return pyramid.level_count - 1
+
+    @staticmethod
     def _get_annotation_full_geometry_min_zoom(
         pyramid: AnnotationTileGenerator,
     ) -> int:
         """Return the first zoom level where full geometry should be used."""
-        for zoom in range(pyramid.level_count):
-            if (
-                pyramid.level_downsample(zoom)
-                <= ANNOTATION_MVT_FULL_GEOMETRY_MAX_DOWNSAMPLE
-            ):
-                return zoom
-        return pyramid.level_count - 1
+        return TileServer._get_annotation_min_zoom_for_downsample(
+            pyramid,
+            ANNOTATION_MVT_FULL_GEOMETRY_MAX_DOWNSAMPLE,
+        )
+
+    @staticmethod
+    def _aggregate_annotation_overview(
+        annotations: dict[str, Annotation],
+        tile_bounds: tuple[int, int, int, int],
+        slide_units_per_pixel: float,
+        color_property: str | None,
+    ) -> dict[str, Annotation]:
+        """Aggregate centroid points into a coarse grid for overview rendering."""
+        cell_size = max(
+            slide_units_per_pixel * ANNOTATION_MVT_OVERVIEW_GRID_PIXEL_SIZE,
+            1.0,
+        )
+        min_x, min_y, max_x, max_y = tile_bounds
+        max_cell_x = max(int(np.ceil((max_x - min_x) / cell_size)) - 1, 0)
+        max_cell_y = max(int(np.ceil((max_y - min_y) / cell_size)) - 1, 0)
+
+        overview_cells: dict[
+            tuple[int, int],
+            dict[str, object],
+        ] = {}
+        for annotation in annotations.values():
+            centroid = annotation.geometry
+            cell_x = int(np.floor((centroid.x - min_x) / cell_size))
+            cell_y = int(np.floor((centroid.y - min_y) / cell_size))
+            cell_x = min(max(cell_x, 0), max_cell_x)
+            cell_y = min(max(cell_y, 0), max_cell_y)
+            cell_key = (cell_x, cell_y)
+            cell = overview_cells.setdefault(
+                cell_key,
+                {
+                    "count": 0,
+                    "properties": defaultdict(int),
+                    "property_values": {},
+                },
+            )
+            cell["count"] = int(cell["count"]) + 1
+            if color_property:
+                value = annotation.properties.get(color_property)
+                if value is not None:
+                    value_key = json.dumps(value, sort_keys=True, default=str)
+                    cell["properties"][value_key] += 1
+                    cell["property_values"][value_key] = value
+
+        overview_annotations: dict[str, Annotation] = {}
+        for (cell_x, cell_y), cell in overview_cells.items():
+            cell_min_x = min_x + (cell_x * cell_size)
+            cell_min_y = min_y + (cell_y * cell_size)
+            cell_max_x = min(max_x, cell_min_x + cell_size)
+            cell_max_y = min(max_y, cell_min_y + cell_size)
+            properties = {"count": int(cell["count"])}
+            if color_property and cell["properties"]:
+                dominant_value_key = max(
+                    cell["properties"].items(),
+                    key=lambda item: item[1],
+                )[0]
+                properties[color_property] = cell["property_values"][
+                    dominant_value_key
+                ]
+            overview_annotations[f"{cell_x}:{cell_y}"] = Annotation(
+                box(cell_min_x, cell_min_y, cell_max_x, cell_max_y),
+                properties,
+            )
+        return overview_annotations
 
     def _get_annotation_vector_representations(
         self: TileServer,
@@ -725,26 +803,49 @@ class TileServer(Flask):
         if len(pyramid.store) < ANNOTATION_MVT_LOW_ZOOM_POINT_MIN_FEATURES:
             return [full_representation]
 
+        centroid_min_zoom = self._get_annotation_min_zoom_for_downsample(
+            pyramid,
+            ANNOTATION_MVT_CENTROID_MAX_DOWNSAMPLE,
+        )
         full_geometry_min_zoom = self._get_annotation_full_geometry_min_zoom(pyramid)
         if full_geometry_min_zoom <= 0:
             return [full_representation]
 
-        full_representation["min_zoom"] = full_geometry_min_zoom
-        return [
-            {
-                "id": ANNOTATION_MVT_CENTROID_REPRESENTATION,
-                "geometry_type": "point",
-                "min_zoom": 0,
-                "max_zoom": full_geometry_min_zoom - 1,
-                "vector_format": "mvt",
-                "vector_url": self._annotation_mvt_url(
-                    name,
-                    session_id,
-                    ANNOTATION_MVT_CENTROID_REPRESENTATION,
-                ),
-            },
-            full_representation,
-        ]
+        representations: list[dict[str, str | int]] = []
+        if centroid_min_zoom > 0:
+            representations.append(
+                {
+                    "id": ANNOTATION_MVT_OVERVIEW_REPRESENTATION,
+                    "geometry_type": "polygon",
+                    "min_zoom": 0,
+                    "max_zoom": centroid_min_zoom - 1,
+                    "vector_format": "mvt",
+                    "vector_url": self._annotation_mvt_url(
+                        name,
+                        session_id,
+                        ANNOTATION_MVT_OVERVIEW_REPRESENTATION,
+                    ),
+                },
+            )
+
+        if full_geometry_min_zoom > centroid_min_zoom:
+            representations.append(
+                {
+                    "id": ANNOTATION_MVT_CENTROID_REPRESENTATION,
+                    "geometry_type": "point",
+                    "min_zoom": centroid_min_zoom,
+                    "max_zoom": full_geometry_min_zoom - 1,
+                    "vector_format": "mvt",
+                    "vector_url": self._annotation_mvt_url(
+                        name,
+                        session_id,
+                        ANNOTATION_MVT_CENTROID_REPRESENTATION,
+                    ),
+                },
+            )
+
+        full_representation["min_zoom"] = max(centroid_min_zoom, full_geometry_min_zoom)
+        return [*representations, full_representation]
 
     @staticmethod
     def _query_annotations_for_mvt(
@@ -753,20 +854,29 @@ class TileServer(Flask):
         where: object,
         render_hints: dict[str, float],
         representation: str,
+        color_property: str | None = None,
     ) -> tuple[dict[str, Annotation], bool]:
         """Query annotation candidates for an MVT tile representation."""
-        if representation == ANNOTATION_MVT_CENTROID_REPRESENTATION:
+        if representation in {
+            ANNOTATION_MVT_OVERVIEW_REPRESENTATION,
+            ANNOTATION_MVT_CENTROID_REPRESENTATION,
+        }:
             if not isinstance(ann_layer.store, SQLiteStore):
                 msg = "Representation not found"
                 raise LookupError(msg)
-            return (
-                ann_layer.store.query_centroids(
-                    geometry=tile_bounds,
-                    where=where,
-                    geometry_predicate="bbox_intersects",
-                ),
-                False,
+            annotations = ann_layer.store.query_centroids(
+                geometry=tile_bounds,
+                where=where,
+                geometry_predicate="bbox_intersects",
             )
+            if representation == ANNOTATION_MVT_OVERVIEW_REPRESENTATION:
+                annotations = TileServer._aggregate_annotation_overview(
+                    annotations,
+                    tile_bounds,
+                    float(render_hints["slide_units_per_pixel"]),
+                    color_property,
+                )
+            return (annotations, False)
 
         prefiltered = isinstance(ann_layer.store, SQLiteStore)
         if isinstance(ann_layer.store, SQLiteStore):
@@ -801,11 +911,13 @@ class TileServer(Flask):
         representation: str,
     ) -> dict[str, float]:
         """Return encoding kwargs for a specific annotation representation."""
-        return (
-            render_hints
-            if representation == ANNOTATION_MVT_FULL_REPRESENTATION
-            else {}
-        )
+        if representation != ANNOTATION_MVT_FULL_REPRESENTATION:
+            return {}
+        return {
+            "simplify_tolerance": render_hints["simplify_tolerance"],
+            "min_line_length": render_hints["min_line_length"],
+            "min_polygon_area": render_hints["min_polygon_area"],
+        }
 
     def _bump_annotation_revision(self: TileServer, session_id: str) -> None:
         """Invalidate cached annotation tile URLs for a session."""
@@ -1561,7 +1673,9 @@ class TileServer(Flask):
         request_start = time.perf_counter()
         layer_name = self.decode_layer_name(layer)
         where = self._decode_optional_json(request.args.get("where"))
+        color_property = request.args.get("cprop") or None
         if representation not in {
+            ANNOTATION_MVT_OVERVIEW_REPRESENTATION,
             ANNOTATION_MVT_FULL_REPRESENTATION,
             ANNOTATION_MVT_CENTROID_REPRESENTATION,
         }:
@@ -1587,6 +1701,7 @@ class TileServer(Flask):
                 where,
                 render_hints,
                 representation,
+                color_property,
             )
         except LookupError:
             return Response("Representation not found", status=404)

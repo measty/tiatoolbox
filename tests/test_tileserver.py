@@ -997,14 +997,18 @@ def test_get_layers_metadata_uses_zoom_representations_for_dense_overlay(
     app_alt: TileServer,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Dense SQLite overlays should advertise centroid and full-geometry MVT paths."""
+    """Dense SQLite overlays should advertise overview, centroid, and full MVT paths."""
     monkeypatch.setattr(
         "tiatoolbox.visualization.tileserver.ANNOTATION_MVT_LOW_ZOOM_POINT_MIN_FEATURES",
         10,
     )
     monkeypatch.setattr(
-        "tiatoolbox.visualization.tileserver.ANNOTATION_MVT_FULL_GEOMETRY_MAX_DOWNSAMPLE",
+        "tiatoolbox.visualization.tileserver.ANNOTATION_MVT_CENTROID_MAX_DOWNSAMPLE",
         2.0,
+    )
+    monkeypatch.setattr(
+        "tiatoolbox.visualization.tileserver.ANNOTATION_MVT_FULL_GEOMETRY_MAX_DOWNSAMPLE",
+        1.0,
     )
 
     with app_alt.test_client() as client:
@@ -1015,16 +1019,23 @@ def test_get_layers_metadata_uses_zoom_representations_for_dense_overlay(
         representations = overlay["vector_representations"]
 
         assert [representation["id"] for representation in representations] == [
+            "overview",
             "centroids",
             "full",
         ]
-        assert representations[0]["geometry_type"] == "point"
+        assert representations[0]["geometry_type"] == "polygon"
         assert representations[0]["max_zoom"] == 0
         assert representations[0]["vector_url"].endswith(
+            "/mvt/overview/{z}/{x}/{y}.pbf",
+        )
+        assert representations[1]["geometry_type"] == "point"
+        assert representations[1]["min_zoom"] == 1
+        assert representations[1]["max_zoom"] == 1
+        assert representations[1]["vector_url"].endswith(
             "/mvt/centroids/{z}/{x}/{y}.pbf",
         )
-        assert representations[1]["min_zoom"] == 1
-        assert representations[1]["vector_url"].endswith(
+        assert representations[2]["min_zoom"] == 2
+        assert representations[2]["vector_url"].endswith(
             "/mvt/{z}/{x}/{y}.pbf",
         )
 
@@ -1164,6 +1175,49 @@ def test_get_annotations_mvt_centroid_representation_uses_points(
     assert any(geometry_type != "Point" for geometry_type in captured_types[0])
     assert captured_types[1]
     assert set(captured_types[1]) == {"Point"}
+
+
+def test_get_annotations_mvt_overview_representation_aggregates_features(
+    app_alt: TileServer,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The overview path should emit aggregated cells instead of per-object points."""
+    captured_tiles: list[dict[str, object]] = []
+
+    def fake_encode_annotation_layer(*args: object, **_kwargs: object) -> bytes:
+        annotations = list(args[1])
+        captured_tiles.append(
+            {
+                "count": len(annotations),
+                "geometry_types": [
+                    type(geometry).__name__ for geometry, _ in annotations
+                ],
+                "properties": [properties for _, properties in annotations],
+            },
+        )
+        return b"mvt"
+
+    monkeypatch.setattr(
+        "tiatoolbox.visualization.tileserver.encode_annotation_layer",
+        fake_encode_annotation_layer,
+    )
+
+    with app_alt.test_client() as client:
+        overview_response = client.get(
+            "/tileserver/layer/layer-1/default/mvt/overview/0/0/0.pbf",
+            query_string={"where": json.dumps(None), "cprop": "type"},
+        )
+        centroid_response = client.get(
+            "/tileserver/layer/layer-1/default/mvt/centroids/0/0/0.pbf",
+            query_string={"where": json.dumps(None), "cprop": "type"},
+        )
+
+    assert overview_response.status_code == 200
+    assert centroid_response.status_code == 200
+    assert captured_tiles[0]["count"] < captured_tiles[1]["count"]
+    assert set(captured_tiles[0]["geometry_types"]) == {"Polygon"}
+    assert all("count" in properties for properties in captured_tiles[0]["properties"])
+    assert any("type" in properties for properties in captured_tiles[0]["properties"])
 
 
 def test_annotation_overlay_reload_bumps_vector_revision(app: TileServer) -> None:

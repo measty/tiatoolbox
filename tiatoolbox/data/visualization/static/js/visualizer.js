@@ -48,6 +48,7 @@
     annotationPropertySummary: null,
     annotationSource: null,
     annotationStyleCache: new Map(),
+    annotationTileColorProperty: null,
     baseLayerMeta: null,
     categoryColorCache: {},
     map: null,
@@ -273,6 +274,7 @@
     state.annotationLayer = annotationLayer;
     state.annotationMeta = annotationLayerMeta || null;
     state.annotationSource = annotationLayer ? annotationLayer.getSource() : null;
+    state.annotationTileColorProperty = null;
     state.rasterLayers = rasterLayers;
     resetAnnotationStyleCache();
 
@@ -449,6 +451,7 @@
             params.set("layer_name", metadata.name);
             params.set("where", JSON.stringify(state.annotationFilter || null));
             params.set("rev", String(metadata.vector_revision || 0));
+            params.set("cprop", elements.colorProperty.value || "");
 
             const vectorUrl = representation.vector_url
               .replace("{z}", tileCoord[0])
@@ -548,6 +551,18 @@
     }
   }
 
+  function refreshAnnotationTilesForCurrentProperty() {
+    const property = elements.colorProperty.value || "";
+    if (
+      state.annotationSource &&
+      typeof state.annotationSource.refresh === "function" &&
+      state.annotationTileColorProperty !== property
+    ) {
+      state.annotationTileColorProperty = property;
+      state.annotationSource.refresh();
+    }
+  }
+
   async function updateLegend() {
     if (!state.annotationMeta) {
       return;
@@ -558,6 +573,8 @@
       renderLegendEmpty("No annotation properties found on this overlay.");
       return;
     }
+
+    refreshAnnotationTilesForCurrentProperty();
 
     if (property === "color") {
       state.annotationPropertySummary = { kind: "feature-color" };
