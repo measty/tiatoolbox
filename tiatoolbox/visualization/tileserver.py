@@ -13,7 +13,7 @@ import sys
 import tempfile
 import time
 import urllib
-from collections import defaultdict
+from collections import OrderedDict, defaultdict
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -97,6 +97,7 @@ ANNOTATION_MVT_CENTROID_MAX_DOWNSAMPLE = 16.0
 ANNOTATION_MVT_FULL_GEOMETRY_MAX_DOWNSAMPLE = 8.0
 ANNOTATION_MVT_OVERVIEW_GRID_PIXEL_SIZE = 24
 ANNOTATION_TILE_DEFAULT_PROPERTY_FIELDS = ("type",)
+ANNOTATION_MVT_CACHE_MAX_ENTRIES = 256
 
 
 class TileServer(Flask):
@@ -166,6 +167,7 @@ class TileServer(Flask):
         self.overlaps = {}
         self.annotation_revisions = {}
         self.annotation_metadata_cache = {}
+        self.annotation_mvt_cache = OrderedDict()
         self.project_config = self._load_project_config(project_config)
 
         # Generic layer names if none provided.
@@ -982,6 +984,11 @@ class TileServer(Flask):
         self.annotation_revisions[session_id] = (
             int(self.annotation_revisions.get(session_id, 0)) + 1
         )
+        self.annotation_mvt_cache = OrderedDict(
+            (key, value)
+            for key, value in self.annotation_mvt_cache.items()
+            if key[0] != session_id
+        )
         self.annotation_metadata_cache = {
             key: value
             for key, value in self.annotation_metadata_cache.items()
@@ -999,6 +1006,90 @@ class TileServer(Flask):
         revision = int(self.annotation_revisions.get(session_id, 0))
         tokens = tuple(repr(part) for part in parts)
         return (session_id, layer_name, revision, event, *tokens)
+
+    @staticmethod
+    def _annotation_cache_token(value: object) -> str:
+        """Return a stable digest for request arguments participating in caching."""
+        try:
+            encoded = json.dumps(
+                value,
+                sort_keys=True,
+                separators=(",", ":"),
+                default=str,
+            )
+        except TypeError:
+            encoded = repr(value)
+        return hashlib.blake2b(encoded.encode("utf-8"), digest_size=16).hexdigest()
+
+    def _annotation_mvt_cache_key(
+        self: TileServer,
+        session_id: str,
+        layer_name: str,
+        representation: str,
+        z: int,
+        x: int,
+        y: int,
+        where: object,
+        color_property: str | None,
+        requested_fields: tuple[str, ...],
+    ) -> tuple[object, ...]:
+        """Return the cache key for an annotation MVT payload."""
+        revision = int(self.annotation_revisions.get(session_id, 0))
+        return (
+            session_id,
+            layer_name,
+            revision,
+            representation,
+            self._annotation_cache_token(where),
+            color_property,
+            requested_fields,
+            z,
+            x,
+            y,
+        )
+
+    def _get_annotation_mvt_cache_entry(
+        self: TileServer,
+        cache_key: tuple[object, ...],
+    ) -> dict[str, object] | None:
+        """Return a cached annotation MVT payload and refresh its LRU position."""
+        cached = self.annotation_mvt_cache.get(cache_key)
+        if cached is not None:
+            self.annotation_mvt_cache.move_to_end(cache_key)
+        return cached
+
+    def _set_annotation_mvt_cache_entry(
+        self: TileServer,
+        cache_key: tuple[object, ...],
+        payload: bytes,
+        etag: str,
+        *,
+        candidates: int,
+        prefiltered: bool,
+        output_features: int,
+    ) -> None:
+        """Store an annotation MVT payload in the bounded in-memory LRU cache."""
+        self.annotation_mvt_cache[cache_key] = {
+            "payload": payload,
+            "etag": etag,
+            "candidates": candidates,
+            "prefiltered": prefiltered,
+            "output_features": output_features,
+        }
+        self.annotation_mvt_cache.move_to_end(cache_key)
+        while len(self.annotation_mvt_cache) > ANNOTATION_MVT_CACHE_MAX_ENTRIES:
+            self.annotation_mvt_cache.popitem(last=False)
+
+    @staticmethod
+    def _make_annotation_mvt_response(payload: bytes, etag: str) -> Response:
+        """Build an annotation MVT response with standard cache headers."""
+        response = Response(payload, mimetype="application/vnd.mapbox-vector-tile")
+        response.headers["Cache-Control"] = (
+            f"private, max-age={MVT_CACHE_MAX_AGE_SECONDS}"
+        )
+        response.set_etag(etag)
+        response.make_conditional(request)
+        return response
 
     def get_ann_layer(
         self: TileServer,
@@ -1082,6 +1173,11 @@ class TileServer(Flask):
         del self.renderers[session_id]
         del self.overlaps[session_id]
         self.annotation_revisions.pop(session_id, None)
+        self.annotation_mvt_cache = OrderedDict(
+            (key, value)
+            for key, value in self.annotation_mvt_cache.items()
+            if key[0] != session_id
+        )
         self.annotation_metadata_cache = {
             key: value
             for key, value in self.annotation_metadata_cache.items()
@@ -1754,6 +1850,60 @@ class TileServer(Flask):
 
         tile_bounds = self._get_annotation_tile_bounds(ann_layer, z, x, y)
         render_hints = self._get_annotation_mvt_hints(ann_layer, z)
+        cache_key = self._annotation_mvt_cache_key(
+            session_id,
+            layer_name,
+            representation,
+            z,
+            x,
+            y,
+            where,
+            color_property,
+            requested_fields,
+        )
+        cached = self._get_annotation_mvt_cache_entry(cache_key)
+        if cached is not None:
+            payload = cached["payload"]
+            etag = cached["etag"]
+            assert isinstance(payload, bytes)
+            assert isinstance(etag, str)
+            response = self._make_annotation_mvt_response(payload, etag)
+            self._log_annotation_perf(
+                "mvt_tile",
+                time.perf_counter() - request_start,
+                layer=layer_name,
+                representation=representation,
+                z=z,
+                x=x,
+                y=y,
+                candidates=int(cached.get("candidates", 0)),
+                bytes=len(payload),
+                filtered=where is not None,
+                prefiltered=bool(cached.get("prefiltered", False)),
+                cache=True,
+                query_ms="0.0",
+                encode_ms="0.0",
+                geometry_decode_ms="0.0",
+                prepare_ms="0.0",
+                mvt_geometry_ms="0.0",
+                mvt_tags_ms="0.0",
+                mvt_feature_ms="0.0",
+                mvt_layer_ms="0.0",
+                output_features=int(cached.get("output_features", 0)),
+                etag_ms="0.0",
+                simplify=(
+                    f"{render_hints['simplify_tolerance']:.2f}"
+                    if representation == ANNOTATION_MVT_FULL_REPRESENTATION
+                    else "0.00"
+                ),
+                min_area=(
+                    f"{render_hints['min_polygon_area']:.2f}"
+                    if representation == ANNOTATION_MVT_FULL_REPRESENTATION
+                    else "0.00"
+                ),
+            )
+            return response
+
         query_start = time.perf_counter()
         try:
             annotations, prefiltered = self._query_annotations_for_mvt(
@@ -1817,12 +1967,15 @@ class TileServer(Flask):
         etag_start = time.perf_counter()
         etag = hashlib.blake2b(payload, digest_size=16).hexdigest()
         etag_elapsed = time.perf_counter() - etag_start
-        response = Response(payload, mimetype="application/vnd.mapbox-vector-tile")
-        response.headers["Cache-Control"] = (
-            f"private, max-age={MVT_CACHE_MAX_AGE_SECONDS}"
+        self._set_annotation_mvt_cache_entry(
+            cache_key,
+            payload,
+            etag,
+            candidates=len(annotations),
+            prefiltered=prefiltered,
+            output_features=int(mvt_timings.get("output_features", 0)),
         )
-        response.set_etag(etag)
-        response.make_conditional(request)
+        response = self._make_annotation_mvt_response(payload, etag)
         self._log_annotation_perf(
             "mvt_tile",
             time.perf_counter() - request_start,
@@ -1836,6 +1989,7 @@ class TileServer(Flask):
             filtered=where is not None,
             query_ms=f"{query_elapsed * 1000:.1f}",
             prefiltered=prefiltered,
+            cache=False,
             encode_ms=f"{encode_elapsed * 1000:.1f}",
             geometry_decode_ms=f"{geometry_decode_elapsed * 1000:.1f}",
             prepare_ms=f"{float(mvt_timings.get('prepare_s', 0)) * 1000:.1f}",

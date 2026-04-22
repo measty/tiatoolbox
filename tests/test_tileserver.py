@@ -1145,6 +1145,69 @@ def test_get_annotations_mvt(app_alt: TileServer) -> None:
         assert response.data != empty_response.data
 
 
+def test_get_annotations_mvt_cache_reuses_identical_requests_and_keys_by_payload_inputs(
+    app_alt: TileServer,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Repeated identical tile requests should bypass query and encode work."""
+    original_query = app_alt._query_annotations_for_mvt
+    query_calls = 0
+    encode_calls = 0
+
+    def counted_query(*args: object, **kwargs: object) -> tuple[dict[str, Annotation], bool]:
+        nonlocal query_calls
+        query_calls += 1
+        return original_query(*args, **kwargs)
+
+    def fake_encode_annotation_layer(*args: object, **_kwargs: object) -> bytes:
+        nonlocal encode_calls
+        encode_calls += 1
+        return f"mvt-{encode_calls}".encode()
+
+    monkeypatch.setattr(app_alt, "_query_annotations_for_mvt", counted_query)
+    monkeypatch.setattr(
+        "tiatoolbox.visualization.tileserver.encode_annotation_layer",
+        fake_encode_annotation_layer,
+    )
+
+    with app_alt.test_client() as client:
+        first_response = client.get(
+            "/tileserver/layer/layer-1/default/mvt/0/0/0.pbf",
+            query_string={"where": json.dumps(None), "cprop": "prob"},
+        )
+        second_response = client.get(
+            "/tileserver/layer/layer-1/default/mvt/0/0/0.pbf",
+            query_string={"where": json.dumps(None), "cprop": "prob"},
+        )
+        fields_miss_response = client.get(
+            "/tileserver/layer/layer-1/default/mvt/0/0/0.pbf",
+            query_string={
+                "where": json.dumps(None),
+                "cprop": "prob",
+                "fields": json.dumps(["other_prop"]),
+            },
+        )
+        app_alt._bump_annotation_revision("default")
+        revision_miss_response = client.get(
+            "/tileserver/layer/layer-1/default/mvt/0/0/0.pbf",
+            query_string={
+                "where": json.dumps(None),
+                "cprop": "prob",
+                "fields": json.dumps(["other_prop"]),
+            },
+        )
+
+    assert first_response.status_code == 200
+    assert second_response.status_code == 200
+    assert fields_miss_response.status_code == 200
+    assert revision_miss_response.status_code == 200
+    assert query_calls == 3
+    assert encode_calls == 3
+    assert first_response.data == second_response.data
+    assert first_response.data != fields_miss_response.data
+    assert fields_miss_response.data != revision_miss_response.data
+
+
 def test_get_annotations_mvt_projects_minimal_properties(
     app_alt: TileServer,
     monkeypatch: pytest.MonkeyPatch,
@@ -1243,6 +1306,48 @@ def test_get_annotations_mvt_centroid_representation_uses_points(
     assert any(geometry_type != "Point" for geometry_type in captured_types[0])
     assert captured_types[1]
     assert set(captured_types[1]) == {"Point"}
+
+
+def test_get_annotations_mvt_cache_serves_conditional_hits_without_reencoding(
+    app_alt: TileServer,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Conditional requests should reuse the cached payload and return 304."""
+    original_query = app_alt._query_annotations_for_mvt
+    query_calls = 0
+    encode_calls = 0
+
+    def counted_query(*args: object, **kwargs: object) -> tuple[dict[str, Annotation], bool]:
+        nonlocal query_calls
+        query_calls += 1
+        return original_query(*args, **kwargs)
+
+    def fake_encode_annotation_layer(*args: object, **_kwargs: object) -> bytes:
+        nonlocal encode_calls
+        encode_calls += 1
+        return b"cached-mvt"
+
+    monkeypatch.setattr(app_alt, "_query_annotations_for_mvt", counted_query)
+    monkeypatch.setattr(
+        "tiatoolbox.visualization.tileserver.encode_annotation_layer",
+        fake_encode_annotation_layer,
+    )
+
+    with app_alt.test_client() as client:
+        first_response = client.get(
+            "/tileserver/layer/layer-1/default/mvt/0/0/0.pbf",
+            query_string={"where": json.dumps(None)},
+        )
+        cached_response = client.get(
+            "/tileserver/layer/layer-1/default/mvt/0/0/0.pbf",
+            query_string={"where": json.dumps(None)},
+            headers={"If-None-Match": first_response.headers["ETag"]},
+        )
+
+    assert first_response.status_code == 200
+    assert cached_response.status_code == 304
+    assert query_calls == 1
+    assert encode_calls == 1
 
 
 def test_get_annotations_mvt_overview_representation_aggregates_features(
