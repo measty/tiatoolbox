@@ -87,6 +87,10 @@ MVT_CACHE_MAX_AGE_SECONDS = 300
 MVT_SIMPLIFICATION_PIXEL_TOLERANCE = 0.5
 MVT_MIN_VISIBLE_GEOMETRY_PIXELS = 0.75
 ANNOTATION_PERF_LOG_THRESHOLD_SECONDS = 0.1
+ANNOTATION_MVT_FULL_REPRESENTATION = "full"
+ANNOTATION_MVT_CENTROID_REPRESENTATION = "centroids"
+ANNOTATION_MVT_LOW_ZOOM_POINT_MIN_FEATURES = 5000
+ANNOTATION_MVT_FULL_GEOMETRY_MAX_DOWNSAMPLE = 8.0
 
 
 class TileServer(Flask):
@@ -231,7 +235,13 @@ class TileServer(Flask):
             self.get_annotations_geojson,
         )
         self.route(
+            "/tileserver/layer/<layer>/<session_id>/mvt/<representation>/"
+            "<int:z>/<int:x>/<int:y>.pbf",
+            methods=["GET"],
+        )(self.get_annotations_mvt)
+        self.route(
             "/tileserver/layer/<layer>/<session_id>/mvt/<int:z>/<int:x>/<int:y>.pbf",
+            defaults={"representation": ANNOTATION_MVT_FULL_REPRESENTATION},
             methods=["GET"],
         )(self.get_annotations_mvt)
         self.route("/tileserver/overlay", methods=["GET"])(self.get_overlay)
@@ -422,13 +432,20 @@ class TileServer(Flask):
             kind = "annotation"
             slide_dimensions = pyramid.info.slide_dimensions
             source_path = str(pyramid.store.path)
+            vector_representations = self._get_annotation_vector_representations(
+                name,
+                session_id,
+                pyramid,
+            )
             metadata = {
                 "vector_format": "mvt",
-                "vector_url": f"/tileserver/layer/{urllib.parse.quote(name, safe='')}/"
-                f"{session_id}/mvt/{{z}}/{{x}}/{{y}}.pbf",
+                "vector_url": self._annotation_mvt_url(name, session_id),
                 "vector_tile_extent": DEFAULT_MVT_EXTENT,
                 "vector_tile_buffer": DEFAULT_MVT_BUFFER,
                 "vector_revision": int(self.annotation_revisions.get(session_id, 0)),
+                "vector_representation_mode": "zoom",
+                "default_vector_representation": ANNOTATION_MVT_FULL_REPRESENTATION,
+                "vector_representations": vector_representations,
             }
         else:
             kind = "slide" if name == "slide" else "raster"
@@ -659,6 +676,136 @@ class TileServer(Flask):
             "min_line_length": min_geometry_size,
             "min_polygon_area": min_geometry_size**2,
         }
+
+    @staticmethod
+    def _annotation_mvt_url(
+        name: str,
+        session_id: str,
+        representation: str | None = None,
+    ) -> str:
+        """Build an annotation MVT URL template for a layer."""
+        prefix = (
+            f"/tileserver/layer/{urllib.parse.quote(name, safe='')}/{session_id}/mvt"
+        )
+        if representation is None:
+            return f"{prefix}/{{z}}/{{x}}/{{y}}.pbf"
+        return f"{prefix}/{representation}/{{z}}/{{x}}/{{y}}.pbf"
+
+    @staticmethod
+    def _get_annotation_full_geometry_min_zoom(
+        pyramid: AnnotationTileGenerator,
+    ) -> int:
+        """Return the first zoom level where full geometry should be used."""
+        for zoom in range(pyramid.level_count):
+            if (
+                pyramid.level_downsample(zoom)
+                <= ANNOTATION_MVT_FULL_GEOMETRY_MAX_DOWNSAMPLE
+            ):
+                return zoom
+        return pyramid.level_count - 1
+
+    def _get_annotation_vector_representations(
+        self: TileServer,
+        name: str,
+        session_id: str,
+        pyramid: AnnotationTileGenerator,
+    ) -> list[dict[str, str | int]]:
+        """Describe zoom-aware vector representations for an annotation overlay."""
+        full_representation: dict[str, str | int] = {
+            "id": ANNOTATION_MVT_FULL_REPRESENTATION,
+            "geometry_type": "mixed",
+            "min_zoom": 0,
+            "vector_format": "mvt",
+            "vector_url": self._annotation_mvt_url(name, session_id),
+        }
+
+        if not isinstance(pyramid.store, SQLiteStore):
+            return [full_representation]
+
+        if len(pyramid.store) < ANNOTATION_MVT_LOW_ZOOM_POINT_MIN_FEATURES:
+            return [full_representation]
+
+        full_geometry_min_zoom = self._get_annotation_full_geometry_min_zoom(pyramid)
+        if full_geometry_min_zoom <= 0:
+            return [full_representation]
+
+        full_representation["min_zoom"] = full_geometry_min_zoom
+        return [
+            {
+                "id": ANNOTATION_MVT_CENTROID_REPRESENTATION,
+                "geometry_type": "point",
+                "min_zoom": 0,
+                "max_zoom": full_geometry_min_zoom - 1,
+                "vector_format": "mvt",
+                "vector_url": self._annotation_mvt_url(
+                    name,
+                    session_id,
+                    ANNOTATION_MVT_CENTROID_REPRESENTATION,
+                ),
+            },
+            full_representation,
+        ]
+
+    @staticmethod
+    def _query_annotations_for_mvt(
+        ann_layer: AnnotationTileGenerator,
+        tile_bounds: tuple[int, int, int, int],
+        where: object,
+        render_hints: dict[str, float],
+        representation: str,
+    ) -> tuple[dict[str, Annotation], bool]:
+        """Query annotation candidates for an MVT tile representation."""
+        if representation == ANNOTATION_MVT_CENTROID_REPRESENTATION:
+            if not isinstance(ann_layer.store, SQLiteStore):
+                msg = "Representation not found"
+                raise LookupError(msg)
+            return (
+                ann_layer.store.query_centroids(
+                    geometry=tile_bounds,
+                    where=where,
+                    geometry_predicate="bbox_intersects",
+                ),
+                False,
+            )
+
+        prefiltered = isinstance(ann_layer.store, SQLiteStore)
+        if isinstance(ann_layer.store, SQLiteStore):
+            try:
+                return (
+                    ann_layer.store.query_renderable_geometries(
+                        geometry=tile_bounds,
+                        where=where,
+                        geometry_predicate="bbox_intersects",
+                        min_area=render_hints["min_polygon_area"],
+                        min_bbox_size=render_hints["min_line_length"],
+                    ),
+                    prefiltered,
+                )
+            except ValueError as exc:
+                if "without an area column" not in str(exc):
+                    raise
+                prefiltered = False
+
+        return (
+            ann_layer.store.query(
+                geometry=tile_bounds,
+                where=where,
+                geometry_predicate="bbox_intersects",
+            ),
+            prefiltered,
+        )
+
+    @staticmethod
+    def _get_annotation_mvt_encode_kwargs(
+        render_hints: dict[str, float],
+        representation: str,
+    ) -> dict[str, float]:
+        """Return encoding kwargs for a specific annotation representation."""
+        return (
+            render_hints
+            if representation == ANNOTATION_MVT_FULL_REPRESENTATION
+            else {}
+        )
 
     def _bump_annotation_revision(self: TileServer, session_id: str) -> None:
         """Invalidate cached annotation tile URLs for a session."""
@@ -1408,11 +1555,17 @@ class TileServer(Flask):
         z: int,
         x: int,
         y: int,
+        representation: str = ANNOTATION_MVT_FULL_REPRESENTATION,
     ) -> Response:
         """Serve an MVT tile for an annotation layer."""
         request_start = time.perf_counter()
         layer_name = self.decode_layer_name(layer)
         where = self._decode_optional_json(request.args.get("where"))
+        if representation not in {
+            ANNOTATION_MVT_FULL_REPRESENTATION,
+            ANNOTATION_MVT_CENTROID_REPRESENTATION,
+        }:
+            return Response("Representation not found", status=404)
         try:
             ann_layer = self.get_ann_layer(session_id, layer_name=layer_name)
             grid_width, grid_height = ann_layer.tile_grid_size(z)
@@ -1427,34 +1580,18 @@ class TileServer(Flask):
         tile_bounds = self._get_annotation_tile_bounds(ann_layer, z, x, y)
         render_hints = self._get_annotation_mvt_hints(ann_layer, z)
         query_start = time.perf_counter()
-        prefiltered = isinstance(ann_layer.store, SQLiteStore)
         try:
-            if isinstance(ann_layer.store, SQLiteStore):
-                try:
-                    annotations = ann_layer.store.query_renderable_geometries(
-                        geometry=tile_bounds,
-                        where=where,
-                        geometry_predicate="bbox_intersects",
-                        min_area=render_hints["min_polygon_area"],
-                        min_bbox_size=render_hints["min_line_length"],
-                    )
-                except ValueError as exc:
-                    if "without an area column" not in str(exc):
-                        raise
-                    prefiltered = False
-                    annotations = ann_layer.store.query(
-                        geometry=tile_bounds,
-                        where=where,
-                        geometry_predicate="bbox_intersects",
-                    )
-            else:
-                annotations = ann_layer.store.query(
-                    geometry=tile_bounds,
-                    where=where,
-                    geometry_predicate="bbox_intersects",
-                )
+            annotations, prefiltered = self._query_annotations_for_mvt(
+                ann_layer,
+                tile_bounds,
+                where,
+                render_hints,
+                representation,
+            )
+        except LookupError:
+            return Response("Representation not found", status=404)
         except ValueError:
-            annotations = {}
+            annotations, prefiltered = {}, False
         query_elapsed = time.perf_counter() - query_start
 
         geometry_decode_elapsed = 0.0
@@ -1465,7 +1602,9 @@ class TileServer(Flask):
             for ann in annotations.values():
                 geometry_decode_start = time.perf_counter()
                 geometry = ann.geometry
-                geometry_decode_elapsed += time.perf_counter() - geometry_decode_start
+                geometry_decode_elapsed += (
+                    time.perf_counter() - geometry_decode_start
+                )
                 yield geometry, ann.properties
 
         encode_start = time.perf_counter()
@@ -1477,7 +1616,10 @@ class TileServer(Flask):
                 extent=DEFAULT_MVT_EXTENT,
                 buffer=DEFAULT_MVT_BUFFER,
                 timing=mvt_timings,
-                **render_hints,
+                **self._get_annotation_mvt_encode_kwargs(
+                    render_hints,
+                    representation,
+                ),
             )
             if annotations
             else encode_empty_annotation_layer(
@@ -1499,6 +1641,7 @@ class TileServer(Flask):
             "mvt_tile",
             time.perf_counter() - request_start,
             layer=layer_name,
+            representation=representation,
             z=z,
             x=x,
             y=y,
@@ -1520,8 +1663,16 @@ class TileServer(Flask):
             mvt_layer_ms=f"{float(mvt_timings.get('layer_build_s', 0)) * 1000:.1f}",
             output_features=int(mvt_timings.get("output_features", 0)),
             etag_ms=f"{etag_elapsed * 1000:.1f}",
-            simplify=f"{render_hints['simplify_tolerance']:.2f}",
-            min_area=f"{render_hints['min_polygon_area']:.2f}",
+            simplify=(
+                f"{render_hints['simplify_tolerance']:.2f}"
+                if representation == ANNOTATION_MVT_FULL_REPRESENTATION
+                else "0.00"
+            ),
+            min_area=(
+                f"{render_hints['min_polygon_area']:.2f}"
+                if representation == ANNOTATION_MVT_FULL_REPRESENTATION
+                else "0.00"
+            ),
         )
         return response
 

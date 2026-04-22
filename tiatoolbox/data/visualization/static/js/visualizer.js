@@ -390,24 +390,72 @@
     return url;
   }
 
+  function annotationRepresentations(metadata) {
+    if (Array.isArray(metadata.vector_representations) && metadata.vector_representations.length > 0) {
+      return metadata.vector_representations;
+    }
+
+    if (metadata.vector_format === "mvt" && metadata.vector_url) {
+      return [
+        {
+          id: metadata.default_vector_representation || "default",
+          min_zoom: 0,
+          vector_format: metadata.vector_format,
+          vector_url: metadata.vector_url,
+        },
+      ];
+    }
+
+    return [];
+  }
+
+  function selectAnnotationRepresentation(metadata, zoom) {
+    const representations = annotationRepresentations(metadata);
+    if (representations.length === 0) {
+      return null;
+    }
+
+    return (
+      representations.find((representation) => {
+        const minZoom = representation.min_zoom ?? 0;
+        const maxZoom = representation.max_zoom ?? Number.POSITIVE_INFINITY;
+        return zoom >= minZoom && zoom <= maxZoom;
+      }) || representations[representations.length - 1]
+    );
+  }
+
   function createAnnotationLayer(metadata, baseSource, slideLayerMeta) {
     const tileGrid = baseSource.getTileGrid();
     const projection = createSlideProjection(baseSource, slideLayerMeta);
 
     if (metadata.vector_format === "mvt" && metadata.vector_url) {
-      const params = new URLSearchParams();
-      params.set("layer_name", metadata.name);
-      params.set("where", JSON.stringify(state.annotationFilter || null));
-      params.set("rev", String(metadata.vector_revision || 0));
-      const vectorUrl = `${metadata.vector_url}?${params.toString()}`;
-
       return new ol.layer.VectorTile({
         title: metadata.name,
         source: new ol.source.VectorTile({
           format: new ol.format.MVT(),
           projection: projection,
           tileGrid: tileGrid,
-          url: vectorUrl,
+          tileUrlFunction: function (tileCoord) {
+            if (!tileCoord) {
+              return undefined;
+            }
+
+            const representation = selectAnnotationRepresentation(metadata, tileCoord[0]);
+            if (!representation || !representation.vector_url) {
+              return undefined;
+            }
+
+            const params = new URLSearchParams();
+            params.set("layer_name", metadata.name);
+            params.set("where", JSON.stringify(state.annotationFilter || null));
+            params.set("rev", String(metadata.vector_revision || 0));
+
+            const vectorUrl = representation.vector_url
+              .replace("{z}", tileCoord[0])
+              .replace("{x}", tileCoord[1])
+              .replace("{y}", tileCoord[2]);
+            return `${vectorUrl}?${params.toString()}`;
+          },
           zDirection: -1,
         }),
         style: annotationStyle,

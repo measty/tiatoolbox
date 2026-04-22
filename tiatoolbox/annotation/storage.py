@@ -3184,6 +3184,34 @@ class SQLiteStore(AnnotationStore):
             for key, properties, cx, cy, blob in cur.fetchall()
         }
 
+    def query_centroids(
+        self: SQLiteStore,
+        geometry: QueryGeometry | None = None,
+        where: Predicate | None = None,
+        geometry_predicate: str = "intersects",
+        distance: float = 0,
+    ) -> dict[str, Annotation]:
+        """Query annotations as centroid point geometries.
+
+        This avoids decoding the source geometry and is useful for coarse
+        overview renderers where a representative point is sufficient.
+        """
+        cur = self._query(
+            columns="[key], properties, cx, cy",
+            geometry=geometry,
+            geometry_predicate=geometry_predicate,
+            where=where,
+            distance=distance,
+        )
+        rows = cur.fetchall()
+        centroids: dict[str, Annotation] = {}
+        for key, properties, cx, cy in rows:
+            parsed_properties = json.loads(properties)
+            if callable(where) and not where(parsed_properties):
+                continue
+            centroids[key] = Annotation(Point(cx, cy), parsed_properties)
+        return centroids
+
     def bquery(
         self: SQLiteStore,
         geometry: QueryGeometry | None = None,

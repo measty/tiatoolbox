@@ -980,6 +980,53 @@ def test_get_layers_metadata(app: TileServer) -> None:
         assert overlay["vector_url"].endswith("/mvt/{z}/{x}/{y}.pbf")
         assert overlay["vector_tile_extent"] == 4096
         assert overlay["vector_revision"] == 0
+        assert overlay["default_vector_representation"] == "full"
+        assert overlay["vector_representation_mode"] == "zoom"
+        assert overlay["vector_representations"] == [
+            {
+                "geometry_type": "mixed",
+                "id": "full",
+                "min_zoom": 0,
+                "vector_format": "mvt",
+                "vector_url": "/tileserver/layer/overlay/default/mvt/{z}/{x}/{y}.pbf",
+            },
+        ]
+
+
+def test_get_layers_metadata_uses_zoom_representations_for_dense_overlay(
+    app_alt: TileServer,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Dense SQLite overlays should advertise centroid and full-geometry MVT paths."""
+    monkeypatch.setattr(
+        "tiatoolbox.visualization.tileserver.ANNOTATION_MVT_LOW_ZOOM_POINT_MIN_FEATURES",
+        10,
+    )
+    monkeypatch.setattr(
+        "tiatoolbox.visualization.tileserver.ANNOTATION_MVT_FULL_GEOMETRY_MAX_DOWNSAMPLE",
+        2.0,
+    )
+
+    with app_alt.test_client() as client:
+        response = client.get("/tileserver/layers")
+        assert response.status_code == 200
+        layers = response.get_json()
+        overlay = next(layer for layer in layers if layer["kind"] == "annotation")
+        representations = overlay["vector_representations"]
+
+        assert [representation["id"] for representation in representations] == [
+            "centroids",
+            "full",
+        ]
+        assert representations[0]["geometry_type"] == "point"
+        assert representations[0]["max_zoom"] == 0
+        assert representations[0]["vector_url"].endswith(
+            "/mvt/centroids/{z}/{x}/{y}.pbf",
+        )
+        assert representations[1]["min_zoom"] == 1
+        assert representations[1]["vector_url"].endswith(
+            "/mvt/{z}/{x}/{y}.pbf",
+        )
 
 
 def test_session_id_preserves_default_layers(app_alt: TileServer) -> None:
@@ -1083,6 +1130,40 @@ def test_get_annotations_mvt(app_alt: TileServer) -> None:
         assert empty_response.status_code == 200
         assert len(empty_response.data) > 0
         assert response.data != empty_response.data
+
+
+def test_get_annotations_mvt_centroid_representation_uses_points(
+    app_alt: TileServer,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The low-zoom centroid path should avoid decoding full polygon geometry."""
+    captured_types: list[list[str]] = []
+
+    def fake_encode_annotation_layer(*args: object, **_kwargs: object) -> bytes:
+        annotations = args[1]
+        captured_types.append([type(geometry).__name__ for geometry, _ in annotations])
+        return b"mvt"
+
+    monkeypatch.setattr(
+        "tiatoolbox.visualization.tileserver.encode_annotation_layer",
+        fake_encode_annotation_layer,
+    )
+
+    with app_alt.test_client() as client:
+        full_response = client.get(
+            "/tileserver/layer/layer-1/default/mvt/0/0/0.pbf",
+            query_string={"where": json.dumps(None)},
+        )
+        centroid_response = client.get(
+            "/tileserver/layer/layer-1/default/mvt/centroids/0/0/0.pbf",
+            query_string={"where": json.dumps(None)},
+        )
+
+    assert full_response.status_code == 200
+    assert centroid_response.status_code == 200
+    assert any(geometry_type != "Point" for geometry_type in captured_types[0])
+    assert captured_types[1]
+    assert set(captured_types[1]) == {"Point"}
 
 
 def test_annotation_overlay_reload_bumps_vector_revision(app: TileServer) -> None:
