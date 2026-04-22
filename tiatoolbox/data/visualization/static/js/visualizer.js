@@ -41,6 +41,8 @@
     "#2563eb",
   ];
 
+  const DENSE_POLYGON_STROKE_ZOOM_OFFSET = 2;
+
   const state = {
     annotationFilter: "",
     annotationControlsRequestId: 0,
@@ -55,6 +57,7 @@
     annotationStyleCache: new Map(),
     annotationTileColorProperty: null,
     baseLayerMeta: null,
+    baseResolutions: null,
     categoryColorCache: {},
     featureDetailsRequestId: 0,
     map: null,
@@ -282,6 +285,7 @@
     }
 
     state.baseLayerMeta = slideLayerMeta;
+    state.baseResolutions = baseLayer.getSource().getTileGrid().getResolutions();
     state.annotationLayer = annotationLayer;
     state.annotationMeta = annotationLayerMeta || null;
     state.annotationPropertySummary = null;
@@ -452,6 +456,69 @@
         return zoom >= minZoom && zoom <= maxZoom;
       }) || representations[representations.length - 1]
     );
+  }
+
+  function zoomForResolution(resolution) {
+    const resolutions = state.baseResolutions || [];
+    if (!Number.isFinite(resolution) || resolutions.length === 0) {
+      return null;
+    }
+
+    let nearestZoom = 0;
+    let nearestDelta = Number.POSITIVE_INFINITY;
+
+    resolutions.forEach((candidateResolution, index) => {
+      const delta = Math.abs(candidateResolution - resolution);
+      if (delta < nearestDelta) {
+        nearestDelta = delta;
+        nearestZoom = index;
+      }
+    });
+
+    return nearestZoom;
+  }
+
+  function polygonStrokeMinZoom(metadata) {
+    if (!metadata) {
+      return null;
+    }
+
+    const fullRepresentation = annotationRepresentations(metadata).find(
+      (representation) => representation.id === "full",
+    );
+    if (!fullRepresentation) {
+      return null;
+    }
+
+    const fullGeometryMinZoom = Number(fullRepresentation.min_zoom || 0);
+    const maxZoom = Math.max(0, (state.baseResolutions || []).length - 1);
+    return Math.min(
+      maxZoom,
+      fullGeometryMinZoom + DENSE_POLYGON_STROKE_ZOOM_OFFSET,
+    );
+  }
+
+  function shouldRenderPolygonStroke(resolution) {
+    const zoom = zoomForResolution(resolution);
+    if (zoom === null || !state.annotationMeta) {
+      return true;
+    }
+
+    const representation = selectAnnotationRepresentation(state.annotationMeta, zoom);
+    if (!representation) {
+      return true;
+    }
+
+    if (representation.id && representation.id !== "full") {
+      return false;
+    }
+
+    const strokeMinZoom = polygonStrokeMinZoom(state.annotationMeta);
+    if (strokeMinZoom === null) {
+      return true;
+    }
+
+    return zoom >= strokeMinZoom;
   }
 
   function createAnnotationLayer(metadata, baseSource, slideLayerMeta) {
@@ -851,14 +918,16 @@
     elements.legend.classList.add("empty");
   }
 
-  function annotationStyle(feature) {
+  function annotationStyle(feature, resolution) {
     const color = featureColor(feature);
     const rgb = toRgb(color);
     const opacity = Number(elements.annotationOpacity.value);
     const strokeAlpha = Math.min(1, opacity + 0.2);
     const fillAlpha = opacity * 0.28;
     const geometryType = feature.getGeometry().getType();
-    const cacheKey = `${geometryType}:${rgb.join(",")}:${strokeAlpha.toFixed(3)}:${fillAlpha.toFixed(3)}`;
+    const polygonStrokeEnabled =
+      !geometryType.includes("Polygon") || shouldRenderPolygonStroke(resolution);
+    const cacheKey = `${geometryType}:${rgb.join(",")}:${strokeAlpha.toFixed(3)}:${fillAlpha.toFixed(3)}:${polygonStrokeEnabled ? "stroke" : "fill"}`;
 
     if (state.annotationStyleCache.has(cacheKey)) {
       return state.annotationStyleCache.get(cacheKey);
@@ -892,10 +961,12 @@
       fill: new ol.style.Fill({
         color: toRgba(rgb, fillAlpha),
       }),
-      stroke: new ol.style.Stroke({
-        color: toRgba(rgb, strokeAlpha),
-        width: 1.4,
-      }),
+      stroke: polygonStrokeEnabled
+        ? new ol.style.Stroke({
+            color: toRgba(rgb, strokeAlpha),
+            width: 1.4,
+          })
+        : undefined,
     });
     state.annotationStyleCache.set(cacheKey, style);
     return style;
@@ -1224,6 +1295,7 @@
 
   if (typeof window !== "undefined" && window.__TIA_VISUALIZER_ENABLE_TEST_HOOKS__) {
     window.__TIA_VISUALIZER_TEST_HOOKS__ = {
+      annotationStyle: annotationStyle,
       annotationContextKey: annotationContextKey,
       annotationMetadataCacheKey: annotationMetadataCacheKey,
       elements: elements,
@@ -1231,9 +1303,11 @@
       prepareAnnotationControlsLoading: prepareAnnotationControlsLoading,
       refreshAnnotationControls: refreshAnnotationControls,
       renderColorPropertyOptions: renderColorPropertyOptions,
+      shouldRenderPolygonStroke: shouldRenderPolygonStroke,
       state: state,
       syncLayers: syncLayers,
       updateLegend: updateLegend,
+      zoomForResolution: zoomForResolution,
     };
   }
 

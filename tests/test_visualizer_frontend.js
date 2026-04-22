@@ -258,6 +258,13 @@ function response(payload) {
   };
 }
 
+class FakeOlStyle {
+  constructor(config = {}) {
+    this.config = config;
+    Object.assign(this, config);
+  }
+}
+
 function createOlStub() {
   return {
     layer: {
@@ -289,6 +296,12 @@ function createOlStub() {
     format: {
       MVT: class {},
       GeoJSON: class {},
+    },
+    style: {
+      Style: FakeOlStyle,
+      Circle: FakeOlStyle,
+      Fill: FakeOlStyle,
+      Stroke: FakeOlStyle,
     },
     loadingstrategy: {
       tile() {
@@ -471,6 +484,72 @@ test('updateLegend keeps the latest summary when earlier requests finish later',
   assert.equal(hooks.state.annotationPropertySummary.min, 0.5);
   assert.equal(hooks.state.annotationPropertySummary.max, 1.0);
   assert.match(elements.legend.innerHTML, /gradient-swatch/);
+});
+
+test('annotationStyle skips dense polygon strokes until higher zooms', async () => {
+  const { hooks } = createEnvironment(async () => response([]), { withOl: true });
+
+  hooks.state.baseResolutions = [4, 2, 1, 0.5, 0.25];
+  hooks.state.annotationMeta = {
+    name: 'overlay',
+    path: '/tmp/overlay.db',
+    vector_format: 'mvt',
+    vector_representations: [
+      { id: 'overview', min_zoom: 0, max_zoom: 0, geometry_type: 'polygon' },
+      { id: 'centroids', min_zoom: 1, max_zoom: 1, geometry_type: 'point' },
+      { id: 'full', min_zoom: 2, geometry_type: 'mixed' },
+    ],
+  };
+
+  const feature = {
+    getGeometry() {
+      return {
+        getType() {
+          return 'Polygon';
+        },
+      };
+    },
+  };
+
+  const lowZoomStyle = hooks.annotationStyle(feature, 1);
+  const highZoomStyle = hooks.annotationStyle(feature, 0.25);
+
+  assert.equal(hooks.shouldRenderPolygonStroke(4), false);
+  assert.equal(lowZoomStyle.stroke, undefined);
+  assert.notEqual(highZoomStyle.stroke, undefined);
+  assert.equal(highZoomStyle.stroke.width, 1.4);
+});
+
+test('annotationStyle caches fill-only and stroked polygon variants separately', async () => {
+  const { hooks } = createEnvironment(async () => response([]), { withOl: true });
+
+  hooks.state.baseResolutions = [4, 2, 1, 0.5, 0.25];
+  hooks.state.annotationMeta = {
+    name: 'overlay',
+    path: '/tmp/overlay.db',
+    vector_format: 'mvt',
+    vector_representations: [
+      { id: 'overview', min_zoom: 0, max_zoom: 0, geometry_type: 'polygon' },
+      { id: 'centroids', min_zoom: 1, max_zoom: 1, geometry_type: 'point' },
+      { id: 'full', min_zoom: 2, geometry_type: 'mixed' },
+    ],
+  };
+
+  const feature = {
+    getGeometry() {
+      return {
+        getType() {
+          return 'Polygon';
+        },
+      };
+    },
+  };
+
+  const fillOnlyStyle = hooks.annotationStyle(feature, 1);
+  const strokedStyle = hooks.annotationStyle(feature, 0.25);
+
+  assert.notEqual(fillOnlyStyle, strokedStyle);
+  assert.equal(hooks.state.annotationStyleCache.size, 2);
 });
 
 test('syncLayers resolves before annotation metadata refresh completes', async () => {
