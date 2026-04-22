@@ -1332,6 +1332,42 @@ def test_get_annotations_mvt_cache_reuses_identical_requests_and_keys_by_payload
     assert fields_miss_response.data != revision_miss_response.data
 
 
+def test_query_annotations_for_mvt_fallback_skips_area_sorting(
+    app_alt: TileServer,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The full-geometry fallback path should also skip SQL area ordering."""
+    ann_layer = app_alt.pyramids["default"]["layer-1"]
+    original_query = ann_layer.store.query
+    captured: dict[str, object] = {}
+
+    def missing_area(*_args: object, **_kwargs: object) -> NoReturn:
+        msg = (
+            "Cannot use `min_area` without an area column.\n"
+            "SQLiteStore.add_area_column() can be used to add an area column."
+        )
+        raise ValueError(msg)
+
+    def tracked_query(*args: object, **kwargs: object) -> dict[str, Annotation]:
+        captured["order_by_area"] = kwargs.get("order_by_area")
+        return original_query(*args, **kwargs)
+
+    monkeypatch.setattr(ann_layer.store, "query_mvt_records", missing_area)
+    monkeypatch.setattr(ann_layer.store, "query", tracked_query)
+
+    annotations, prefiltered = app_alt._query_annotations_for_mvt(
+        ann_layer,
+        (0, 0, 4096, 4096),
+        None,
+        {"min_polygon_area": 1.0, "min_line_length": 1.0},
+        "full",
+    )
+
+    assert annotations
+    assert prefiltered is False
+    assert captured["order_by_area"] is False
+
+
 def test_get_annotations_mvt_projects_minimal_properties(
     app_alt: TileServer,
     monkeypatch: pytest.MonkeyPatch,

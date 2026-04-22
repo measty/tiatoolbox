@@ -58,6 +58,17 @@ RNG = np.random.default_rng(0)  # Numpy Random Generator
 # ----------------------------------------------------------------------
 
 
+def trace_sql(store: SQLiteStore, callback: Callable[[], object]) -> str:
+    """Capture SQL executed by a store callback."""
+    statements: list[str] = []
+    store.con.set_trace_callback(statements.append)
+    try:
+        callback()
+    finally:
+        store.con.set_trace_callback(None)
+    return "\n".join(statements)
+
+
 def cell_polygon(
     xy: tuple[Number, Number],
     n_points: int = 20,
@@ -908,6 +919,72 @@ def test_query_min_area_no_area_column(fill_store: Callable) -> None:
     store.remove_area_column()
     with pytest.raises(ValueError, match="without an area column"):
         store.query((0, 0, 1000, 1000), min_area=1)
+
+
+def test_sqlite_query_order_by_area_can_be_disabled() -> None:
+    """Default annotation queries keep area ordering, but hot paths can opt out."""
+    store = SQLiteStore()
+    store.append(
+        Annotation(
+            Polygon.from_bounds(0, 0, 10, 10),
+            properties={"name": "large"},
+        ),
+    )
+    store.append(
+        Annotation(
+            Polygon.from_bounds(0, 0, 5, 5),
+            properties={"name": "small"},
+        ),
+    )
+
+    ordered_sql = trace_sql(store, lambda: store.query((0, 0, 10, 10)))
+    unordered_sql = trace_sql(
+        store,
+        lambda: store.query((0, 0, 10, 10), order_by_area=False),
+    )
+
+    assert "ORDER BY area DESC" in ordered_sql
+    assert "ORDER BY area DESC" not in unordered_sql
+
+
+def test_sqlite_hot_spatial_queries_skip_area_sorting() -> None:
+    """MVT and centroid hot paths should not pay the SQL area sort cost."""
+    store = SQLiteStore(compression=None)
+    store.append(
+        Annotation(
+            Polygon.from_bounds(0, 0, 10, 10),
+            properties={"type": "cell", "score": 0.5},
+        ),
+    )
+
+    centroid_sql = trace_sql(
+        store,
+        lambda: store.query_centroids(
+            (0, 0, 10, 10),
+            geometry_predicate="bbox_intersects",
+        ),
+    )
+    mvt_sql = trace_sql(
+        store,
+        lambda: store.query_mvt_records(
+            (0, 0, 10, 10),
+            geometry_predicate="bbox_intersects",
+            property_fields=("type",),
+        ),
+    )
+    renderable_sql = trace_sql(
+        store,
+        lambda: store.query_renderable_geometries(
+            (0, 0, 10, 10),
+            geometry_predicate="bbox_intersects",
+            min_area=1,
+            min_bbox_size=1,
+        ),
+    )
+
+    assert "ORDER BY area DESC" not in centroid_sql
+    assert "ORDER BY area DESC" not in mvt_sql
+    assert "ORDER BY area DESC" not in renderable_sql
 
 
 def test_sqlite_query_renderable_geometries_prefilter() -> None:

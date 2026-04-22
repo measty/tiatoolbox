@@ -2904,6 +2904,7 @@ class SQLiteStore(AnnotationStore):
         index_warning: bool = False,
         min_area_keep_non_polygons: bool = False,
         min_bbox_size: float | None = None,
+        order_by_area: bool = True,
     ) -> sqlite3.Cursor:
         """Common query construction logic for `query` and `iquery`.
 
@@ -2948,6 +2949,9 @@ class SQLiteStore(AnnotationStore):
             distance (float):
                 Distance used when performing a distance based query.
                 E.g. "centers_within_k" geometry predicate.
+            order_by_area (bool):
+                Whether to append ``ORDER BY area DESC`` when the store
+                has an ``area`` column. Defaults to True.
 
         Returns:
             sqlite3.Cursor:
@@ -3024,8 +3028,8 @@ class SQLiteStore(AnnotationStore):
         # Warn if the query is not using an index
         if index_warning:
             self._warn_if_query_not_using_index(cur, query_string, query_parameters)
-        # if area column exists, sort annotations by area
-        if "area" in self.table_columns:
+        # if area column exists, sort annotations by area when required
+        if order_by_area and "area" in self.table_columns:
             query_string += "\nORDER BY area DESC"
         cur.execute(query_string, query_parameters)
         return cur
@@ -3114,6 +3118,8 @@ class SQLiteStore(AnnotationStore):
         geometry_predicate: str = "intersects",
         min_area: float | None = None,
         distance: float = 0,
+        *,
+        order_by_area: bool = True,
     ) -> dict[str, Annotation]:
         """Runs Query."""
         query_geometry = geometry
@@ -3124,6 +3130,7 @@ class SQLiteStore(AnnotationStore):
             where=where,
             min_area=min_area,
             distance=distance,
+            order_by_area=order_by_area,
         )
         if callable(where):
             return {
@@ -3186,6 +3193,7 @@ class SQLiteStore(AnnotationStore):
             min_area_keep_non_polygons=min_bbox_size is not None,
             min_bbox_size=min_bbox_size,
             distance=distance,
+            order_by_area=False,
         )
 
         rows = cur.fetchall()
@@ -3255,6 +3263,7 @@ class SQLiteStore(AnnotationStore):
             min_area_keep_non_polygons=True,
             min_bbox_size=min_bbox_size,
             distance=distance,
+            order_by_area=False,
         )
         if callable(where):
             return {
@@ -3291,6 +3300,7 @@ class SQLiteStore(AnnotationStore):
             geometry_predicate=geometry_predicate,
             where=where,
             distance=distance,
+            order_by_area=False,
         )
         rows = cur.fetchall()
         centroids: dict[str, Annotation] = {}

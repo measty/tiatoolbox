@@ -975,6 +975,7 @@ class TileServer(Flask):
             geometry=tile_bounds,
             where=where,
             geometry_predicate="bbox_intersects",
+            order_by_area=False,
         )
         return (
             [
