@@ -9,7 +9,9 @@ import math
 import os
 import re
 from collections import defaultdict
-from datetime import UTC, datetime
+from datetime import datetime, timezone
+
+UTC = timezone.utc
 from numbers import Number
 from pathlib import Path
 from typing import TYPE_CHECKING

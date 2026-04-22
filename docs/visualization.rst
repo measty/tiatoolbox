@@ -55,6 +55,30 @@ The OpenLayers frontend is currently the default launch path for ``tiatoolbox vi
 
 Some Bokeh-era features are not yet available in the OpenLayers frontend, including model-running controls, dual-window workflows, graph overlays, and the full set of advanced annotation rendering options. Those remain follow-up migration work rather than regressions hidden from the user.
 
+Benchmarking Viewer Responsiveness
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+A small local benchmark harness is available for repeatable backend and proxy
+viewer-responsiveness measurements. Run it from the repository root with one or
+more explicit slide and overlay pairs:
+
+.. code-block:: console
+
+    python benchmarks/viewer_responsiveness.py \
+        --case tcga_large /path/to/slide.svs /path/to/overlay.db \
+        --json-out /tmp/viewer_benchmark.json
+
+Repeat ``--case NAME SLIDE OVERLAY`` to benchmark multiple datasets in one JSON
+report. When no explicit ``--tile`` values are provided, the harness samples
+evenly spaced tile positions for each advertised annotation representation and
+benchmarks a dense tile at representative zoom levels.
+
+The report is structured JSON and includes session setup, slide and overlay load
+timing, annotation metadata timing, and cold and warm annotation MVT tile
+requests. The first-visible-overlay value is a backend proxy based on the first
+metadata request plus the first selected MVT response. Browser parse, draw, and
+paint timing remain out of scope.
+
 .. _interface:
 
 2. General UI Controls and Options

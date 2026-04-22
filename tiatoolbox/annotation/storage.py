@@ -59,11 +59,15 @@ from typing import (
     TYPE_CHECKING,
     Any,
     ClassVar,
-    Self,
     TypeVar,
     cast,
     overload,
 )
+
+try:
+    from typing import Self
+except ImportError:  # pragma: no cover
+    from typing_extensions import Self
 
 import numpy as np
 import pandas as pd
