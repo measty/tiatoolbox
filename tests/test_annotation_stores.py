@@ -913,6 +913,30 @@ def test_add_area_column(fill_store: Callable) -> None:
     assert "area" not in store.indexes()
 
 
+def test_ensure_area_column_is_idempotent(fill_store: Callable) -> None:
+    """Ensuring the area column should be safe for fresh and legacy stores."""
+    _, store = fill_store(SQLiteStore, ":memory:")
+    store.remove_area_column()
+
+    assert store.ensure_area_column() is True
+    assert store.has_area_column() is True
+    assert "area" in store.indexes()
+    assert store.ensure_area_column() is False
+
+
+def test_ensure_area_column_recreates_missing_index(fill_store: Callable) -> None:
+    """Legacy stores with the area column but no index should be repaired."""
+    _, store = fill_store(SQLiteStore, ":memory:")
+    store.create_index("area", '"area"')
+    store.commit()
+    store.drop_index("area")
+    store.commit()
+
+    assert "area" not in store.indexes()
+    assert store.ensure_area_column() is False
+    assert "area" in store.indexes()
+
+
 def test_query_min_area_no_area_column(fill_store: Callable) -> None:
     """Test querying with a minimum area when there is no area column."""
     _, store = fill_store(SQLiteStore, ":memory:")

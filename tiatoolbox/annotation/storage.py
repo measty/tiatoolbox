@@ -3016,7 +3016,8 @@ class SQLiteStore(AnnotationStore):
         elif min_area is not None:
             msg = (
                 "Cannot use `min_area` without an area column.\n"
-                "SQLiteStore.add_area_column() can be used to add an area column."
+                "Run `SQLiteStore.ensure_area_column()` to prepare the store, "
+                "or `SQLiteStore.add_area_column()` for a one-off migration."
             )
             raise ValueError(
                 msg,
@@ -4191,6 +4192,33 @@ class SQLiteStore(AnnotationStore):
         """Get a list of columns in the annotations table."""
         cur = self.con.execute("PRAGMA table_info(annotations)")
         return [row[1] for row in cur.fetchall()]
+
+    def has_area_column(self: SQLiteStore) -> bool:
+        """Return whether the optional area column is available."""
+        return "area" in self.table_columns
+
+    def ensure_area_column(self: SQLiteStore, *, mk_index: bool = True) -> bool:
+        """Ensure the store has the area column needed for coarse filtering.
+
+        Args:
+            mk_index (bool):
+                Whether to create the standard ``area`` index when the column is
+                added or when a legacy store already has the column but is
+                missing the index.
+
+        Returns:
+            bool:
+                ``True`` when the column was added, otherwise ``False``.
+        """
+        if not self.has_area_column():
+            self.add_area_column(mk_index=mk_index)
+            return True
+
+        if mk_index and "area" not in self.indexes():
+            self.create_index("area", '"area"')
+            self.con.commit()
+
+        return False
 
     def add_area_column(self: SQLiteStore, *, mk_index: bool = True) -> None:
         """Add a column to store the area of the geometry."""

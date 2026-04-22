@@ -347,6 +347,19 @@ If you have a collection of raw centroids or detection contours with correspondi
     db.create_index("area", '"area"')  # create index on area for faster querying
     db.dump("path/to/annotations.db")
 
+If you already have a legacy SQLite annotation store and want to prepare it for
+large-overlay viewing, run the following once before loading it in the viewer:
+
+::
+
+    db = SQLiteStore("path/to/annotations.db")
+    db.ensure_area_column()
+    db.close()
+
+This adds the optional ``area`` column when it is missing and recreates the
+standard index if needed, enabling the coarse-scale prefiltering path used for
+large overlays.
+
 Note that in the above we saved the 'class' property as 'type' - this is because the UI treats the 'type' property as a special property, and will allow you to toggle annotations of a specific type on/off, in addition to other functionality.
 
 Graphs Example

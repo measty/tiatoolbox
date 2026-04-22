@@ -167,6 +167,7 @@ class TileServer(Flask):
         self.annotation_revisions = {}
         self.annotation_metadata_cache = {}
         self.annotation_mvt_cache = OrderedDict()
+        self.annotation_prefilter_warnings: set[tuple[str, str, str]] = set()
         self.project_config = self._load_project_config(project_config)
 
         # Generic layer names if none provided.
@@ -194,6 +195,12 @@ class TileServer(Flask):
                 self.pyramids["default"][key] = ZoomifyGenerator(layer)
             else:
                 self.pyramids["default"][key] = layer  # it's an AnnotationTileGenerator
+                if isinstance(layer.store, SQLiteStore):
+                    self._warn_annotation_coarse_prefilter_unavailable(
+                        "default",
+                        key,
+                        layer.store,
+                    )
 
             if i == 0:
                 meta = layer.info  # base slide info
@@ -463,6 +470,9 @@ class TileServer(Flask):
                 "vector_representations": vector_representations,
                 "geojson_url": "/tileserver/annotations/geojson",
                 "geojson_policy": geojson_policy,
+                "coarse_prefilter": self._get_annotation_coarse_prefilter_status(
+                    pyramid.store,
+                ),
             }
         else:
             kind = "slide" if name == "slide" else "raster"
@@ -896,6 +906,84 @@ class TileServer(Flask):
         }
 
     @staticmethod
+    def _get_annotation_coarse_prefilter_status(
+        store: AnnotationStore,
+    ) -> dict[str, object]:
+        """Describe whether coarse-scale polygon prefiltering is available."""
+        if not isinstance(store, SQLiteStore):
+            return {
+                "available": False,
+                "reason": "store_not_sqlite",
+                "message": None,
+                "prepare_hint": None,
+                "store_path": None,
+            }
+
+        if store.has_area_column():
+            return {
+                "available": True,
+                "reason": None,
+                "message": None,
+                "prepare_hint": None,
+                "store_path": str(store.path),
+            }
+
+        if store.path.is_file():
+            prepare_hint = (
+                "from tiatoolbox.annotation.storage import SQLiteStore; "
+                f"store = SQLiteStore({str(store.path)!r}); "
+                "store.ensure_area_column(); store.close()"
+            )
+        else:
+            prepare_hint = None
+
+        return {
+            "available": False,
+            "reason": "missing_area_column",
+            "message": (
+                "This SQLite overlay is missing the optional 'area' column used "
+                "for coarse-scale polygon prefiltering. Low-zoom polygon tiles "
+                "will use a slower fallback path until the store is prepared."
+            ),
+            "prepare_hint": prepare_hint,
+            "store_path": str(store.path),
+        }
+
+    def _warn_annotation_coarse_prefilter_unavailable(
+        self: TileServer,
+        session_id: str,
+        layer_name: str,
+        store: SQLiteStore,
+    ) -> None:
+        """Log a one-time warning for legacy stores missing area support."""
+        status = self._get_annotation_coarse_prefilter_status(store)
+        if status.get("reason") != "missing_area_column":
+            return
+
+        warning_key = (session_id, layer_name, str(store.path))
+        if warning_key in self.annotation_prefilter_warnings:
+            return
+        self.annotation_prefilter_warnings.add(warning_key)
+
+        prepare_hint = status.get("prepare_hint")
+        if isinstance(prepare_hint, str) and prepare_hint:
+            prepare_text = f" Prepare it once with: {prepare_hint}"
+        else:
+            prepare_text = (
+                " Reopen the store from disk and call "
+                "`SQLiteStore.ensure_area_column()` before interactive viewing."
+            )
+
+        logger.warning(
+            "Annotation overlay %s (%s) is missing the 'area' column used for "
+            "coarse-scale polygon prefiltering. Low-zoom polygon tiles will use "
+            "a slower fallback path until the store is prepared.%s",
+            layer_name,
+            store.path,
+            prepare_text,
+        )
+
+    @staticmethod
     def _annotation_geojson_debug_requested() -> bool:
         """Return whether the caller explicitly requested GeoJSON debug mode."""
         return (
@@ -1279,6 +1367,9 @@ class TileServer(Flask):
             for key, value in self.annotation_metadata_cache.items()
             if key[0] != session_id
         }
+        self.annotation_prefilter_warnings = {
+            key for key in self.annotation_prefilter_warnings if key[0] != session_id
+        }
         return "done"
 
     def change_slide(self: TileServer) -> str:
@@ -1523,9 +1614,14 @@ class TileServer(Flask):
             sq.dump(tmp_path)
             sq = SQLiteStore(tmp_path)
 
-        for layer in self.pyramids[session_id].values():
+        for layer_name, layer in self.pyramids[session_id].items():
             if isinstance(layer, AnnotationTileGenerator):
                 layer.store = sq
+                self._warn_annotation_coarse_prefilter_unavailable(
+                    session_id,
+                    layer_name,
+                    sq,
+                )
                 self._bump_annotation_revision(session_id)
                 logger.info("Loaded %d annotations.", len(sq))
                 types = self.update_types(sq)
@@ -1538,6 +1634,11 @@ class TileServer(Flask):
             overlap=self.overlaps[session_id],
         )
         self.layers[session_id]["overlay"] = self.pyramids[session_id]["overlay"]
+        self._warn_annotation_coarse_prefilter_unavailable(
+            session_id,
+            "overlay",
+            sq,
+        )
         self._bump_annotation_revision(session_id)
         logger.info(
             "Loaded %d annotations.", len(self.pyramids[session_id]["overlay"].store)

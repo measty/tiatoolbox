@@ -555,6 +555,39 @@ def test_change_overlay(  # noqa: PLR0915
         assert layer.wsi.info.file_path == tiff_path
 
 
+def test_change_overlay_warns_when_legacy_store_missing_area(
+    empty_app: TileServer,
+    fill_store: Callable,
+    track_tmp_path: Path,
+    remote_sample: Callable,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Loading a legacy SQLite overlay should point to the repair path."""
+    store_path = track_tmp_path / "legacy-overlay.db"
+    _, store = fill_store(SQLiteStore, store_path)
+    store.remove_area_column()
+    store.close()
+
+    with empty_app.test_client() as client:
+        setup_app(client)
+        response = client.put(
+            "/tileserver/slide",
+            data={"slide_path": safe_str(remote_sample("svs-1-small"))},
+        )
+        assert response.status_code == 200
+
+        with caplog.at_level(logging.WARNING):
+            response = client.put(
+                "/tileserver/overlay",
+                data={"overlay_path": safe_str(store_path)},
+            )
+
+    assert response.status_code == 200
+    assert "missing the 'area' column used for coarse-scale polygon prefiltering" in caplog.text
+    assert "store.ensure_area_column(); store.close()" in caplog.text
+    assert str(store_path) in caplog.text
+
+
 def test_commit(
     empty_app: TileServer, track_tmp_path: Path, remote_sample: Callable
 ) -> None:
@@ -983,6 +1016,8 @@ def test_get_layers_metadata(app: TileServer) -> None:
         assert overlay["detail_url"] == "/tileserver/annotations/detail"
         assert overlay["geojson_url"] == "/tileserver/annotations/geojson"
         assert overlay["geojson_policy"]["auto_feature_limit"] > 0
+        assert overlay["coarse_prefilter"]["available"] is True
+        assert overlay["coarse_prefilter"]["reason"] is None
         assert overlay["vector_revision"] == 0
         assert overlay["default_vector_representation"] == "full"
         assert overlay["vector_representation_mode"] == "zoom"
@@ -995,6 +1030,38 @@ def test_get_layers_metadata(app: TileServer) -> None:
                 "vector_url": "/tileserver/layer/overlay/default/mvt/{z}/{x}/{y}.pbf",
             },
         ]
+
+
+def test_get_layers_metadata_reports_missing_coarse_prefilter_support(
+    fill_store: Callable,
+    track_tmp_path: Path,
+) -> None:
+    """Legacy SQLite overlays should advertise how to prepare coarse filtering."""
+    sample_slide = WSIReader.open(np.zeros((1000, 1000, 3), dtype=np.uint8))
+    store_path = track_tmp_path / "legacy-overlay.db"
+    _, sample_store = fill_store(SQLiteStore, store_path)
+    sample_store.remove_area_column()
+
+    app = TileServer(
+        "Testing TileServer",
+        [
+            sample_slide,
+            sample_store,
+        ],
+    )
+    app.config.from_mapping({"TESTING": True})
+
+    with app.test_client() as client:
+        response = client.get("/tileserver/layers")
+
+    assert response.status_code == 200
+    overlay = next(layer for layer in response.get_json() if layer["name"] == "layer-1")
+    assert overlay["coarse_prefilter"]["available"] is False
+    assert overlay["coarse_prefilter"]["reason"] == "missing_area_column"
+    assert "slower fallback path" in overlay["coarse_prefilter"]["message"]
+    assert "store.ensure_area_column(); store.close()" in overlay["coarse_prefilter"]["prepare_hint"]
+    assert overlay["coarse_prefilter"]["store_path"] == str(store_path)
+    sample_store.close()
 
 
 def test_get_layers_metadata_uses_zoom_representations_for_dense_overlay(
