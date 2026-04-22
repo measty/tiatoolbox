@@ -495,8 +495,7 @@ test('annotationStyle skips dense polygon strokes until higher zooms', async () 
     path: '/tmp/overlay.db',
     vector_format: 'mvt',
     vector_representations: [
-      { id: 'overview', min_zoom: 0, max_zoom: 0, geometry_type: 'polygon' },
-      { id: 'centroids', min_zoom: 1, max_zoom: 1, geometry_type: 'point' },
+      { id: 'overview', min_zoom: 0, max_zoom: 1, geometry_type: 'polygon' },
       { id: 'full', min_zoom: 2, geometry_type: 'mixed' },
     ],
   };
@@ -529,8 +528,7 @@ test('annotationStyle caches fill-only and stroked polygon variants separately',
     path: '/tmp/overlay.db',
     vector_format: 'mvt',
     vector_representations: [
-      { id: 'overview', min_zoom: 0, max_zoom: 0, geometry_type: 'polygon' },
-      { id: 'centroids', min_zoom: 1, max_zoom: 1, geometry_type: 'point' },
+      { id: 'overview', min_zoom: 0, max_zoom: 1, geometry_type: 'polygon' },
       { id: 'full', min_zoom: 2, geometry_type: 'mixed' },
     ],
   };
@@ -550,6 +548,51 @@ test('annotationStyle caches fill-only and stroked polygon variants separately',
 
   assert.notEqual(fillOnlyStyle, strokedStyle);
   assert.equal(hooks.state.annotationStyleCache.size, 2);
+});
+
+test('annotationStyle makes overview polygons density-aware from count', async () => {
+  const { hooks } = createEnvironment(async () => response([]), { withOl: true });
+
+  hooks.state.baseResolutions = [4, 2, 1, 0.5, 0.25];
+  hooks.state.annotationMeta = {
+    name: 'overlay',
+    path: '/tmp/overlay.db',
+    vector_format: 'mvt',
+    vector_representations: [
+      { id: 'overview', min_zoom: 0, max_zoom: 1, geometry_type: 'polygon' },
+      { id: 'full', min_zoom: 2, geometry_type: 'mixed' },
+    ],
+  };
+
+  function makeFeature(count) {
+    return {
+      get(name) {
+        return name === 'count' ? count : undefined;
+      },
+      getGeometry() {
+        return {
+          getType() {
+            return 'Polygon';
+          },
+        };
+      },
+    };
+  }
+
+  const sparseStyle = hooks.annotationStyle(makeFeature(1), 2);
+  const denseStyle = hooks.annotationStyle(makeFeature(63), 2);
+
+  const sparseComponents = sparseStyle.fill.color.match(/\d+(?:\.\d+)?/g).map(Number);
+  const denseComponents = denseStyle.fill.color.match(/\d+(?:\.\d+)?/g).map(Number);
+
+  assert.notEqual(sparseStyle.fill.color, denseStyle.fill.color);
+  assert.equal(sparseComponents[3], 0.128);
+  assert.equal(denseComponents[3], 0.5760000000000001);
+  assert.ok(sparseComponents[0] > denseComponents[0]);
+  assert.ok(sparseComponents[1] > denseComponents[1]);
+  assert.ok(sparseComponents[2] > denseComponents[2]);
+  assert.equal(sparseStyle.stroke, undefined);
+  assert.equal(denseStyle.stroke, undefined);
 });
 
 test('createAnnotationLayer refuses unsafe GeoJSON fallback for large overlays', async () => {

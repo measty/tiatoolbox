@@ -1068,14 +1068,10 @@ def test_get_layers_metadata_uses_zoom_representations_for_dense_overlay(
     app_alt: TileServer,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Dense SQLite overlays should advertise overview, centroid, and full MVT paths."""
+    """Dense SQLite overlays should advertise overview tiles until full geometry takes over."""
     monkeypatch.setattr(
         "tiatoolbox.visualization.tileserver.ANNOTATION_MVT_LOW_ZOOM_POINT_MIN_FEATURES",
         10,
-    )
-    monkeypatch.setattr(
-        "tiatoolbox.visualization.tileserver.ANNOTATION_MVT_CENTROID_MAX_DOWNSAMPLE",
-        2.0,
     )
     monkeypatch.setattr(
         "tiatoolbox.visualization.tileserver.ANNOTATION_MVT_FULL_GEOMETRY_MAX_DOWNSAMPLE",
@@ -1091,22 +1087,15 @@ def test_get_layers_metadata_uses_zoom_representations_for_dense_overlay(
 
         assert [representation["id"] for representation in representations] == [
             "overview",
-            "centroids",
             "full",
         ]
         assert representations[0]["geometry_type"] == "polygon"
-        assert representations[0]["max_zoom"] == 0
+        assert representations[0]["max_zoom"] == 1
         assert representations[0]["vector_url"].endswith(
             "/mvt/overview/{z}/{x}/{y}.pbf",
         )
-        assert representations[1]["geometry_type"] == "point"
-        assert representations[1]["min_zoom"] == 1
-        assert representations[1]["max_zoom"] == 1
+        assert representations[1]["min_zoom"] == 2
         assert representations[1]["vector_url"].endswith(
-            "/mvt/centroids/{z}/{x}/{y}.pbf",
-        )
-        assert representations[2]["min_zoom"] == 2
-        assert representations[2]["vector_url"].endswith(
             "/mvt/{z}/{x}/{y}.pbf",
         )
 

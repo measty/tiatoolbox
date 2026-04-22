@@ -949,16 +949,50 @@
     elements.legend.classList.add("empty");
   }
 
+  function overviewDensityFactor(feature, resolution) {
+    const zoom = zoomForResolution(resolution);
+    if (zoom === null || !state.annotationMeta) {
+      return null;
+    }
+
+    const representation = selectAnnotationRepresentation(state.annotationMeta, zoom);
+    if (!representation || representation.id !== "overview") {
+      return null;
+    }
+
+    if (!feature || typeof feature.get !== "function") {
+      return 0;
+    }
+
+    const count = Number(feature.get("count"));
+    if (!Number.isFinite(count) || count <= 1) {
+      return 0;
+    }
+
+    return Math.max(0, Math.min(1, Math.log2(count + 1) / 6));
+  }
+
+  function blendRgb(rgb, target, ratio) {
+    return rgb.map((component, index) =>
+      Math.round(component + (target[index] - component) * ratio),
+    );
+  }
+
   function annotationStyle(feature, resolution) {
     const color = featureColor(feature);
     const rgb = toRgb(color);
+    const densityFactor = overviewDensityFactor(feature, resolution);
+    const fillRgb =
+      densityFactor === null
+        ? rgb
+        : blendRgb(rgb, [255, 255, 255], 0.65 * (1 - densityFactor));
     const opacity = Number(elements.annotationOpacity.value);
     const strokeAlpha = Math.min(1, opacity + 0.2);
-    const fillAlpha = opacity * 0.28;
+    const fillAlpha = opacity * (densityFactor === null ? 0.28 : 0.16 + densityFactor * 0.56);
     const geometryType = feature.getGeometry().getType();
     const polygonStrokeEnabled =
       !geometryType.includes("Polygon") || shouldRenderPolygonStroke(resolution);
-    const cacheKey = `${geometryType}:${rgb.join(",")}:${strokeAlpha.toFixed(3)}:${fillAlpha.toFixed(3)}:${polygonStrokeEnabled ? "stroke" : "fill"}`;
+    const cacheKey = `${geometryType}:${fillRgb.join(",")}:${strokeAlpha.toFixed(3)}:${fillAlpha.toFixed(3)}:${polygonStrokeEnabled ? "stroke" : "fill"}`;
 
     if (state.annotationStyleCache.has(cacheKey)) {
       return state.annotationStyleCache.get(cacheKey);
@@ -969,7 +1003,7 @@
       style = new ol.style.Style({
         image: new ol.style.Circle({
           radius: 4,
-          fill: new ol.style.Fill({ color: toRgba(rgb, fillAlpha) }),
+          fill: new ol.style.Fill({ color: toRgba(fillRgb, fillAlpha) }),
           stroke: new ol.style.Stroke({ color: toRgba(rgb, strokeAlpha), width: 1.2 }),
         }),
       });
@@ -990,7 +1024,7 @@
 
     style = new ol.style.Style({
       fill: new ol.style.Fill({
-        color: toRgba(rgb, fillAlpha),
+        color: toRgba(fillRgb, fillAlpha),
       }),
       stroke: polygonStrokeEnabled
         ? new ol.style.Stroke({

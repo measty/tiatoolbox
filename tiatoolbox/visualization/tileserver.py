@@ -90,7 +90,6 @@ ANNOTATION_MVT_OVERVIEW_REPRESENTATION = "overview"
 ANNOTATION_MVT_FULL_REPRESENTATION = "full"
 ANNOTATION_MVT_CENTROID_REPRESENTATION = "centroids"
 ANNOTATION_MVT_LOW_ZOOM_POINT_MIN_FEATURES = 5000
-ANNOTATION_MVT_CENTROID_MAX_DOWNSAMPLE = 16.0
 ANNOTATION_MVT_FULL_GEOMETRY_MAX_DOWNSAMPLE = 8.0
 ANNOTATION_MVT_OVERVIEW_GRID_PIXEL_SIZE = 24
 ANNOTATION_TILE_DEFAULT_PROPERTY_FIELDS = ("type",)
@@ -825,22 +824,18 @@ class TileServer(Flask):
         if len(pyramid.store) < ANNOTATION_MVT_LOW_ZOOM_POINT_MIN_FEATURES:
             return [full_representation]
 
-        centroid_min_zoom = self._get_annotation_min_zoom_for_downsample(
-            pyramid,
-            ANNOTATION_MVT_CENTROID_MAX_DOWNSAMPLE,
-        )
         full_geometry_min_zoom = self._get_annotation_full_geometry_min_zoom(pyramid)
         if full_geometry_min_zoom <= 0:
             return [full_representation]
 
         representations: list[dict[str, str | int]] = []
-        if centroid_min_zoom > 0:
+        if full_geometry_min_zoom > 0:
             representations.append(
                 {
                     "id": ANNOTATION_MVT_OVERVIEW_REPRESENTATION,
                     "geometry_type": "polygon",
                     "min_zoom": 0,
-                    "max_zoom": centroid_min_zoom - 1,
+                    "max_zoom": full_geometry_min_zoom - 1,
                     "vector_format": "mvt",
                     "vector_url": self._annotation_mvt_url(
                         name,
@@ -850,23 +845,7 @@ class TileServer(Flask):
                 },
             )
 
-        if full_geometry_min_zoom > centroid_min_zoom:
-            representations.append(
-                {
-                    "id": ANNOTATION_MVT_CENTROID_REPRESENTATION,
-                    "geometry_type": "point",
-                    "min_zoom": centroid_min_zoom,
-                    "max_zoom": full_geometry_min_zoom - 1,
-                    "vector_format": "mvt",
-                    "vector_url": self._annotation_mvt_url(
-                        name,
-                        session_id,
-                        ANNOTATION_MVT_CENTROID_REPRESENTATION,
-                    ),
-                },
-            )
-
-        full_representation["min_zoom"] = max(centroid_min_zoom, full_geometry_min_zoom)
+        full_representation["min_zoom"] = full_geometry_min_zoom
         return [*representations, full_representation]
 
     @staticmethod
