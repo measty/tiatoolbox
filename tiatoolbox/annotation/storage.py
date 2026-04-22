@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import contextlib
 import copy
+import hashlib
 import io
 import json
 import os
@@ -3626,6 +3627,31 @@ class SQLiteStore(AnnotationStore):
         return f'$."{escaped}"'
 
     @staticmethod
+    def _sqlite_string_literal(value: str) -> str:
+        """Return a safely quoted SQLite string literal."""
+        return "'" + value.replace("'", "''") + "'"
+
+    @classmethod
+    def _property_value_sql(cls, prop: str) -> str:
+        """Return an inline SQLite expression for a top-level property value."""
+        path = cls._json_path_for_property(prop)
+        return f"json_extract(properties, {cls._sqlite_string_literal(path)})"
+
+    @classmethod
+    def _property_type_sql(cls, prop: str) -> str:
+        """Return an inline SQLite expression for a top-level property type."""
+        path = cls._json_path_for_property(prop)
+        return f"json_type(properties, {cls._sqlite_string_literal(path)})"
+
+    @staticmethod
+    def _property_index_name(prop: str) -> str:
+        """Return a stable SQLite index name for a property metadata index."""
+        stem = "".join(char if char.isalnum() else "_" for char in prop).strip("_")
+        stem = stem[:24] or "property"
+        digest = hashlib.sha256(prop.encode("utf-8")).hexdigest()[:12]
+        return f"prop_idx_{stem}_{digest}"
+
+    @staticmethod
     def _coerce_sqlite_json_value(
         value: object,
         value_type: str | None,
@@ -3686,20 +3712,20 @@ class SQLiteStore(AnnotationStore):
         where: Predicate | None = None,
     ) -> set[Properties]:
         """Return distinct values for a top-level annotation property."""
-        query_parameters: dict[str, object] = {
-            "property_path": self._json_path_for_property(prop),
-        }
+        query_parameters: dict[str, object] = {}
         where_sql = self._property_query_where_sql(where, query_parameters)
         if where_sql is None:
             msg = "Callable predicates are not supported for property_values."
             raise TypeError(msg)
 
-        query = """
+        value_sql = self._property_value_sql(prop)
+        type_sql = self._property_type_sql(prop)
+        query = f"""
             SELECT DISTINCT
-                   json_extract(properties, :property_path),
-                   json_type(properties, :property_path)
+                   {value_sql},
+                   {type_sql}
               FROM annotations
-        """
+        """  # noqa: S608
         if where_sql:
             query += f"\nWHERE {where_sql}"
         cur = self.con.execute(query, query_parameters)
@@ -3714,23 +3740,21 @@ class SQLiteStore(AnnotationStore):
         where: Predicate | None = None,
     ) -> dict[str, Any]:
         """Return a compact summary for a top-level annotation property."""
-        query_parameters: dict[str, object] = {
-            "property_path": self._json_path_for_property(prop),
-        }
+        query_parameters: dict[str, object] = {}
         where_sql = self._property_query_where_sql(where, query_parameters)
         if where_sql is None:
             msg = "Callable predicates are not supported for property_summary."
             raise TypeError(msg)
 
-        value_sql = "json_extract(properties, :property_path)"
-        type_sql = "json_type(properties, :property_path)"
+        value_sql = self._property_value_sql(prop)
+        type_sql = self._property_type_sql(prop)
         predicates = [f"{type_sql} IS NOT NULL", f"{value_sql} IS NOT NULL"]
         if where_sql:
             predicates.append(where_sql)
         predicate_sql = " AND ".join(f"({predicate})" for predicate in predicates)
 
-        type_query = """
-            SELECT DISTINCT json_type(properties, :property_path)
+        type_query = f"""
+            SELECT DISTINCT {type_sql}
               FROM annotations
              WHERE
         """ + predicate_sql  # noqa: S608
@@ -3740,13 +3764,13 @@ class SQLiteStore(AnnotationStore):
             return {"kind": "empty", "values": []}
 
         if value_types <= {"integer", "real", "true", "false"}:
-            summary_query = """
+            summary_query = f"""
                 SELECT
-                    MIN(json_extract(properties, :property_path)),
-                    MAX(json_extract(properties, :property_path))
+                    MIN({value_sql}),
+                    MAX({value_sql})
                   FROM annotations
                  WHERE
-            """ + predicate_sql
+            """ + predicate_sql  # noqa: S608
             min_value, max_value = self.con.execute(
                 summary_query,
                 query_parameters,
@@ -3757,10 +3781,10 @@ class SQLiteStore(AnnotationStore):
                 "max": max_value,
             }
 
-        values_query = """
+        values_query = f"""
             SELECT DISTINCT
-                   json_extract(properties, :property_path),
-                   json_type(properties, :property_path)
+                   {value_sql},
+                   {type_sql}
               FROM annotations
              WHERE
         """ + predicate_sql  # noqa: S608
@@ -3773,6 +3797,48 @@ class SQLiteStore(AnnotationStore):
             "kind": "categorical",
             "values": sorted(str(value) for value in values),
         }
+
+    def create_property_index(
+        self: SQLiteStore,
+        prop: str,
+        *,
+        name: str | None = None,
+        analyze: bool = True,
+    ) -> str:
+        """Create a recommended expression index for property filters and summaries.
+
+        The generated composite index matches the inline JSON expressions used by
+        ``property_values()`` and ``property_summary()`` and also helps equality
+        filters on the same property.
+
+        Args:
+            prop (str):
+                Top-level property name to index.
+            name (str | None):
+                Optional explicit SQLite index name.
+            analyze (bool):
+                Whether to run the ``ANALYZE`` command after creating the index.
+
+        Returns:
+            str:
+                The created index name.
+
+        """
+        if sqlite3.sqlite_version_info < (3, 9, 0):
+            msg = "Requires sqlite version 3.9.0 or higher."
+            raise OSError(msg)
+
+        index_name = name or self._property_index_name(prop)
+        value_sql = self._property_value_sql(prop)
+        type_sql = self._property_type_sql(prop)
+
+        cur = self.con.cursor()
+        cur.execute(
+            f"CREATE INDEX {index_name} ON annotations({value_sql}, {type_sql})",
+        )
+        if analyze:
+            cur.execute(f"ANALYZE {index_name}")
+        return index_name
 
     def __len__(self: SQLiteStore) -> int:
         """Return number of annotations in the store."""

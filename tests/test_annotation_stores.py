@@ -638,13 +638,19 @@ def test_sqlite_property_metadata_queries() -> None:
         [
             Annotation(Point(0, 0), properties={"class": 1, "label": "a"}),
             Annotation(Point(1, 1), properties={"class": 2, "label": "b"}),
-            Annotation(Point(2, 2), properties={}),
+            Annotation(
+                Point(2, 2),
+                properties={'path"name': "quoted", "path\\segment": "escaped"},
+            ),
+            Annotation(Point(3, 3), properties={}),
         ],
     )
 
-    assert store.property_names() == {"class", "label"}
+    assert store.property_names() == {"class", "label", 'path"name', "path\\segment"}
     assert store.property_names(where="props['class'] == 1") == {"class", "label"}
     assert store.property_values("class") == {1, 2, None}
+    assert store.property_values('path"name') == {"quoted", None}
+    assert store.property_values("path\\segment") == {"escaped", None}
     assert store.property_summary("class") == {
         "kind": "numeric",
         "min": 1,
@@ -654,6 +660,10 @@ def test_sqlite_property_metadata_queries() -> None:
         "kind": "categorical",
         "values": ["a", "b"],
     }
+    assert store.property_summary('path"name') == {
+        "kind": "categorical",
+        "values": ["quoted"],
+    }
     assert store.property_summary("missing") == {"kind": "empty", "values": []}
 
 
@@ -661,7 +671,46 @@ def test_sqlite_store_indexes(fill_store: Callable, track_tmp_path: Path) -> Non
     """Test getting a list of index names."""
     _, store = fill_store(SQLiteStore, track_tmp_path / "polygon.db")
     store.create_index("test_index", "props['class']")
+    property_index = store.create_property_index("class", analyze=False)
     assert "test_index" in store.indexes()
+    assert property_index in store.indexes()
+
+
+def test_sqlite_property_index_supports_summary_and_filter_queries() -> None:
+    """Test property indexes line up with metadata and filter query expressions."""
+    store = SQLiteStore()
+    store.append_many(
+        [
+            Annotation(Point(0, 0), properties={"class": 1}),
+            Annotation(Point(1, 1), properties={"class": 2}),
+            Annotation(Point(2, 2), properties={"class": 2}),
+            Annotation(Point(3, 3), properties={}),
+        ],
+    )
+    index_name = store.create_property_index("class", analyze=False)
+    value_sql = store._property_value_sql("class")
+    type_sql = store._property_type_sql("class")
+
+    values_plan = store.con.execute(
+        f"EXPLAIN QUERY PLAN SELECT DISTINCT {value_sql}, {type_sql} FROM annotations",  # noqa: S608
+    ).fetchall()
+    assert any(index_name in str(row[-1]) for row in values_plan)
+
+    summary_query = (
+        "EXPLAIN QUERY PLAN "  # noqa: S608
+        f"SELECT MIN({value_sql}), MAX({value_sql}) FROM annotations "
+        f"WHERE ({type_sql} IS NOT NULL) AND ({value_sql} IS NOT NULL)"
+    )
+    summary_plan = store.con.execute(summary_query).fetchall()
+    assert any(index_name in str(row[-1]) for row in summary_plan)
+
+    filter_query = (
+        "EXPLAIN QUERY PLAN "  # noqa: S608
+        f"SELECT key FROM annotations WHERE {value_sql} = 2"
+    )
+    filter_plan = store.con.execute(filter_query).fetchall()
+    assert any(index_name in str(row[-1]) for row in filter_plan)
+
 
 
 def test_sqlite_drop_index_error(fill_store: Callable, track_tmp_path: Path) -> None:
