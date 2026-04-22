@@ -51,6 +51,7 @@
     annotationTileColorProperty: null,
     baseLayerMeta: null,
     categoryColorCache: {},
+    featureDetailsRequestId: 0,
     map: null,
     overviewControl: null,
     project: config.project || {},
@@ -276,7 +277,9 @@
     state.annotationSource = annotationLayer ? annotationLayer.getSource() : null;
     state.annotationTileColorProperty = null;
     state.rasterLayers = rasterLayers;
+    state.featureDetailsRequestId += 1;
     resetAnnotationStyleCache();
+    clearFeatureDetails();
 
     toggleEmptyState(null);
   }
@@ -800,7 +803,7 @@
     )}, ${Math.round(Number(sequence[2]) * scale)})`;
   }
 
-  function handleFeatureClick(event) {
+  async function handleFeatureClick(event) {
     if (!state.annotationLayer) {
       return;
     }
@@ -816,39 +819,89 @@
         },
       },
     );
-    renderFeatureDetails(feature);
+    await renderFeatureDetails(feature);
   }
 
-  function renderFeatureDetails(feature) {
-    if (!feature) {
-      elements.featureDetails.textContent = "Click an annotation feature to inspect its properties.";
-      elements.featureDetails.classList.add("empty");
-      return;
-    }
+  function clearFeatureDetails() {
+    elements.featureDetails.textContent = "Click an annotation feature to inspect its properties.";
+    elements.featureDetails.classList.add("empty");
+  }
 
+  function featurePropertiesForDisplay(feature) {
+    return Object.fromEntries(
+      Object.entries(feature.getProperties()).filter(function ([key]) {
+        return key !== "geometry";
+      }),
+    );
+  }
+
+  function renderFeatureDetailsTable(properties, message) {
     const table = document.createElement("table");
     table.className = "feature-table";
     const tbody = document.createElement("tbody");
 
-    Object.entries(feature.getProperties())
-      .filter(function ([key]) {
-        return key !== "geometry";
-      })
-      .forEach(function ([key, value]) {
-        const row = document.createElement("tr");
-        const header = document.createElement("td");
-        const content = document.createElement("td");
-        header.textContent = key;
-        content.textContent = formatValue(value);
-        row.appendChild(header);
-        row.appendChild(content);
-        tbody.appendChild(row);
-      });
+    Object.entries(properties).forEach(function ([key, value]) {
+      const row = document.createElement("tr");
+      const header = document.createElement("td");
+      const content = document.createElement("td");
+      header.textContent = key;
+      content.textContent = formatValue(value);
+      row.appendChild(header);
+      row.appendChild(content);
+      tbody.appendChild(row);
+    });
 
     table.appendChild(tbody);
     elements.featureDetails.innerHTML = "";
     elements.featureDetails.classList.remove("empty");
     elements.featureDetails.appendChild(table);
+
+    if (message) {
+      const note = document.createElement("p");
+      note.textContent = message;
+      elements.featureDetails.appendChild(note);
+    }
+  }
+
+  async function renderFeatureDetails(feature) {
+    state.featureDetailsRequestId += 1;
+    const requestId = state.featureDetailsRequestId;
+
+    if (!feature) {
+      clearFeatureDetails();
+      return;
+    }
+
+    const projectedProperties = featurePropertiesForDisplay(feature);
+    const featureId = projectedProperties.id;
+
+    if (!featureId || !state.annotationMeta) {
+      renderFeatureDetailsTable(projectedProperties);
+      return;
+    }
+
+    renderFeatureDetailsTable(projectedProperties, "Loading full annotation details…");
+
+    try {
+      const url = buildAnnotationUrl(
+        state.annotationMeta.detail_url || "/tileserver/annotations/detail",
+      );
+      url.searchParams.set("key", featureId);
+      const payload = await fetchJson(url);
+      if (requestId !== state.featureDetailsRequestId) {
+        return;
+      }
+      const fullProperties = Object.assign(
+        { id: payload.id || featureId },
+        payload.properties || {},
+      );
+      renderFeatureDetailsTable(fullProperties);
+    } catch (_error) {
+      if (requestId !== state.featureDetailsRequestId) {
+        return;
+      }
+      renderFeatureDetailsTable(projectedProperties, "Full annotation details could not be loaded.");
+    }
   }
 
   function renderSlideInfo(info) {

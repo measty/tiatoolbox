@@ -979,6 +979,8 @@ def test_get_layers_metadata(app: TileServer) -> None:
         assert overlay["vector_format"] == "mvt"
         assert overlay["vector_url"].endswith("/mvt/{z}/{x}/{y}.pbf")
         assert overlay["vector_tile_extent"] == 4096
+        assert overlay["vector_tile_default_fields"] == ["type"]
+        assert overlay["detail_url"] == "/tileserver/annotations/detail"
         assert overlay["vector_revision"] == 0
         assert overlay["default_vector_representation"] == "full"
         assert overlay["vector_representation_mode"] == "zoom"
@@ -1143,6 +1145,72 @@ def test_get_annotations_mvt(app_alt: TileServer) -> None:
         assert response.data != empty_response.data
 
 
+def test_get_annotations_mvt_projects_minimal_properties(
+    app_alt: TileServer,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Full and centroid MVT tiles should avoid embedding heavyweight blobs."""
+    captured_properties: list[list[dict[str, object]]] = []
+
+    def fake_encode_annotation_layer(*args: object, **_kwargs: object) -> bytes:
+        annotations = list(args[1])
+        captured_properties.append([properties for _, properties in annotations])
+        return b"mvt"
+
+    monkeypatch.setattr(
+        "tiatoolbox.visualization.tileserver.encode_annotation_layer",
+        fake_encode_annotation_layer,
+    )
+
+    with app_alt.test_client() as client:
+        full_response = client.get(
+            "/tileserver/layer/layer-1/default/mvt/0/0/0.pbf",
+            query_string={"where": json.dumps(None), "cprop": "prob"},
+        )
+        centroid_response = client.get(
+            "/tileserver/layer/layer-1/default/mvt/centroids/0/0/0.pbf",
+            query_string={"where": json.dumps(None), "cprop": "prob"},
+        )
+
+    assert full_response.status_code == 200
+    assert centroid_response.status_code == 200
+    for tile_properties in captured_properties:
+        assert tile_properties
+        assert all("id" in properties for properties in tile_properties)
+        assert not any("other_prop" in properties for properties in tile_properties)
+        assert all(set(properties).issubset({"id", "type", "prob"}) for properties in tile_properties)
+
+
+def test_get_annotations_mvt_allows_explicit_extra_fields(
+    app_alt: TileServer,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Clients can opt specific extra fields back into tile properties."""
+    captured_properties: list[dict[str, object]] = []
+
+    def fake_encode_annotation_layer(*args: object, **_kwargs: object) -> bytes:
+        captured_properties.extend([properties for _, properties in args[1]])
+        return b"mvt"
+
+    monkeypatch.setattr(
+        "tiatoolbox.visualization.tileserver.encode_annotation_layer",
+        fake_encode_annotation_layer,
+    )
+
+    with app_alt.test_client() as client:
+        response = client.get(
+            "/tileserver/layer/layer-1/default/mvt/0/0/0.pbf",
+            query_string={
+                "where": json.dumps(None),
+                "cprop": "prob",
+                "fields": json.dumps(["other_prop"]),
+            },
+        )
+
+    assert response.status_code == 200
+    assert any(properties.get("other_prop") == "foo" for properties in captured_properties)
+
+
 def test_get_annotations_mvt_centroid_representation_uses_points(
     app_alt: TileServer,
     monkeypatch: pytest.MonkeyPatch,
@@ -1218,6 +1286,33 @@ def test_get_annotations_mvt_overview_representation_aggregates_features(
     assert set(captured_tiles[0]["geometry_types"]) == {"Polygon"}
     assert all("count" in properties for properties in captured_tiles[0]["properties"])
     assert any("type" in properties for properties in captured_tiles[0]["properties"])
+
+
+def test_get_annotation_details(app_alt: TileServer) -> None:
+    """The detail endpoint should return full properties for a clicked annotation."""
+    store = app_alt.pyramids["default"]["layer-1"].store
+    key = next(
+        key
+        for key, annotation in store.items()
+        if annotation.properties.get("other_prop") == "foo"
+    )
+
+    with app_alt.test_client() as client:
+        response = client.get(
+            "/tileserver/annotations/detail",
+            query_string={"layer_name": "layer-1", "key": key},
+        )
+
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload == {
+        "id": key,
+        "properties": {
+            "other_prop": "foo",
+            "prob": 0.75,
+            "type": "line",
+        },
+    }
 
 
 def test_annotation_overlay_reload_bumps_vector_revision(app: TileServer) -> None:

@@ -96,6 +96,7 @@ ANNOTATION_MVT_LOW_ZOOM_POINT_MIN_FEATURES = 5000
 ANNOTATION_MVT_CENTROID_MAX_DOWNSAMPLE = 16.0
 ANNOTATION_MVT_FULL_GEOMETRY_MAX_DOWNSAMPLE = 8.0
 ANNOTATION_MVT_OVERVIEW_GRID_PIXEL_SIZE = 24
+ANNOTATION_TILE_DEFAULT_PROPERTY_FIELDS = ("type",)
 
 
 class TileServer(Flask):
@@ -238,6 +239,9 @@ class TileServer(Flask):
         self.route("/tileserver/annotations", methods=["GET"])(self.get_annotations)
         self.route("/tileserver/annotations/geojson", methods=["GET"])(
             self.get_annotations_geojson,
+        )
+        self.route("/tileserver/annotations/detail", methods=["GET"])(
+            self.get_annotation_details,
         )
         self.route(
             "/tileserver/layer/<layer>/<session_id>/mvt/<representation>/"
@@ -447,6 +451,10 @@ class TileServer(Flask):
                 "vector_url": self._annotation_mvt_url(name, session_id),
                 "vector_tile_extent": DEFAULT_MVT_EXTENT,
                 "vector_tile_buffer": DEFAULT_MVT_BUFFER,
+                "vector_tile_default_fields": list(
+                    ANNOTATION_TILE_DEFAULT_PROPERTY_FIELDS,
+                ),
+                "detail_url": "/tileserver/annotations/detail",
                 "vector_revision": int(self.annotation_revisions.get(session_id, 0)),
                 "vector_representation_mode": "zoom",
                 "default_vector_representation": ANNOTATION_MVT_FULL_REPRESENTATION,
@@ -918,6 +926,56 @@ class TileServer(Flask):
             "min_line_length": render_hints["min_line_length"],
             "min_polygon_area": render_hints["min_polygon_area"],
         }
+
+    @staticmethod
+    def _parse_annotation_tile_requested_fields(value: str | None) -> tuple[str, ...]:
+        """Parse optional extra tile property names from a request argument."""
+        if value is None or value == "":
+            return ()
+
+        raw_fields: list[object]
+        try:
+            decoded = json.loads(value)
+        except json.JSONDecodeError:
+            decoded = None
+
+        if isinstance(decoded, list):
+            raw_fields = decoded
+        elif isinstance(decoded, str):
+            raw_fields = decoded.split(",")
+        else:
+            raw_fields = value.split(",")
+
+        fields: list[str] = []
+        seen: set[str] = set()
+        for item in raw_fields:
+            if not isinstance(item, str):
+                continue
+            field = item.strip()
+            if not field or field in seen:
+                continue
+            fields.append(field)
+            seen.add(field)
+        return tuple(fields)
+
+    @staticmethod
+    def _project_annotation_tile_properties(
+        key: str,
+        properties: dict,
+        color_property: str | None = None,
+        requested_fields: tuple[str, ...] = (),
+    ) -> dict[str, object]:
+        """Project annotation properties down to the in-tile minimum."""
+        projected: dict[str, object] = {"id": key}
+        for field in (
+            *ANNOTATION_TILE_DEFAULT_PROPERTY_FIELDS,
+            color_property,
+            *requested_fields,
+        ):
+            if not field or field == "id" or field not in properties:
+                continue
+            projected[field] = properties[field]
+        return projected
 
     def _bump_annotation_revision(self: TileServer, session_id: str) -> None:
         """Invalidate cached annotation tile URLs for a session."""
@@ -1674,6 +1732,9 @@ class TileServer(Flask):
         layer_name = self.decode_layer_name(layer)
         where = self._decode_optional_json(request.args.get("where"))
         color_property = request.args.get("cprop") or None
+        requested_fields = self._parse_annotation_tile_requested_fields(
+            request.args.get("fields"),
+        )
         if representation not in {
             ANNOTATION_MVT_OVERVIEW_REPRESENTATION,
             ANNOTATION_MVT_FULL_REPRESENTATION,
@@ -1714,13 +1775,23 @@ class TileServer(Flask):
 
         def _iter_mvt_annotations() -> Iterator[tuple[object, dict]]:
             nonlocal geometry_decode_elapsed
-            for ann in annotations.values():
+            for key, ann in annotations.items():
                 geometry_decode_start = time.perf_counter()
                 geometry = ann.geometry
                 geometry_decode_elapsed += (
                     time.perf_counter() - geometry_decode_start
                 )
-                yield geometry, ann.properties
+                properties = (
+                    ann.properties
+                    if representation == ANNOTATION_MVT_OVERVIEW_REPRESENTATION
+                    else self._project_annotation_tile_properties(
+                        key,
+                        ann.properties,
+                        color_property=color_property,
+                        requested_fields=requested_fields,
+                    )
+                )
+                yield geometry, properties
 
         encode_start = time.perf_counter()
         payload = (
@@ -1827,6 +1898,26 @@ class TileServer(Flask):
         if len(anns) == 0:
             return json.dumps({})
         return jsonify(list(anns.values())[-1].properties)
+
+    def get_annotation_details(self: TileServer) -> Response:
+        """Fetch full properties for a single annotation by key."""
+        session_id = self._get_session_id()
+        layer_name = request.args.get("layer_name")
+        key = request.args.get("key")
+        if not key:
+            return Response("Missing key", status=400)
+
+        try:
+            ann_layer = self.get_ann_layer(session_id, layer_name=layer_name)
+        except ValueError:
+            return Response("Layer not found", status=404)
+
+        try:
+            annotation = ann_layer.store[key]
+        except KeyError:
+            return Response("Annotation not found", status=404)
+
+        return jsonify({"id": key, "properties": annotation.properties})
 
     def prop_range(self: TileServer) -> str:
         """Set the range which the color mapper will map to.

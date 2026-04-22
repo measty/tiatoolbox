@@ -413,6 +413,40 @@ paths:
                   content:
                       application/json:
 
+  /tileserver/annotations/detail:
+    get:
+      summary: Get full properties for a single annotation
+      parameters:
+        - name: key
+          in: query
+          description: Annotation key
+          required: true
+          schema:
+            type: string
+        - name: layer_name
+          in: query
+          description: Annotation layer name
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: string
+                  properties:
+                    type: object
+                    additionalProperties: true
+        '400':
+          description: Missing key
+        '404':
+          description: Layer or annotation not found
+
   /tileserver/tap_query/{x}/{y}:
     get:
       summary: Query annotation at a point
