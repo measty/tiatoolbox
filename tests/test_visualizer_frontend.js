@@ -552,6 +552,30 @@ test('annotationStyle caches fill-only and stroked polygon variants separately',
   assert.equal(hooks.state.annotationStyleCache.size, 2);
 });
 
+test('createAnnotationLayer refuses unsafe GeoJSON fallback for large overlays', async () => {
+  const { hooks, elements } = createEnvironment(async () => response([]), { withOl: true });
+
+  const layer = hooks.createAnnotationLayer(
+    {
+      name: 'overlay',
+      path: '/tmp/overlay.db',
+      geojson_policy: {
+        allowed: false,
+        debug_only: true,
+        message: 'Large SQLite-backed overlays stay on the MVT path during normal viewing.',
+      },
+    },
+    new FakeTileSource({}),
+    { size: [1000, 1000], mpp: 0.25 },
+  );
+
+  assert.equal(
+    elements['status-text'].textContent,
+    'Large SQLite-backed overlays stay on the MVT path during normal viewing.',
+  );
+  assert.equal(typeof layer.getSource().config.loader, 'undefined');
+});
+
 test('syncLayers resolves before annotation metadata refresh completes', async () => {
   const propertyFetch = deferred();
   let propertyCalls = 0;

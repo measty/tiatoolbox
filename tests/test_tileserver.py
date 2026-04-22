@@ -981,6 +981,8 @@ def test_get_layers_metadata(app: TileServer) -> None:
         assert overlay["vector_tile_extent"] == 4096
         assert overlay["vector_tile_default_fields"] == ["type"]
         assert overlay["detail_url"] == "/tileserver/annotations/detail"
+        assert overlay["geojson_url"] == "/tileserver/annotations/geojson"
+        assert overlay["geojson_policy"]["auto_feature_limit"] > 0
         assert overlay["vector_revision"] == 0
         assert overlay["default_vector_representation"] == "full"
         assert overlay["vector_representation_mode"] == "zoom"
@@ -1040,6 +1042,37 @@ def test_get_layers_metadata_uses_zoom_representations_for_dense_overlay(
         assert representations[2]["vector_url"].endswith(
             "/mvt/{z}/{x}/{y}.pbf",
         )
+
+
+def test_get_layers_metadata_marks_large_sqlite_geojson_as_debug_only(
+    app_alt: TileServer,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Large SQLite overlays should advertise GeoJSON as a debug-only path."""
+    monkeypatch.setattr(
+        "tiatoolbox.visualization.tileserver.ANNOTATION_GEOJSON_AUTO_MAX_FEATURES",
+        10,
+    )
+
+    with app_alt.test_client() as client:
+        response = client.get("/tileserver/layers")
+        assert response.status_code == 200
+        overlay = next(
+            layer for layer in response.get_json() if layer["kind"] == "annotation"
+        )
+
+    assert overlay["geojson_policy"] == {
+        "allowed": False,
+        "auto_feature_limit": 10,
+        "debug_only": True,
+        "feature_count": 76,
+        "message": (
+            "Large SQLite-backed overlays stay on the MVT path during normal "
+            "viewing. GeoJSON is limited to small overlays or explicit debug "
+            "requests with bounds."
+        ),
+        "reason": "large_sqlite_overlay_requires_mvt",
+    }
 
 
 def test_session_id_preserves_default_layers(app_alt: TileServer) -> None:
@@ -1114,6 +1147,97 @@ def test_get_annotations_geojson(app_alt: TileServer) -> None:
         assert len(feature_collection["features"]) == 1
         ring = feature_collection["features"][0]["geometry"]["coordinates"][0]
         assert min(coord[1] for coord in ring) <= -10
+
+
+def test_get_annotations_geojson_rejects_large_sqlite_overlay_without_debug(
+    app_alt: TileServer,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Large SQLite overlays should not silently fall back to GeoJSON."""
+    monkeypatch.setattr(
+        "tiatoolbox.visualization.tileserver.ANNOTATION_GEOJSON_AUTO_MAX_FEATURES",
+        10,
+    )
+
+    with app_alt.test_client() as client:
+        response = client.get(
+            "/tileserver/annotations/geojson",
+            query_string={
+                "bounds": json.dumps([0, 0, 20, 20]),
+                "where": json.dumps(None),
+                "layer_name": "layer-1",
+            },
+        )
+        assert response.status_code == 409
+        assert response.get_json() == {
+            "auto_feature_limit": 10,
+            "debug_only": True,
+            "error": "large_sqlite_overlay_requires_mvt",
+            "feature_count": 76,
+            "message": (
+                "Large SQLite-backed overlays stay on the MVT path during normal "
+                "viewing. GeoJSON is limited to small overlays or explicit debug "
+                "requests with bounds."
+            ),
+        }
+
+
+def test_get_annotations_geojson_allows_explicit_debug_for_large_sqlite_overlay(
+    app_alt: TileServer,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Explicit debug requests with bounds may still use GeoJSON."""
+    monkeypatch.setattr(
+        "tiatoolbox.visualization.tileserver.ANNOTATION_GEOJSON_AUTO_MAX_FEATURES",
+        10,
+    )
+
+    with app_alt.test_client() as client:
+        response = client.get(
+            "/tileserver/annotations/geojson",
+            query_string={
+                "bounds": json.dumps([0, 0, 20, 20]),
+                "where": json.dumps(None),
+                "layer_name": "layer-1",
+                "debug": "1",
+            },
+        )
+        assert response.status_code == 200
+        feature_collection = response.get_json()
+        assert feature_collection["type"] == "FeatureCollection"
+        assert len(feature_collection["features"]) == 1
+
+
+def test_get_annotations_geojson_requires_bounds_in_large_overlay_debug_mode(
+    app_alt: TileServer,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Large-overlay GeoJSON debug requests still need explicit bounds."""
+    monkeypatch.setattr(
+        "tiatoolbox.visualization.tileserver.ANNOTATION_GEOJSON_AUTO_MAX_FEATURES",
+        10,
+    )
+
+    with app_alt.test_client() as client:
+        response = client.get(
+            "/tileserver/annotations/geojson",
+            query_string={
+                "where": json.dumps(None),
+                "layer_name": "layer-1",
+                "debug": "1",
+            },
+        )
+        assert response.status_code == 409
+        assert response.get_json() == {
+            "auto_feature_limit": 10,
+            "debug_only": True,
+            "error": "geojson_debug_bounds_required",
+            "feature_count": 76,
+            "message": (
+                "Large SQLite-backed overlays only expose GeoJSON in explicit "
+                "debug mode when bounds are supplied."
+            ),
+        }
 
 
 def test_get_annotations_mvt(app_alt: TileServer) -> None:

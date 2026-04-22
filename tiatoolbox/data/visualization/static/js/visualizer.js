@@ -560,6 +560,21 @@
       });
     }
 
+    if (metadata.geojson_policy && metadata.geojson_policy.allowed === false) {
+      setStatus(
+        metadata.geojson_policy.message ||
+          "Large SQLite-backed overlays require MVT tiles for normal viewing.",
+      );
+      return new ol.layer.Vector({
+        title: metadata.name,
+        source: new ol.source.Vector({
+          features: [],
+          format: new ol.format.GeoJSON(),
+        }),
+        style: annotationStyle,
+      });
+    }
+
     const vectorSource = new ol.source.Vector({
       format: new ol.format.GeoJSON(),
       strategy: ol.loadingstrategy.tile(tileGrid),
@@ -584,7 +599,23 @@
     url.searchParams.set("where", JSON.stringify(state.annotationFilter || null));
 
     try {
-      const payload = await fetchJson(url);
+      const response = await fetch(url, {
+        credentials: "same-origin",
+      });
+      if (!response.ok) {
+        let message = "Failed to load vector annotations.";
+        try {
+          const payload = await response.json();
+          if (payload && payload.message) {
+            message = payload.message;
+          }
+        } catch (parseError) {
+          message = `Request failed: ${response.status}`;
+        }
+        throw new Error(message);
+      }
+
+      const payload = await response.json();
       const features = source.getFormat().readFeatures(payload);
       source.addFeatures(features);
       if (success) {
@@ -594,7 +625,7 @@
       if (failure) {
         failure();
       }
-      setStatus("Failed to load vector annotations.");
+      setStatus(error && error.message ? error.message : "Failed to load vector annotations.");
       throw error;
     }
   }
@@ -1298,8 +1329,10 @@
       annotationStyle: annotationStyle,
       annotationContextKey: annotationContextKey,
       annotationMetadataCacheKey: annotationMetadataCacheKey,
+      createAnnotationLayer: createAnnotationLayer,
       elements: elements,
       fetchCachedAnnotationJson: fetchCachedAnnotationJson,
+      loadAnnotationExtent: loadAnnotationExtent,
       prepareAnnotationControlsLoading: prepareAnnotationControlsLoading,
       refreshAnnotationControls: refreshAnnotationControls,
       renderColorPropertyOptions: renderColorPropertyOptions,

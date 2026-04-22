@@ -95,6 +95,8 @@ ANNOTATION_MVT_FULL_GEOMETRY_MAX_DOWNSAMPLE = 8.0
 ANNOTATION_MVT_OVERVIEW_GRID_PIXEL_SIZE = 24
 ANNOTATION_TILE_DEFAULT_PROPERTY_FIELDS = ("type",)
 ANNOTATION_MVT_CACHE_MAX_ENTRIES = 256
+ANNOTATION_GEOJSON_AUTO_MAX_FEATURES = 2000
+ANNOTATION_GEOJSON_DEBUG_TRUE_VALUES = {"1", "true", "yes", "on"}
 
 
 class TileServer(Flask):
@@ -431,11 +433,11 @@ class TileServer(Flask):
         self: TileServer,
         name: str,
         session_id: str,
-    ) -> dict[str, str | list[int] | float | int]:
+    ) -> dict[str, object]:
         """Serialise layer metadata for the frontend."""
         layer = self.layers[session_id][name]
         pyramid = self.pyramids[session_id][name]
-        metadata: dict[str, str | list[int] | float | int] = {}
+        metadata: dict[str, object] = {}
         if isinstance(pyramid, AnnotationTileGenerator):
             kind = "annotation"
             slide_dimensions = pyramid.info.slide_dimensions
@@ -445,6 +447,7 @@ class TileServer(Flask):
                 session_id,
                 pyramid,
             )
+            geojson_policy = self._get_annotation_geojson_policy(pyramid)
             metadata = {
                 "vector_format": "mvt",
                 "vector_url": self._annotation_mvt_url(name, session_id),
@@ -458,6 +461,8 @@ class TileServer(Flask):
                 "vector_representation_mode": "zoom",
                 "default_vector_representation": ANNOTATION_MVT_FULL_REPRESENTATION,
                 "vector_representations": vector_representations,
+                "geojson_url": "/tileserver/annotations/geojson",
+                "geojson_policy": geojson_policy,
             }
         else:
             kind = "slide" if name == "slide" else "raster"
@@ -853,6 +858,50 @@ class TileServer(Flask):
 
         full_representation["min_zoom"] = max(centroid_min_zoom, full_geometry_min_zoom)
         return [*representations, full_representation]
+
+    @staticmethod
+    def _get_annotation_geojson_policy(
+        pyramid: AnnotationTileGenerator,
+    ) -> dict[str, object]:
+        """Describe when the GeoJSON endpoint is safe for an annotation overlay."""
+        if not isinstance(pyramid.store, SQLiteStore):
+            return {
+                "allowed": True,
+                "debug_only": False,
+                "reason": None,
+                "auto_feature_limit": ANNOTATION_GEOJSON_AUTO_MAX_FEATURES,
+            }
+
+        feature_count = len(pyramid.store)
+        if feature_count <= ANNOTATION_GEOJSON_AUTO_MAX_FEATURES:
+            return {
+                "allowed": True,
+                "debug_only": False,
+                "reason": None,
+                "feature_count": feature_count,
+                "auto_feature_limit": ANNOTATION_GEOJSON_AUTO_MAX_FEATURES,
+            }
+
+        return {
+            "allowed": False,
+            "debug_only": True,
+            "reason": "large_sqlite_overlay_requires_mvt",
+            "message": (
+                "Large SQLite-backed overlays stay on the MVT path during normal "
+                "viewing. GeoJSON is limited to small overlays or explicit debug "
+                "requests with bounds."
+            ),
+            "feature_count": feature_count,
+            "auto_feature_limit": ANNOTATION_GEOJSON_AUTO_MAX_FEATURES,
+        }
+
+    @staticmethod
+    def _annotation_geojson_debug_requested() -> bool:
+        """Return whether the caller explicitly requested GeoJSON debug mode."""
+        return (
+            str(request.args.get("debug", "")).strip().lower()
+            in ANNOTATION_GEOJSON_DEBUG_TRUE_VALUES
+        )
 
     @staticmethod
     def _query_annotations_for_mvt(
@@ -1843,6 +1892,32 @@ class TileServer(Flask):
 
         bounds = self._decode_optional_json(request.args.get("bounds"))
         where = self._decode_optional_json(request.args.get("where"))
+        geojson_policy = self._get_annotation_geojson_policy(ann_layer)
+        debug_requested = self._annotation_geojson_debug_requested()
+        if not bool(geojson_policy.get("allowed", False)):
+            error_payload = {
+                "error": geojson_policy.get(
+                    "reason",
+                    "geojson_request_not_allowed",
+                ),
+                "message": geojson_policy.get(
+                    "message",
+                    "GeoJSON is not available for this annotation overlay.",
+                ),
+                "feature_count": geojson_policy.get("feature_count"),
+                "auto_feature_limit": geojson_policy.get("auto_feature_limit"),
+                "debug_only": bool(geojson_policy.get("debug_only")),
+            }
+            if debug_requested and bounds is None:
+                error_payload["error"] = "geojson_debug_bounds_required"
+                error_payload["message"] = (
+                    "Large SQLite-backed overlays only expose GeoJSON in explicit "
+                    "debug mode when bounds are supplied."
+                )
+                return jsonify(error_payload), 409
+            if not (debug_requested and bounds is not None):
+                return jsonify(error_payload), 409
+
         annotations = ann_layer.store.query(
             geometry=bounds,
             where=where,
