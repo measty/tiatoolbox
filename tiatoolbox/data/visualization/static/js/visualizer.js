@@ -43,9 +43,14 @@
 
   const state = {
     annotationFilter: "",
+    annotationControlsRequestId: 0,
+    annotationLegendRequestId: 0,
     annotationLayer: null,
+    annotationMetadataCache: new Map(),
+    annotationMetadataRequests: new Map(),
     annotationMeta: null,
     annotationPropertySummary: null,
+    annotationSelectedProperty: config.project?.default_cprop || "",
     annotationSource: null,
     annotationStyleCache: new Map(),
     annotationTileColorProperty: null,
@@ -81,7 +86,7 @@
     if ((config.initial_layers || []).length > 0) {
       renderLayers(config.initial_layers, { fit: true });
       renderSlideInfoFromLayer(config.initial_layers.find((layer) => layer.kind === "slide"));
-      await refreshAnnotationControls();
+      triggerAnnotationControlsRefresh();
       setStatus("Viewer ready.");
       return;
     }
@@ -134,6 +139,7 @@
     });
 
     elements.colorProperty.addEventListener("change", async () => {
+      state.annotationSelectedProperty = elements.colorProperty.value || "";
       state.annotationPropertySummary = null;
       resetAnnotationStyleCache();
       if (state.annotationLayer) {
@@ -204,19 +210,23 @@
 
   async function syncLayers(options) {
     const layers = await fetchJson("/tileserver/layers");
-    renderLayers(layers, options);
+    const renderState = renderLayers(layers, options);
 
     const slideInfo = await fetchJson("/tileserver/slide");
     state.slideInfo = slideInfo;
     renderSlideInfo(slideInfo);
-    await refreshAnnotationControls();
+
+    if (renderState.annotationContextChanged) {
+      triggerAnnotationControlsRefresh();
+    }
   }
 
   function renderLayers(layerMetadata, options) {
+    const previousAnnotationContext = annotationContextKey(state.annotationMeta);
     const slideLayerMeta = layerMetadata.find((layer) => layer.kind === "slide");
     if (!slideLayerMeta) {
       toggleEmptyState("No slide is currently loaded.");
-      return;
+      return { annotationContextChanged: previousAnnotationContext !== null };
     }
 
     const viewState =
@@ -274,6 +284,7 @@
     state.baseLayerMeta = slideLayerMeta;
     state.annotationLayer = annotationLayer;
     state.annotationMeta = annotationLayerMeta || null;
+    state.annotationPropertySummary = null;
     state.annotationSource = annotationLayer ? annotationLayer.getSource() : null;
     state.annotationTileColorProperty = null;
     state.rasterLayers = rasterLayers;
@@ -282,6 +293,20 @@
     clearFeatureDetails();
 
     toggleEmptyState(null);
+
+    const nextAnnotationContext = annotationContextKey(state.annotationMeta);
+    const annotationContextChanged = previousAnnotationContext !== nextAnnotationContext;
+    if (annotationContextChanged) {
+      if (state.annotationMeta) {
+        prepareAnnotationControlsLoading(state.annotationMeta);
+      } else {
+        disableAnnotationControls();
+      }
+    }
+
+    return {
+      annotationContextChanged: annotationContextChanged,
+    };
   }
 
   function createSlideProjection(baseSource, slideLayerMeta) {
@@ -507,35 +532,143 @@
     }
   }
 
-  async function refreshAnnotationControls() {
-    if (!state.annotationMeta) {
-      elements.annotationSection.classList.add("is-disabled");
-      elements.annotationPath.textContent = "No vector overlay";
-      elements.colorProperty.innerHTML = "";
-      elements.colorProperty.disabled = true;
-      elements.applyFilter.disabled = true;
-      elements.resetFilter.disabled = true;
-      renderLegendEmpty("Load a SQLiteStore-backed overlay to enable vector styling.");
-      renderFeatureDetails(null);
-      return;
+  function annotationContextKey(metadata) {
+    if (!metadata) {
+      return null;
     }
 
+    return JSON.stringify({
+      name: metadata.name || "",
+      path: metadata.path || "",
+      revision: metadata.vector_revision || 0,
+    });
+  }
+
+  function annotationMetadataCacheKey(kind, metadata, extra) {
+    return JSON.stringify({
+      kind: kind,
+      annotation: annotationContextKey(metadata),
+      extra: extra || null,
+    });
+  }
+
+  function fetchCachedAnnotationJson(cacheKey, input) {
+    if (state.annotationMetadataCache.has(cacheKey)) {
+      return Promise.resolve(state.annotationMetadataCache.get(cacheKey));
+    }
+
+    if (state.annotationMetadataRequests.has(cacheKey)) {
+      return state.annotationMetadataRequests.get(cacheKey);
+    }
+
+    const request = fetchJson(input)
+      .then((payload) => {
+        state.annotationMetadataCache.set(cacheKey, payload);
+        return payload;
+      })
+      .finally(() => {
+        state.annotationMetadataRequests.delete(cacheKey);
+      });
+
+    state.annotationMetadataRequests.set(cacheKey, request);
+    return request;
+  }
+
+  function disableAnnotationControls() {
+    elements.annotationSection.classList.add("is-disabled");
+    elements.annotationPath.textContent = "No vector overlay";
+    elements.colorProperty.innerHTML = "";
+    elements.colorProperty.disabled = true;
+    elements.applyFilter.disabled = true;
+    elements.resetFilter.disabled = true;
+    renderLegendEmpty("Load a SQLiteStore-backed overlay to enable vector styling.");
+    renderFeatureDetails(null);
+  }
+
+  function prepareAnnotationControlsLoading(metadata) {
     elements.annotationSection.classList.remove("is-disabled");
-    elements.annotationPath.textContent = state.annotationMeta.path;
-    elements.colorProperty.disabled = false;
+    elements.annotationPath.textContent = metadata.path;
+    elements.colorProperty.innerHTML = "";
+
+    const option = document.createElement("option");
+    option.value = "";
+    option.textContent = "Loading properties…";
+    elements.colorProperty.appendChild(option);
+    elements.colorProperty.disabled = true;
     elements.applyFilter.disabled = false;
     elements.resetFilter.disabled = false;
 
-    const properties = await fetchJson(
-      buildAnnotationUrl("/tileserver/prop_names/all"),
+    renderLegendEmpty("Loading annotation metadata…");
+  }
+
+  function triggerAnnotationControlsRefresh() {
+    refreshAnnotationControls().catch((error) => {
+      console.error(error);
+    });
+  }
+
+  async function refreshAnnotationControls() {
+    if (!state.annotationMeta) {
+      disableAnnotationControls();
+      return;
+    }
+
+    const requestId = ++state.annotationControlsRequestId;
+    const annotationMeta = state.annotationMeta;
+    const annotationContext = annotationContextKey(annotationMeta);
+
+    elements.annotationSection.classList.remove("is-disabled");
+    elements.annotationPath.textContent = annotationMeta.path;
+    elements.applyFilter.disabled = false;
+    elements.resetFilter.disabled = false;
+
+    const propertiesCacheKey = annotationMetadataCacheKey(
+      "properties",
+      annotationMeta,
     );
-    renderColorPropertyOptions(properties);
-    await updateLegend();
+    const cachedProperties = state.annotationMetadataCache.get(propertiesCacheKey);
+    if (cachedProperties) {
+      renderColorPropertyOptions(cachedProperties);
+      elements.colorProperty.disabled = false;
+      void updateLegend();
+      return;
+    }
+
+    prepareAnnotationControlsLoading(annotationMeta);
+
+    try {
+      const properties = await fetchCachedAnnotationJson(
+        propertiesCacheKey,
+        buildAnnotationUrl("/tileserver/prop_names/all", annotationMeta),
+      );
+      if (
+        requestId !== state.annotationControlsRequestId ||
+        annotationContext !== annotationContextKey(state.annotationMeta)
+      ) {
+        return;
+      }
+
+      renderColorPropertyOptions(properties);
+      elements.colorProperty.disabled = false;
+      void updateLegend();
+    } catch (error) {
+      if (
+        requestId !== state.annotationControlsRequestId ||
+        annotationContext !== annotationContextKey(state.annotationMeta)
+      ) {
+        return;
+      }
+
+      elements.colorProperty.innerHTML = "";
+      elements.colorProperty.disabled = true;
+      renderLegendEmpty("Annotation metadata could not be loaded.");
+      throw error;
+    }
   }
 
   function renderColorPropertyOptions(properties) {
     const selectedValue =
-      elements.colorProperty.value ||
+      state.annotationSelectedProperty ||
       state.project.default_cprop ||
       (properties.includes("type") ? "type" : properties[0] || "");
 
@@ -552,6 +685,8 @@
         ? selectedValue
         : properties[0] || "";
     }
+
+    state.annotationSelectedProperty = elements.colorProperty.value || "";
   }
 
   function refreshAnnotationTilesForCurrentProperty() {
@@ -571,15 +706,28 @@
       return;
     }
 
+    const requestId = ++state.annotationLegendRequestId;
+    const annotationMeta = state.annotationMeta;
+    const annotationContext = annotationContextKey(annotationMeta);
     const property = elements.colorProperty.value;
     if (!property) {
+      state.annotationPropertySummary = null;
       renderLegendEmpty("No annotation properties found on this overlay.");
       return;
     }
 
+    state.annotationSelectedProperty = property;
     refreshAnnotationTilesForCurrentProperty();
 
     if (property === "color") {
+      if (
+        requestId !== state.annotationLegendRequestId ||
+        annotationContext !== annotationContextKey(state.annotationMeta) ||
+        property !== elements.colorProperty.value
+      ) {
+        return;
+      }
+
       state.annotationPropertySummary = { kind: "feature-color" };
       elements.legend.innerHTML =
         "<p>Using per-feature colors from the <code>color</code> property.</p>";
@@ -590,11 +738,52 @@
       return;
     }
 
-    const url = buildAnnotationUrl(
-      `/tileserver/prop_summary/${encodeURIComponent(property)}/all`,
+    const filterExpression = state.annotationFilter || null;
+    const summaryCacheKey = annotationMetadataCacheKey(
+      "property-summary",
+      annotationMeta,
+      {
+        filter: filterExpression,
+        property: property,
+      },
     );
-    url.searchParams.set("where", JSON.stringify(state.annotationFilter || null));
-    state.annotationPropertySummary = await fetchJson(url);
+    if (!state.annotationMetadataCache.has(summaryCacheKey)) {
+      renderLegendEmpty(`Loading legend for ${property}…`);
+    }
+
+    try {
+      const url = buildAnnotationUrl(
+        `/tileserver/prop_summary/${encodeURIComponent(property)}/all`,
+        annotationMeta,
+      );
+      url.searchParams.set("where", JSON.stringify(filterExpression));
+      const summary = await fetchCachedAnnotationJson(summaryCacheKey, url);
+
+      if (
+        requestId !== state.annotationLegendRequestId ||
+        annotationContext !== annotationContextKey(state.annotationMeta) ||
+        property !== elements.colorProperty.value ||
+        filterExpression !== (state.annotationFilter || null)
+      ) {
+        return;
+      }
+
+      state.annotationPropertySummary = summary;
+    } catch (error) {
+      if (
+        requestId !== state.annotationLegendRequestId ||
+        annotationContext !== annotationContextKey(state.annotationMeta) ||
+        property !== elements.colorProperty.value ||
+        filterExpression !== (state.annotationFilter || null)
+      ) {
+        return;
+      }
+
+      state.annotationPropertySummary = null;
+      renderLegendEmpty("Annotation legend could not be loaded.");
+      console.error(error);
+      return;
+    }
 
     if (state.annotationPropertySummary.kind === "empty") {
       renderLegendEmpty("No matching annotation values for the active filter.");
@@ -1031,6 +1220,21 @@
       throw new Error(`Request failed: ${response.status}`);
     }
     return response.text();
+  }
+
+  if (typeof window !== "undefined" && window.__TIA_VISUALIZER_ENABLE_TEST_HOOKS__) {
+    window.__TIA_VISUALIZER_TEST_HOOKS__ = {
+      annotationContextKey: annotationContextKey,
+      annotationMetadataCacheKey: annotationMetadataCacheKey,
+      elements: elements,
+      fetchCachedAnnotationJson: fetchCachedAnnotationJson,
+      prepareAnnotationControlsLoading: prepareAnnotationControlsLoading,
+      refreshAnnotationControls: refreshAnnotationControls,
+      renderColorPropertyOptions: renderColorPropertyOptions,
+      state: state,
+      syncLayers: syncLayers,
+      updateLegend: updateLegend,
+    };
   }
 
   init().catch(function (error) {
