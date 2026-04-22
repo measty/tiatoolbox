@@ -3142,6 +3142,94 @@ class SQLiteStore(AnnotationStore):
             for key, properties, cx, cy, blob in cur.fetchall()
         }
 
+    def query_mvt_records(
+        self: SQLiteStore,
+        geometry: QueryGeometry | None = None,
+        where: Predicate | None = None,
+        geometry_predicate: str = "intersects",
+        property_fields: tuple[str, ...] = (),
+        min_area: float | None = None,
+        min_bbox_size: float | None = None,
+        *,
+        centroids: bool = False,
+        distance: float = 0,
+    ) -> list[tuple[bytes, dict[str, object]]]:
+        """Query thin MVT records without materialising ``Annotation`` objects.
+
+        This is a specialised hot path for annotation vector tiles. Geometry is
+        returned as packed WKB bytes and top-level properties are projected in SQL
+        where possible so dense tiles can avoid full ``Annotation`` creation and
+        whole-document JSON decoding.
+        """
+        projected_fields = tuple(
+            field for field in property_fields if field and field != "id"
+        )
+        projection_columns = [
+            sql
+            for field in projected_fields
+            for sql in (self._property_value_sql(field), self._property_type_sql(field))
+        ]
+        base_columns = ["[key]", "cx", "cy"]
+        callable_columns = ["[key]", "properties", "cx", "cy"]
+        if not centroids:
+            base_columns.append("geometry")
+            callable_columns.append("geometry")
+        base_columns.extend(projection_columns)
+
+        cur = self._query(
+            columns=", ".join(base_columns),
+            geometry=geometry,
+            callable_columns=", ".join(callable_columns),
+            geometry_predicate=geometry_predicate,
+            where=where,
+            min_area=min_area,
+            min_area_keep_non_polygons=min_bbox_size is not None,
+            min_bbox_size=min_bbox_size,
+            distance=distance,
+        )
+
+        rows = cur.fetchall()
+        records: list[tuple[bytes, dict[str, object]]] = []
+        property_offset = 3 if centroids else 4
+        for row in rows:
+            key = cast("str", row[0])
+            cx = cast("float", row[1])
+            cy = cast("float", row[2])
+            geometry_blob = b"" if centroids else cast("bytes", row[3])
+
+            if callable(where):
+                properties_text = cast("str", row[1])
+                cx = cast("float", row[2])
+                cy = cast("float", row[3])
+                geometry_blob = b"" if centroids else cast("bytes", row[4])
+                parsed_properties = json.loads(properties_text)
+                if not where(parsed_properties):
+                    continue
+                projected_properties = {
+                    "id": key,
+                    **{
+                        field: parsed_properties[field]
+                        for field in projected_fields
+                        if field in parsed_properties
+                    },
+                }
+            else:
+                projected_properties = {"id": key}
+                for index, field in enumerate(projected_fields):
+                    value = row[property_offset + (index * 2)]
+                    value_type = row[property_offset + (index * 2) + 1]
+                    if value_type is None:
+                        continue
+                    projected_properties[field] = self._coerce_sqlite_json_value(
+                        value,
+                        cast("str | None", value_type),
+                    )
+
+            records.append(
+                (self._unpack_wkb(geometry_blob, cx, cy), projected_properties),
+            )
+        return records
+
     def query_renderable_geometries(
         self: SQLiteStore,
         geometry: QueryGeometry | None = None,

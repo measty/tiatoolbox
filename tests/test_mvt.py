@@ -60,6 +60,24 @@ def test_encode_annotation_layer_culls_tiny_polygons() -> None:
     assert payload == encode_empty_annotation_layer("overlay")
 
 
+def test_encode_annotation_layer_accepts_wkb_geometry_inputs() -> None:
+    """Packed WKB geometry inputs should encode identically to Shapely objects."""
+    polygon = box(16.0, 16.0, 64.0, 64.0)
+
+    payload_from_geometry = encode_annotation_layer(
+        "overlay",
+        [(polygon, {"kind": "poly"})],
+        tile_bounds=(0, 0, 256, 256),
+    )
+    payload_from_wkb = encode_annotation_layer(
+        "overlay",
+        [(polygon.wkb, {"kind": "poly"})],
+        tile_bounds=(0, 0, 256, 256),
+    )
+
+    assert payload_from_wkb == payload_from_geometry
+
+
 def test_quantize_xy_preserves_slide_y_direction() -> None:
     """Tile-local MVT y should increase downward with slide coordinates."""
     envelope = _TileEnvelope(100.0, 200.0, 200.0, 300.0, extent=4096)

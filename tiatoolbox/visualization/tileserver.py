@@ -28,7 +28,6 @@ from shapely.geometry import Point, box
 from tiatoolbox import data, logger
 from tiatoolbox.annotation import AnnotationStore, SQLiteStore
 from tiatoolbox.annotation.storage import Annotation
-from tiatoolbox.annotation.storage import Annotation
 from tiatoolbox.tools.pyramid import AnnotationTileGenerator, ZoomifyGenerator
 from tiatoolbox.utils.misc import store_from_dat
 from tiatoolbox.utils.postproc_defs import MultichannelToRGB
@@ -47,8 +46,6 @@ from tiatoolbox.wsicore.wsireader import (
 )
 
 if TYPE_CHECKING:  # pragma: no cover
-    from collections.abc import Iterator
-
     from matplotlib.colors import Colormap
 
     from tiatoolbox.wsicore import WSIMeta
@@ -865,8 +862,13 @@ class TileServer(Flask):
         render_hints: dict[str, float],
         representation: str,
         color_property: str | None = None,
-    ) -> tuple[dict[str, Annotation], bool]:
+        requested_fields: tuple[str, ...] = (),
+    ) -> tuple[list[tuple[object, dict[str, object]]], bool]:
         """Query annotation candidates for an MVT tile representation."""
+        projected_fields = TileServer._annotation_tile_projection_fields(
+            color_property=color_property,
+            requested_fields=requested_fields,
+        )
         if representation in {
             ANNOTATION_MVT_OVERVIEW_REPRESENTATION,
             ANNOTATION_MVT_CENTROID_REPRESENTATION,
@@ -874,28 +876,42 @@ class TileServer(Flask):
             if not isinstance(ann_layer.store, SQLiteStore):
                 msg = "Representation not found"
                 raise LookupError(msg)
+            if representation == ANNOTATION_MVT_CENTROID_REPRESENTATION:
+                return (
+                    ann_layer.store.query_mvt_records(
+                        geometry=tile_bounds,
+                        where=where,
+                        geometry_predicate="bbox_intersects",
+                        property_fields=projected_fields,
+                        centroids=True,
+                    ),
+                    False,
+                )
             annotations = ann_layer.store.query_centroids(
                 geometry=tile_bounds,
                 where=where,
                 geometry_predicate="bbox_intersects",
             )
-            if representation == ANNOTATION_MVT_OVERVIEW_REPRESENTATION:
-                annotations = TileServer._aggregate_annotation_overview(
-                    annotations,
-                    tile_bounds,
-                    float(render_hints["slide_units_per_pixel"]),
-                    color_property,
-                )
-            return (annotations, False)
+            annotations = TileServer._aggregate_annotation_overview(
+                annotations,
+                tile_bounds,
+                float(render_hints["slide_units_per_pixel"]),
+                color_property,
+            )
+            return (
+                [(ann.geometry, ann.properties) for ann in annotations.values()],
+                False,
+            )
 
         prefiltered = isinstance(ann_layer.store, SQLiteStore)
         if isinstance(ann_layer.store, SQLiteStore):
             try:
                 return (
-                    ann_layer.store.query_renderable_geometries(
+                    ann_layer.store.query_mvt_records(
                         geometry=tile_bounds,
                         where=where,
                         geometry_predicate="bbox_intersects",
+                        property_fields=projected_fields,
                         min_area=render_hints["min_polygon_area"],
                         min_bbox_size=render_hints["min_line_length"],
                     ),
@@ -906,12 +922,24 @@ class TileServer(Flask):
                     raise
                 prefiltered = False
 
+        annotations = ann_layer.store.query(
+            geometry=tile_bounds,
+            where=where,
+            geometry_predicate="bbox_intersects",
+        )
         return (
-            ann_layer.store.query(
-                geometry=tile_bounds,
-                where=where,
-                geometry_predicate="bbox_intersects",
-            ),
+            [
+                (
+                    ann.geometry,
+                    TileServer._project_annotation_tile_properties(
+                        key,
+                        ann.properties,
+                        color_property=color_property,
+                        requested_fields=requested_fields,
+                    ),
+                )
+                for key, ann in annotations.items()
+            ],
             prefiltered,
         )
 
@@ -961,6 +989,25 @@ class TileServer(Flask):
         return tuple(fields)
 
     @staticmethod
+    def _annotation_tile_projection_fields(
+        color_property: str | None = None,
+        requested_fields: tuple[str, ...] = (),
+    ) -> tuple[str, ...]:
+        """Return the ordered top-level annotation fields needed in-tile."""
+        fields: list[str] = []
+        seen: set[str] = set()
+        for field in (
+            *ANNOTATION_TILE_DEFAULT_PROPERTY_FIELDS,
+            color_property,
+            *requested_fields,
+        ):
+            if not field or field == "id" or field in seen:
+                continue
+            fields.append(field)
+            seen.add(field)
+        return tuple(fields)
+
+    @staticmethod
     def _project_annotation_tile_properties(
         key: str,
         properties: dict,
@@ -969,12 +1016,11 @@ class TileServer(Flask):
     ) -> dict[str, object]:
         """Project annotation properties down to the in-tile minimum."""
         projected: dict[str, object] = {"id": key}
-        for field in (
-            *ANNOTATION_TILE_DEFAULT_PROPERTY_FIELDS,
-            color_property,
-            *requested_fields,
+        for field in TileServer._annotation_tile_projection_fields(
+            color_property=color_property,
+            requested_fields=requested_fields,
         ):
-            if not field or field == "id" or field not in properties:
+            if field not in properties:
                 continue
             projected[field] = properties[field]
         return projected
@@ -1913,41 +1959,21 @@ class TileServer(Flask):
                 render_hints,
                 representation,
                 color_property,
+                requested_fields,
             )
         except LookupError:
             return Response("Representation not found", status=404)
         except ValueError:
-            annotations, prefiltered = {}, False
+            annotations, prefiltered = [], False
         query_elapsed = time.perf_counter() - query_start
 
-        geometry_decode_elapsed = 0.0
         mvt_timings: dict[str, float | int] = {}
-
-        def _iter_mvt_annotations() -> Iterator[tuple[object, dict]]:
-            nonlocal geometry_decode_elapsed
-            for key, ann in annotations.items():
-                geometry_decode_start = time.perf_counter()
-                geometry = ann.geometry
-                geometry_decode_elapsed += (
-                    time.perf_counter() - geometry_decode_start
-                )
-                properties = (
-                    ann.properties
-                    if representation == ANNOTATION_MVT_OVERVIEW_REPRESENTATION
-                    else self._project_annotation_tile_properties(
-                        key,
-                        ann.properties,
-                        color_property=color_property,
-                        requested_fields=requested_fields,
-                    )
-                )
-                yield geometry, properties
 
         encode_start = time.perf_counter()
         payload = (
             encode_annotation_layer(
                 layer_name,
-                _iter_mvt_annotations(),
+                annotations,
                 tile_bounds=tile_bounds,
                 extent=DEFAULT_MVT_EXTENT,
                 buffer=DEFAULT_MVT_BUFFER,
@@ -1991,7 +2017,9 @@ class TileServer(Flask):
             prefiltered=prefiltered,
             cache=False,
             encode_ms=f"{encode_elapsed * 1000:.1f}",
-            geometry_decode_ms=f"{geometry_decode_elapsed * 1000:.1f}",
+            geometry_decode_ms=(
+                f"{float(mvt_timings.get('geometry_decode_s', 0)) * 1000:.1f}"
+            ),
             prepare_ms=f"{float(mvt_timings.get('prepare_s', 0)) * 1000:.1f}",
             mvt_geometry_ms=(
                 f"{float(mvt_timings.get('geometry_encode_s', 0)) * 1000:.1f}"

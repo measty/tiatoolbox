@@ -7,6 +7,7 @@ import time
 from numbers import Integral, Real
 from typing import TYPE_CHECKING, Any
 
+from shapely import wkb as shapely_wkb
 from shapely.geometry import (
     GeometryCollection,
     LineString,
@@ -66,7 +67,7 @@ class _TileEnvelope:
 
 def encode_annotation_layer(
     layer_name: str,
-    annotations: Iterable[tuple[BaseGeometry, dict[str, Any]]],
+    annotations: Iterable[tuple[BaseGeometry | bytes, dict[str, Any]]],
     *,
     tile_bounds: tuple[float, float, float, float],
     extent: int = DEFAULT_MVT_EXTENT,
@@ -83,6 +84,7 @@ def encode_annotation_layer(
             Name of the MVT layer.
         annotations:
             Iterable of ``(geometry, properties)`` pairs in slide pixel coordinates.
+            Geometry may be a Shapely object or packed WKB bytes.
         tile_bounds:
             Tile bounds in slide pixel coordinates ``(min_x, min_y, max_x, max_y)``.
         extent:
@@ -116,6 +118,7 @@ def encode_annotation_layer(
 
     input_features = 0
     output_features = 0
+    geometry_decode_elapsed = 0.0
     prepare_elapsed = 0.0
     geometry_encode_elapsed = 0.0
     tag_encode_elapsed = 0.0
@@ -123,6 +126,10 @@ def encode_annotation_layer(
 
     for geometry, properties in annotations:
         input_features += 1
+        geometry_decode_start = time.perf_counter()
+        if isinstance(geometry, bytes):
+            geometry = shapely_wkb.loads(geometry)
+        geometry_decode_elapsed += time.perf_counter() - geometry_decode_start
         prepare_start = time.perf_counter()
         simple_geometries = tuple(
             _prepare_geometries(
@@ -179,6 +186,7 @@ def encode_annotation_layer(
             {
                 "input_features": input_features,
                 "output_features": output_features,
+                "geometry_decode_s": geometry_decode_elapsed,
                 "prepare_s": prepare_elapsed,
                 "geometry_encode_s": geometry_encode_elapsed,
                 "tag_encode_s": tag_encode_elapsed,

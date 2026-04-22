@@ -940,6 +940,46 @@ def test_sqlite_query_renderable_geometries_prefilter() -> None:
     assert set(result) == {keys[0], keys[2], keys[3], keys[4], keys[5]}
 
 
+def test_sqlite_query_mvt_records_projects_requested_fields_and_json_types() -> None:
+    """The MVT hot path should project only requested fields with JSON semantics."""
+    store = SQLiteStore(compression=None)
+    cell_key = store.append(
+        Annotation(
+            Point(2, 3),
+            properties={
+                "type": "cell",
+                "score": 0.5,
+                "flag": True,
+                "items": ["a", 1],
+                "meta": {"stage": 2},
+                "nullable": None,
+            },
+        ),
+    )
+    store.append(Annotation(Point(20, 20), properties={"type": "other"}))
+
+    records = store.query_mvt_records(
+        (0, 0, 10, 10),
+        where='props["type"] == "cell"',
+        geometry_predicate="bbox_intersects",
+        property_fields=("type", "score", "flag", "items", "meta", "nullable", "missing"),
+        centroids=True,
+    )
+
+    assert len(records) == 1
+    geometry_wkb, properties = records[0]
+    assert AnnotationStore.deserialize_geometry(geometry_wkb).equals(Point(2, 3))
+    assert properties == {
+        "id": cell_key,
+        "type": "cell",
+        "score": 0.5,
+        "flag": True,
+        "items": ["a", 1],
+        "meta": {"stage": 2},
+        "nullable": None,
+    }
+
+
 def test_auto_commit(fill_store: Callable, track_tmp_path: Path) -> None:
     """Test auto commit.
 

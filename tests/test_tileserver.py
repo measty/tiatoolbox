@@ -1283,7 +1283,12 @@ def test_get_annotations_mvt_centroid_representation_uses_points(
 
     def fake_encode_annotation_layer(*args: object, **_kwargs: object) -> bytes:
         annotations = args[1]
-        captured_types.append([type(geometry).__name__ for geometry, _ in annotations])
+        geometry_types: list[str] = []
+        for geometry, _ in annotations:
+            if isinstance(geometry, bytes):
+                geometry = AnnotationStore.deserialize_geometry(geometry)
+            geometry_types.append(type(geometry).__name__)
+        captured_types.append(geometry_types)
         return b"mvt"
 
     monkeypatch.setattr(
