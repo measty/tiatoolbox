@@ -1089,7 +1089,7 @@ def test_get_layers_metadata_uses_zoom_representations_for_dense_overlay(
             "overview",
             "full",
         ]
-        assert representations[0]["geometry_type"] == "polygon"
+        assert representations[0]["geometry_type"] == "mixed"
         assert representations[0]["max_zoom"] == 1
         assert representations[0]["vector_url"].endswith(
             "/mvt/overview/{z}/{x}/{y}.pbf",
@@ -1571,11 +1571,11 @@ def test_get_annotations_mvt_cache_serves_conditional_hits_without_reencoding(
     assert encode_calls == 1
 
 
-def test_get_annotations_mvt_overview_representation_aggregates_features(
+def test_get_annotations_mvt_overview_representation_blends_cells_with_geometry(
     app_alt: TileServer,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The overview path should emit aggregated cells instead of per-object points."""
+    """The overview path should mix aggregated cells with visibly large geometry."""
     captured_tiles: list[dict[str, object]] = []
 
     def fake_encode_annotation_layer(*args: object, **_kwargs: object) -> bytes:
@@ -1609,9 +1609,25 @@ def test_get_annotations_mvt_overview_representation_aggregates_features(
     assert overview_response.status_code == 200
     assert centroid_response.status_code == 200
     assert captured_tiles[0]["count"] < captured_tiles[1]["count"]
-    assert set(captured_tiles[0]["geometry_types"]) == {"Polygon"}
-    assert all("count" in properties for properties in captured_tiles[0]["properties"])
-    assert any("type" in properties for properties in captured_tiles[0]["properties"])
+    assert "Polygon" in captured_tiles[0]["geometry_types"]
+    assert "LineString" in captured_tiles[0]["geometry_types"]
+
+    density_properties = [
+        properties
+        for properties in captured_tiles[0]["properties"]
+        if properties.get("overview_kind") == "density"
+    ]
+    geometry_properties = [
+        properties
+        for properties in captured_tiles[0]["properties"]
+        if properties.get("overview_kind") == "geometry"
+    ]
+
+    assert density_properties
+    assert geometry_properties
+    assert all("count" in properties for properties in density_properties)
+    assert all("count" not in properties for properties in geometry_properties)
+    assert any(properties.get("type") == "line" for properties in geometry_properties)
 
 
 def test_get_annotation_details(app_alt: TileServer) -> None:

@@ -42,6 +42,11 @@
   ];
 
   const DENSE_POLYGON_STROKE_ZOOM_OFFSET = 2;
+  const ANNOTATION_OVERVIEW_KIND_PROPERTY = "overview_kind";
+  const ANNOTATION_OVERVIEW_KIND_DENSITY = "density";
+  const ANNOTATION_OVERVIEW_KIND_GEOMETRY = "geometry";
+  const OVERVIEW_DENSITY_MIN_COUNT = 4;
+  const OVERVIEW_DENSITY_MAX_COUNT = 128;
 
   const state = {
     annotationFilter: "",
@@ -949,7 +954,11 @@
     elements.legend.classList.add("empty");
   }
 
-  function overviewDensityFactor(feature, resolution) {
+  function clamp01(value) {
+    return Math.max(0, Math.min(1, value));
+  }
+
+  function overviewRepresentationState(feature, resolution) {
     const zoom = zoomForResolution(resolution);
     if (zoom === null || !state.annotationMeta) {
       return null;
@@ -960,16 +969,47 @@
       return null;
     }
 
-    if (!feature || typeof feature.get !== "function") {
-      return 0;
+    const minZoom = Number(representation.min_zoom ?? 0);
+    const maxZoom = Number.isFinite(representation.max_zoom) ? representation.max_zoom : zoom;
+    const zoomSpan = Math.max(1, maxZoom - minZoom + 1);
+    const zoomProgress = clamp01((zoom - minZoom + 1) / zoomSpan);
+
+    let overviewKind = ANNOTATION_OVERVIEW_KIND_DENSITY;
+    if (feature && typeof feature.get === "function") {
+      const explicitKind = feature.get(ANNOTATION_OVERVIEW_KIND_PROPERTY);
+      if (explicitKind === ANNOTATION_OVERVIEW_KIND_GEOMETRY) {
+        overviewKind = ANNOTATION_OVERVIEW_KIND_GEOMETRY;
+      } else if (explicitKind === ANNOTATION_OVERVIEW_KIND_DENSITY) {
+        overviewKind = ANNOTATION_OVERVIEW_KIND_DENSITY;
+      } else {
+        const count = Number(feature.get("count"));
+        overviewKind = Number.isFinite(count)
+          ? ANNOTATION_OVERVIEW_KIND_DENSITY
+          : ANNOTATION_OVERVIEW_KIND_GEOMETRY;
+      }
+    }
+
+    return {
+      kind: overviewKind,
+      zoomProgress: zoomProgress,
+    };
+  }
+
+  function overviewDensityFactor(feature, resolution) {
+    const overviewState = overviewRepresentationState(feature, resolution);
+    if (!overviewState || overviewState.kind !== ANNOTATION_OVERVIEW_KIND_DENSITY) {
+      return null;
     }
 
     const count = Number(feature.get("count"));
-    if (!Number.isFinite(count) || count <= 1) {
+    if (!Number.isFinite(count) || count <= OVERVIEW_DENSITY_MIN_COUNT) {
       return 0;
     }
 
-    return Math.max(0, Math.min(1, Math.log2(count + 1) / 6));
+    return clamp01(
+      (Math.log2(count) - Math.log2(OVERVIEW_DENSITY_MIN_COUNT)) /
+        (Math.log2(OVERVIEW_DENSITY_MAX_COUNT) - Math.log2(OVERVIEW_DENSITY_MIN_COUNT)),
+    );
   }
 
   function blendRgb(rgb, target, ratio) {
@@ -978,17 +1018,38 @@
     );
   }
 
+  function overviewFillState(feature, resolution, rgb, opacity) {
+    const overviewState = overviewRepresentationState(feature, resolution);
+    if (!overviewState) {
+      return null;
+    }
+
+    if (overviewState.kind === ANNOTATION_OVERVIEW_KIND_GEOMETRY) {
+      return {
+        fillRgb: blendRgb(rgb, [255, 255, 255], 0.48 - (overviewState.zoomProgress * 0.12)),
+        fillAlpha: opacity * (0.16 + (overviewState.zoomProgress * 0.06)),
+        strokeAlpha: Math.min(1, opacity * (0.75 + (overviewState.zoomProgress * 0.1))),
+      };
+    }
+
+    const densityFactor = overviewDensityFactor(feature, resolution) ?? 0;
+    return {
+      fillRgb: blendRgb(rgb, [255, 255, 255], 0.88 - (densityFactor * 0.4)),
+      fillAlpha: opacity * (0.04 + (Math.pow(densityFactor, 1.5) * 0.24)),
+      strokeAlpha: Math.min(1, opacity * (0.55 + (densityFactor * 0.15))),
+    };
+  }
+
   function annotationStyle(feature, resolution) {
     const color = featureColor(feature);
     const rgb = toRgb(color);
-    const densityFactor = overviewDensityFactor(feature, resolution);
-    const fillRgb =
-      densityFactor === null
-        ? rgb
-        : blendRgb(rgb, [255, 255, 255], 0.65 * (1 - densityFactor));
     const opacity = Number(elements.annotationOpacity.value);
-    const strokeAlpha = Math.min(1, opacity + 0.2);
-    const fillAlpha = opacity * (densityFactor === null ? 0.28 : 0.16 + densityFactor * 0.56);
+    const overviewStyle = overviewFillState(feature, resolution, rgb, opacity);
+    const fillRgb = overviewStyle ? overviewStyle.fillRgb : rgb;
+    const strokeAlpha = overviewStyle
+      ? overviewStyle.strokeAlpha
+      : Math.min(1, opacity + 0.2);
+    const fillAlpha = overviewStyle ? overviewStyle.fillAlpha : opacity * 0.28;
     const geometryType = feature.getGeometry().getType();
     const polygonStrokeEnabled =
       !geometryType.includes("Polygon") || shouldRenderPolygonStroke(resolution);

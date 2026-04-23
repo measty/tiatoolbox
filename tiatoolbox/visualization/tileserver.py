@@ -92,6 +92,12 @@ ANNOTATION_MVT_CENTROID_REPRESENTATION = "centroids"
 ANNOTATION_MVT_LOW_ZOOM_POINT_MIN_FEATURES = 5000
 ANNOTATION_MVT_FULL_GEOMETRY_MAX_DOWNSAMPLE = 8.0
 ANNOTATION_MVT_OVERVIEW_GRID_PIXEL_SIZE = 24
+ANNOTATION_MVT_OVERVIEW_GEOMETRY_MIN_SPAN_CELLS = 1.25
+ANNOTATION_MVT_OVERVIEW_GEOMETRY_MIN_AREA_CELLS = 1.5
+ANNOTATION_MVT_OVERVIEW_SIMPLIFICATION_PIXEL_TOLERANCE = 1.0
+ANNOTATION_MVT_OVERVIEW_KIND_PROPERTY = "overview_kind"
+ANNOTATION_MVT_OVERVIEW_KIND_DENSITY = "density"
+ANNOTATION_MVT_OVERVIEW_KIND_GEOMETRY = "geometry"
 ANNOTATION_TILE_DEFAULT_PROPERTY_FIELDS = ("type",)
 ANNOTATION_MVT_CACHE_MAX_ENTRIES = 256
 ANNOTATION_GEOJSON_AUTO_MAX_FEATURES = 2000
@@ -705,6 +711,29 @@ class TileServer(Flask):
         }
 
     @staticmethod
+    def _get_annotation_overview_hints(
+        slide_units_per_pixel: float,
+    ) -> dict[str, float]:
+        """Return thresholds for the hybrid overview representation."""
+        cell_size = max(
+            slide_units_per_pixel * ANNOTATION_MVT_OVERVIEW_GRID_PIXEL_SIZE,
+            1.0,
+        )
+        return {
+            "cell_size": cell_size,
+            "min_bbox_size": (
+                cell_size * ANNOTATION_MVT_OVERVIEW_GEOMETRY_MIN_SPAN_CELLS
+            ),
+            "min_polygon_area": (
+                (cell_size**2) * ANNOTATION_MVT_OVERVIEW_GEOMETRY_MIN_AREA_CELLS
+            ),
+            "simplify_tolerance": (
+                slide_units_per_pixel
+                * ANNOTATION_MVT_OVERVIEW_SIMPLIFICATION_PIXEL_TOLERANCE
+            ),
+        }
+
+    @staticmethod
     def _annotation_mvt_url(
         name: str,
         session_id: str,
@@ -745,21 +774,25 @@ class TileServer(Flask):
         tile_bounds: tuple[int, int, int, int],
         slide_units_per_pixel: float,
         color_property: str | None,
+        excluded_keys: set[str] | None = None,
     ) -> dict[str, Annotation]:
         """Aggregate centroid points into a coarse grid for overview rendering."""
-        cell_size = max(
-            slide_units_per_pixel * ANNOTATION_MVT_OVERVIEW_GRID_PIXEL_SIZE,
-            1.0,
+        overview_hints = TileServer._get_annotation_overview_hints(
+            slide_units_per_pixel,
         )
+        cell_size = overview_hints["cell_size"]
         min_x, min_y, max_x, max_y = tile_bounds
         max_cell_x = max(int(np.ceil((max_x - min_x) / cell_size)) - 1, 0)
         max_cell_y = max(int(np.ceil((max_y - min_y) / cell_size)) - 1, 0)
+        excluded_keys = excluded_keys or set()
 
         overview_cells: dict[
             tuple[int, int],
             dict[str, object],
         ] = {}
-        for annotation in annotations.values():
+        for key, annotation in annotations.items():
+            if key in excluded_keys:
+                continue
             centroid = annotation.geometry
             cell_x = int(np.floor((centroid.x - min_x) / cell_size))
             cell_y = int(np.floor((centroid.y - min_y) / cell_size))
@@ -783,12 +816,18 @@ class TileServer(Flask):
                     cell["property_values"][value_key] = value
 
         overview_annotations: dict[str, Annotation] = {}
-        for (cell_x, cell_y), cell in overview_cells.items():
+        for cell_x, cell_y in sorted(overview_cells):
+            cell = overview_cells[(cell_x, cell_y)]
             cell_min_x = min_x + (cell_x * cell_size)
             cell_min_y = min_y + (cell_y * cell_size)
             cell_max_x = min(max_x, cell_min_x + cell_size)
             cell_max_y = min(max_y, cell_min_y + cell_size)
-            properties = {"count": int(cell["count"])}
+            properties = {
+                "count": int(cell["count"]),
+                ANNOTATION_MVT_OVERVIEW_KIND_PROPERTY: (
+                    ANNOTATION_MVT_OVERVIEW_KIND_DENSITY
+                ),
+            }
             if color_property and cell["properties"]:
                 dominant_value_key = max(
                     cell["properties"].items(),
@@ -802,6 +841,52 @@ class TileServer(Flask):
                 properties,
             )
         return overview_annotations
+
+    @staticmethod
+    def _annotation_is_prominent_overview_geometry(
+        annotation: Annotation,
+        overview_hints: dict[str, float],
+    ) -> bool:
+        """Return whether an annotation should keep real geometry in overview."""
+        geometry = annotation.geometry
+        if geometry.is_empty or geometry.geom_type in {"Point", "MultiPoint"}:
+            return False
+
+        min_bbox_size = float(overview_hints["min_bbox_size"])
+        min_polygon_area = float(overview_hints["min_polygon_area"])
+        bounds = geometry.bounds
+        max_span = max(bounds[2] - bounds[0], bounds[3] - bounds[1])
+        return geometry.area >= min_polygon_area or max_span >= min_bbox_size
+
+    @staticmethod
+    def _project_annotation_overview_geometry(
+        annotations: dict[str, Annotation],
+        overview_hints: dict[str, float],
+        color_property: str | None = None,
+        requested_fields: tuple[str, ...] = (),
+    ) -> dict[str, Annotation]:
+        """Keep visibly large annotations as simplified overview geometry."""
+        overview_geometry: dict[str, Annotation] = {}
+        for key in sorted(annotations):
+            annotation = annotations[key]
+            if not TileServer._annotation_is_prominent_overview_geometry(
+                annotation,
+                overview_hints,
+            ):
+                continue
+
+            properties = TileServer._project_annotation_tile_properties(
+                key,
+                annotation.properties,
+                color_property=color_property,
+                requested_fields=requested_fields,
+            )
+            properties[ANNOTATION_MVT_OVERVIEW_KIND_PROPERTY] = (
+                ANNOTATION_MVT_OVERVIEW_KIND_GEOMETRY
+            )
+            overview_geometry[key] = Annotation(annotation.geometry, properties)
+
+        return overview_geometry
 
     def _get_annotation_vector_representations(
         self: TileServer,
@@ -833,7 +918,7 @@ class TileServer(Flask):
             representations.append(
                 {
                     "id": ANNOTATION_MVT_OVERVIEW_REPRESENTATION,
-                    "geometry_type": "polygon",
+                    "geometry_type": "mixed",
                     "min_zoom": 0,
                     "max_zoom": full_geometry_min_zoom - 1,
                     "vector_format": "mvt",
@@ -1003,6 +1088,33 @@ class TileServer(Flask):
                     ),
                     False,
                 )
+            overview_hints = TileServer._get_annotation_overview_hints(
+                float(render_hints["slide_units_per_pixel"]),
+            )
+            try:
+                overview_geometries = ann_layer.store.query_renderable_geometries(
+                    geometry=tile_bounds,
+                    where=where,
+                    geometry_predicate="bbox_intersects",
+                    min_area=overview_hints["min_polygon_area"],
+                    min_bbox_size=overview_hints["min_bbox_size"],
+                )
+            except ValueError:
+                overview_geometries = ann_layer.store.query(
+                    geometry=tile_bounds,
+                    where=where,
+                    geometry_predicate="bbox_intersects",
+                    order_by_area=False,
+                )
+
+            projected_overview_geometries = (
+                TileServer._project_annotation_overview_geometry(
+                    overview_geometries,
+                    overview_hints,
+                    color_property=color_property,
+                    requested_fields=requested_fields,
+                )
+            )
             annotations = ann_layer.store.query_centroids(
                 geometry=tile_bounds,
                 where=where,
@@ -1013,7 +1125,9 @@ class TileServer(Flask):
                 tile_bounds,
                 float(render_hints["slide_units_per_pixel"]),
                 color_property,
+                excluded_keys=set(projected_overview_geometries),
             )
+            annotations = {**annotations, **projected_overview_geometries}
             return (
                 [(ann.geometry, ann.properties) for ann in annotations.values()],
                 False,
@@ -1066,6 +1180,13 @@ class TileServer(Flask):
         representation: str,
     ) -> dict[str, float]:
         """Return encoding kwargs for a specific annotation representation."""
+        if representation == ANNOTATION_MVT_OVERVIEW_REPRESENTATION:
+            return {
+                "simplify_tolerance": (
+                    render_hints["slide_units_per_pixel"]
+                    * ANNOTATION_MVT_OVERVIEW_SIMPLIFICATION_PIXEL_TOLERANCE
+                ),
+            }
         if representation != ANNOTATION_MVT_FULL_REPRESENTATION:
             return {}
         return {
