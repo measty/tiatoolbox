@@ -486,7 +486,7 @@ test('updateLegend keeps the latest summary when earlier requests finish later',
   assert.match(elements.legend.innerHTML, /gradient-swatch/);
 });
 
-test('annotationStyle keeps overview polygons fill-only, then adds a handoff stroke', async () => {
+test('annotationStyle keeps overview polygons fill-only through the first handoff zoom', async () => {
   const { hooks } = createEnvironment(async () => response([]), { withOl: true });
 
   hooks.state.baseResolutions = [4, 2, 1, 0.5, 0.25];
@@ -520,8 +520,7 @@ test('annotationStyle keeps overview polygons fill-only, then adds a handoff str
   assert.equal(hooks.shouldRenderPolygonStroke(4), false);
   assert.equal(overviewStyle.stroke, undefined);
   assert.equal(hooks.shouldRenderPolygonStroke(1), false);
-  assert.notEqual(handoffStyle.stroke, undefined);
-  assert.equal(handoffStyle.stroke.width, 1);
+  assert.equal(handoffStyle.stroke, undefined);
   assert.notEqual(highZoomStyle.stroke, undefined);
   assert.equal(highZoomStyle.stroke.width, 1.4);
 });
@@ -660,7 +659,7 @@ test('annotationStyle keeps overview geometry more visible than density cells', 
   assert.equal(geometryStyle.stroke, undefined);
 });
 
-test('annotationStyle boosts polygon visibility at the first full-geometry handoff zoom', async () => {
+test('annotationStyle boosts polygon fill visibility at the first full-geometry handoff zoom', async () => {
   const { hooks } = createEnvironment(async () => response([]), { withOl: true });
 
   hooks.state.baseResolutions = [4, 2, 1, 0.5, 0.25];
@@ -691,18 +690,14 @@ test('annotationStyle boosts polygon visibility at the first full-geometry hando
   const strokedStyle = hooks.annotationStyle(feature, 0.5);
   const handoffFill = handoffStyle.fill.color.match(/\d+(?:\.\d+)?/g).map(Number);
   const strokedFill = strokedStyle.fill.color.match(/\d+(?:\.\d+)?/g).map(Number);
-  const handoffStroke = handoffStyle.stroke.color.match(/\d+(?:\.\d+)?/g).map(Number);
 
   assert.equal(hooks.shouldRenderPolygonStroke(1), false);
-  assert.notEqual(handoffStyle.stroke, undefined);
-  assert.equal(handoffStyle.stroke.width, 1);
+  assert.equal(handoffStyle.stroke, undefined);
   assert.equal(hooks.shouldRenderPolygonStroke(0.5), true);
   assert.notEqual(strokedStyle.stroke, undefined);
   assert.ok(handoffFill[3] > strokedFill[3]);
   assert.ok(handoffFill[3] > 0.3);
   assert.ok(handoffFill[3] < 0.31);
-  assert.ok(handoffStroke[3] > 0.6);
-  assert.ok(handoffStroke[3] < 0.61);
   assert.ok(strokedFill[3] > 0.22);
   assert.ok(strokedFill[3] < 0.23);
 });

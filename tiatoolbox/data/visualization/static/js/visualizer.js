@@ -1099,24 +1099,16 @@
       !overviewStyle && geometryType.includes("Polygon")
         ? fullGeometryHandoffFactor(resolution)
         : null;
-    const handoffStrokeEnabled =
-      handoffFactor !== null && handoffFactor < 1 && !polygonStrokeEnabled;
     const fillRgb = overviewStyle ? overviewStyle.fillRgb : rgb;
     const strokeAlpha = overviewStyle
       ? overviewStyle.strokeAlpha
-      : handoffStrokeEnabled
-        ? Math.min(1, opacity * (0.72 + (handoffFactor * 0.08)))
-        : Math.min(1, opacity + 0.2);
+      : Math.min(1, opacity + 0.2);
     const fillAlpha = overviewStyle
       ? overviewStyle.fillAlpha
-      : handoffStrokeEnabled
+      : handoffFactor !== null && handoffFactor < 1 && !polygonStrokeEnabled
         ? opacity * (0.34 + (handoffFactor * 0.08))
         : opacity * 0.28;
-    const strokeMode = polygonStrokeEnabled
-      ? "stroke"
-      : handoffStrokeEnabled
-        ? "handoff-stroke"
-        : "fill";
+    const strokeMode = polygonStrokeEnabled ? "stroke" : "fill";
     const cacheKey = `${geometryType}:${fillRgb.join(",")}:${strokeAlpha.toFixed(3)}:${fillAlpha.toFixed(3)}:${strokeMode}`;
 
     if (state.annotationStyleCache.has(cacheKey)) {
@@ -1151,10 +1143,10 @@
       fill: new ol.style.Fill({
         color: toRgba(fillRgb, fillAlpha),
       }),
-      stroke: polygonStrokeEnabled || handoffStrokeEnabled
+      stroke: polygonStrokeEnabled
         ? new ol.style.Stroke({
             color: toRgba(rgb, strokeAlpha),
-            width: handoffStrokeEnabled ? 1 : 1.4,
+            width: 1.4,
           })
         : undefined,
     });
