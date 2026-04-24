@@ -486,7 +486,7 @@ test('updateLegend keeps the latest summary when earlier requests finish later',
   assert.match(elements.legend.innerHTML, /gradient-swatch/);
 });
 
-test('annotationStyle skips dense polygon strokes until higher zooms', async () => {
+test('annotationStyle keeps overview polygons fill-only, then adds a handoff stroke', async () => {
   const { hooks } = createEnvironment(async () => response([]), { withOl: true });
 
   hooks.state.baseResolutions = [4, 2, 1, 0.5, 0.25];
@@ -501,6 +501,9 @@ test('annotationStyle skips dense polygon strokes until higher zooms', async () 
   };
 
   const feature = {
+    get() {
+      return undefined;
+    },
     getGeometry() {
       return {
         getType() {
@@ -510,11 +513,15 @@ test('annotationStyle skips dense polygon strokes until higher zooms', async () 
     },
   };
 
-  const lowZoomStyle = hooks.annotationStyle(feature, 1);
+  const overviewStyle = hooks.annotationStyle(feature, 4);
+  const handoffStyle = hooks.annotationStyle(feature, 1);
   const highZoomStyle = hooks.annotationStyle(feature, 0.25);
 
   assert.equal(hooks.shouldRenderPolygonStroke(4), false);
-  assert.equal(lowZoomStyle.stroke, undefined);
+  assert.equal(overviewStyle.stroke, undefined);
+  assert.equal(hooks.shouldRenderPolygonStroke(1), false);
+  assert.notEqual(handoffStyle.stroke, undefined);
+  assert.equal(handoffStyle.stroke.width, 1);
   assert.notEqual(highZoomStyle.stroke, undefined);
   assert.equal(highZoomStyle.stroke.width, 1.4);
 });
@@ -543,14 +550,14 @@ test('annotationStyle caches fill-only and stroked polygon variants separately',
     },
   };
 
-  const fillOnlyStyle = hooks.annotationStyle(feature, 1);
+  const handoffStyle = hooks.annotationStyle(feature, 1);
   const strokedStyle = hooks.annotationStyle(feature, 0.25);
 
-  assert.notEqual(fillOnlyStyle, strokedStyle);
+  assert.notEqual(handoffStyle, strokedStyle);
   assert.equal(hooks.state.annotationStyleCache.size, 2);
 });
 
-test('annotationStyle makes overview density cells much gentler until clusters get dense', async () => {
+test('annotationStyle makes overview density cells readable before clusters get dense', async () => {
   const { hooks } = createEnvironment(async () => response([]), { withOl: true });
 
   hooks.state.baseResolutions = [4, 2, 1, 0.5, 0.25];
@@ -592,9 +599,10 @@ test('annotationStyle makes overview density cells much gentler until clusters g
   const denseComponents = denseStyle.fill.color.match(/\d+(?:\.\d+)?/g).map(Number);
 
   assert.notEqual(sparseStyle.fill.color, denseStyle.fill.color);
-  assert.ok(sparseComponents[3] < 0.04);
-  assert.ok(denseComponents[3] > 0.16);
-  assert.ok(denseComponents[3] < 0.18);
+  assert.ok(sparseComponents[3] > 0.12);
+  assert.ok(sparseComponents[3] < 0.13);
+  assert.ok(denseComponents[3] > 0.25);
+  assert.ok(denseComponents[3] < 0.26);
   assert.ok(sparseComponents[0] > denseComponents[0]);
   assert.ok(sparseComponents[1] > denseComponents[1]);
   assert.ok(sparseComponents[2] > denseComponents[2]);
@@ -644,11 +652,59 @@ test('annotationStyle keeps overview geometry more visible than density cells', 
   const geometryComponents = geometryStyle.fill.color.match(/\d+(?:\.\d+)?/g).map(Number);
 
   assert.ok(geometryComponents[3] > densityComponents[3]);
-  assert.ok(geometryComponents[3] < 0.2);
+  assert.ok(geometryComponents[3] > 0.26);
+  assert.ok(geometryComponents[3] < 0.27);
   assert.ok(geometryComponents[0] < densityComponents[0]);
   assert.ok(geometryComponents[1] < densityComponents[1]);
   assert.ok(geometryComponents[2] < densityComponents[2]);
   assert.equal(geometryStyle.stroke, undefined);
+});
+
+test('annotationStyle boosts polygon visibility at the first full-geometry handoff zoom', async () => {
+  const { hooks } = createEnvironment(async () => response([]), { withOl: true });
+
+  hooks.state.baseResolutions = [4, 2, 1, 0.5, 0.25];
+  hooks.state.annotationMeta = {
+    name: 'overlay',
+    path: '/tmp/overlay.db',
+    vector_format: 'mvt',
+    vector_representations: [
+      { id: 'overview', min_zoom: 0, max_zoom: 1, geometry_type: 'polygon' },
+      { id: 'full', min_zoom: 2, geometry_type: 'mixed' },
+    ],
+  };
+
+  const feature = {
+    get() {
+      return undefined;
+    },
+    getGeometry() {
+      return {
+        getType() {
+          return 'Polygon';
+        },
+      };
+    },
+  };
+
+  const handoffStyle = hooks.annotationStyle(feature, 1);
+  const strokedStyle = hooks.annotationStyle(feature, 0.5);
+  const handoffFill = handoffStyle.fill.color.match(/\d+(?:\.\d+)?/g).map(Number);
+  const strokedFill = strokedStyle.fill.color.match(/\d+(?:\.\d+)?/g).map(Number);
+  const handoffStroke = handoffStyle.stroke.color.match(/\d+(?:\.\d+)?/g).map(Number);
+
+  assert.equal(hooks.shouldRenderPolygonStroke(1), false);
+  assert.notEqual(handoffStyle.stroke, undefined);
+  assert.equal(handoffStyle.stroke.width, 1);
+  assert.equal(hooks.shouldRenderPolygonStroke(0.5), true);
+  assert.notEqual(strokedStyle.stroke, undefined);
+  assert.ok(handoffFill[3] > strokedFill[3]);
+  assert.ok(handoffFill[3] > 0.3);
+  assert.ok(handoffFill[3] < 0.31);
+  assert.ok(handoffStroke[3] > 0.6);
+  assert.ok(handoffStroke[3] < 0.61);
+  assert.ok(strokedFill[3] > 0.22);
+  assert.ok(strokedFill[3] < 0.23);
 });
 
 test('createAnnotationLayer refuses unsafe GeoJSON fallback for large overlays', async () => {

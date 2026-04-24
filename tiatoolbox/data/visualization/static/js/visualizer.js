@@ -41,12 +41,12 @@
     "#2563eb",
   ];
 
-  const DENSE_POLYGON_STROKE_ZOOM_OFFSET = 2;
+  const DENSE_POLYGON_STROKE_ZOOM_OFFSET = 1;
   const ANNOTATION_OVERVIEW_KIND_PROPERTY = "overview_kind";
   const ANNOTATION_OVERVIEW_KIND_DENSITY = "density";
   const ANNOTATION_OVERVIEW_KIND_GEOMETRY = "geometry";
-  const OVERVIEW_DENSITY_MIN_COUNT = 4;
-  const OVERVIEW_DENSITY_MAX_COUNT = 128;
+  const OVERVIEW_DENSITY_MIN_COUNT = 1;
+  const OVERVIEW_DENSITY_MAX_COUNT = 96;
 
   const state = {
     annotationFilter: "",
@@ -958,21 +958,35 @@
     return Math.max(0, Math.min(1, value));
   }
 
-  function overviewRepresentationState(feature, resolution) {
+  function currentAnnotationRepresentationState(resolution) {
     const zoom = zoomForResolution(resolution);
     if (zoom === null || !state.annotationMeta) {
       return null;
     }
 
     const representation = selectAnnotationRepresentation(state.annotationMeta, zoom);
-    if (!representation || representation.id !== "overview") {
+    if (!representation) {
       return null;
     }
 
-    const minZoom = Number(representation.min_zoom ?? 0);
-    const maxZoom = Number.isFinite(representation.max_zoom) ? representation.max_zoom : zoom;
+    return {
+      zoom: zoom,
+      representation: representation,
+    };
+  }
+
+  function overviewRepresentationState(feature, resolution) {
+    const representationState = currentAnnotationRepresentationState(resolution);
+    if (!representationState || representationState.representation.id !== "overview") {
+      return null;
+    }
+
+    const minZoom = Number(representationState.representation.min_zoom ?? 0);
+    const maxZoom = Number.isFinite(representationState.representation.max_zoom)
+      ? representationState.representation.max_zoom
+      : representationState.zoom;
     const zoomSpan = Math.max(1, maxZoom - minZoom + 1);
-    const zoomProgress = clamp01((zoom - minZoom + 1) / zoomSpan);
+    const zoomProgress = clamp01((representationState.zoom - minZoom + 1) / zoomSpan);
 
     let overviewKind = ANNOTATION_OVERVIEW_KIND_DENSITY;
     if (feature && typeof feature.get === "function") {
@@ -993,6 +1007,26 @@
       kind: overviewKind,
       zoomProgress: zoomProgress,
     };
+  }
+
+  function fullGeometryHandoffFactor(resolution) {
+    const representationState = currentAnnotationRepresentationState(resolution);
+    if (!representationState || representationState.representation.id !== "full") {
+      return null;
+    }
+
+    const strokeMinZoom = polygonStrokeMinZoom(state.annotationMeta);
+    if (strokeMinZoom === null) {
+      return null;
+    }
+
+    const fullMinZoom = Number(representationState.representation.min_zoom ?? 0);
+    if (representationState.zoom >= strokeMinZoom) {
+      return 1;
+    }
+
+    const zoomSpan = Math.max(1, strokeMinZoom - fullMinZoom + 1);
+    return clamp01((representationState.zoom - fullMinZoom + 1) / zoomSpan);
   }
 
   function overviewDensityFactor(feature, resolution) {
@@ -1026,17 +1060,30 @@
 
     if (overviewState.kind === ANNOTATION_OVERVIEW_KIND_GEOMETRY) {
       return {
-        fillRgb: blendRgb(rgb, [255, 255, 255], 0.48 - (overviewState.zoomProgress * 0.12)),
-        fillAlpha: opacity * (0.16 + (overviewState.zoomProgress * 0.06)),
-        strokeAlpha: Math.min(1, opacity * (0.75 + (overviewState.zoomProgress * 0.1))),
+        fillRgb: blendRgb(
+          rgb,
+          [255, 255, 255],
+          clamp01(0.34 - (overviewState.zoomProgress * 0.08)),
+        ),
+        fillAlpha: opacity * (0.25 + (overviewState.zoomProgress * 0.08)),
+        strokeAlpha: Math.min(1, opacity * (0.86 + (overviewState.zoomProgress * 0.08))),
       };
     }
 
     const densityFactor = overviewDensityFactor(feature, resolution) ?? 0;
     return {
-      fillRgb: blendRgb(rgb, [255, 255, 255], 0.88 - (densityFactor * 0.4)),
-      fillAlpha: opacity * (0.04 + (Math.pow(densityFactor, 1.5) * 0.24)),
-      strokeAlpha: Math.min(1, opacity * (0.55 + (densityFactor * 0.15))),
+      fillRgb: blendRgb(
+        rgb,
+        [255, 255, 255],
+        clamp01(0.7 - (densityFactor * 0.22) - (overviewState.zoomProgress * 0.06)),
+      ),
+      fillAlpha:
+        opacity *
+        (0.11 + (overviewState.zoomProgress * 0.05) + (Math.pow(densityFactor, 1.05) * 0.17)),
+      strokeAlpha: Math.min(
+        1,
+        opacity * (0.68 + (overviewState.zoomProgress * 0.12) + (densityFactor * 0.08)),
+      ),
     };
   }
 
@@ -1045,15 +1092,32 @@
     const rgb = toRgb(color);
     const opacity = Number(elements.annotationOpacity.value);
     const overviewStyle = overviewFillState(feature, resolution, rgb, opacity);
-    const fillRgb = overviewStyle ? overviewStyle.fillRgb : rgb;
-    const strokeAlpha = overviewStyle
-      ? overviewStyle.strokeAlpha
-      : Math.min(1, opacity + 0.2);
-    const fillAlpha = overviewStyle ? overviewStyle.fillAlpha : opacity * 0.28;
     const geometryType = feature.getGeometry().getType();
     const polygonStrokeEnabled =
       !geometryType.includes("Polygon") || shouldRenderPolygonStroke(resolution);
-    const cacheKey = `${geometryType}:${fillRgb.join(",")}:${strokeAlpha.toFixed(3)}:${fillAlpha.toFixed(3)}:${polygonStrokeEnabled ? "stroke" : "fill"}`;
+    const handoffFactor =
+      !overviewStyle && geometryType.includes("Polygon")
+        ? fullGeometryHandoffFactor(resolution)
+        : null;
+    const handoffStrokeEnabled =
+      handoffFactor !== null && handoffFactor < 1 && !polygonStrokeEnabled;
+    const fillRgb = overviewStyle ? overviewStyle.fillRgb : rgb;
+    const strokeAlpha = overviewStyle
+      ? overviewStyle.strokeAlpha
+      : handoffStrokeEnabled
+        ? Math.min(1, opacity * (0.72 + (handoffFactor * 0.08)))
+        : Math.min(1, opacity + 0.2);
+    const fillAlpha = overviewStyle
+      ? overviewStyle.fillAlpha
+      : handoffStrokeEnabled
+        ? opacity * (0.34 + (handoffFactor * 0.08))
+        : opacity * 0.28;
+    const strokeMode = polygonStrokeEnabled
+      ? "stroke"
+      : handoffStrokeEnabled
+        ? "handoff-stroke"
+        : "fill";
+    const cacheKey = `${geometryType}:${fillRgb.join(",")}:${strokeAlpha.toFixed(3)}:${fillAlpha.toFixed(3)}:${strokeMode}`;
 
     if (state.annotationStyleCache.has(cacheKey)) {
       return state.annotationStyleCache.get(cacheKey);
@@ -1087,10 +1151,10 @@
       fill: new ol.style.Fill({
         color: toRgba(fillRgb, fillAlpha),
       }),
-      stroke: polygonStrokeEnabled
+      stroke: polygonStrokeEnabled || handoffStrokeEnabled
         ? new ol.style.Stroke({
             color: toRgba(rgb, strokeAlpha),
-            width: 1.4,
+            width: handoffStrokeEnabled ? 1 : 1.4,
           })
         : undefined,
     });
