@@ -104,6 +104,8 @@ if TYPE_CHECKING:  # pragma: no cover
 sqlite3.enable_callback_tracebacks(True)  # noqa: FBT003
 
 WKB_POINT_STRUCT = struct.Struct("<BIdd")
+CENTROID_SAMPLE_BUCKETS = 1_000_003
+CENTROID_SAMPLE_MULTIPLIER = 2_654_435_761
 
 # Only Python 3.10+ supports using slots for dataclasses
 # https://docs.python.org/3/library/dataclasses.html#dataclasses.dataclass
@@ -2518,9 +2520,95 @@ class SQLiteStore(AnnotationStore):
             register_custom_function("LISTSUM", 1, json_list_sum)
             register_custom_function("CONTAINS", 1, json_contains)
             register_custom_function("get_area", 3, get_area)
+            register_custom_function(
+                "stable_sample_key",
+                3,
+                self._stable_sample_key,
+                deterministic=True,
+            )
             self.cons[thread_id] = con
             return con
         return self.cons[thread_id]
+
+    @staticmethod
+    def _coerce_sample_seed_bytes(sample_seed: str | int | bytes) -> bytes:
+        """Normalize sampling seeds to bytes for hashing and SQL parameters."""
+        if isinstance(sample_seed, bytes):
+            return sample_seed
+        return str(sample_seed).encode("utf-8")
+
+    @staticmethod
+    def _validate_sample_fraction(sample_fraction: float) -> float:
+        """Validate and normalize centroid sampling fractions."""
+        sample_fraction = float(sample_fraction)
+        if not 0 < sample_fraction <= 1:
+            msg = "sample_fraction must be in the interval (0, 1]."
+            raise ValueError(msg)
+        return sample_fraction
+
+    @classmethod
+    def _sampling_threshold(cls, sample_fraction: float) -> int:
+        """Return the bucket threshold for a sample fraction."""
+        sample_fraction = cls._validate_sample_fraction(sample_fraction)
+        if sample_fraction >= 1:
+            return CENTROID_SAMPLE_BUCKETS
+        return max(1, int(np.ceil(sample_fraction * CENTROID_SAMPLE_BUCKETS)))
+
+    @classmethod
+    def _sampling_offset(cls, sample_seed: str | int | bytes) -> int:
+        """Return a stable integer offset derived from the sampling seed."""
+        seed_bytes = cls._coerce_sample_seed_bytes(sample_seed)
+        digest = hashlib.blake2b(
+            seed_bytes,
+            digest_size=8,
+            person=b"ttb-centroid",
+        ).digest()
+        return int.from_bytes(digest, byteorder="big") % CENTROID_SAMPLE_BUCKETS
+
+    @classmethod
+    def _stable_sampling_bucket(
+        cls,
+        key: str,
+        sample_seed: str | int | bytes,
+    ) -> int:
+        """Return a stable sampling bucket for an annotation key."""
+        hasher = hashlib.blake2b(digest_size=8, person=b"ttb-centroid")
+        hasher.update(cls._coerce_sample_seed_bytes(sample_seed))
+        hasher.update(b"\0")
+        hasher.update(key.encode("utf-8"))
+        return (
+            int.from_bytes(hasher.digest(), byteorder="big")
+            % CENTROID_SAMPLE_BUCKETS
+        )
+
+    @classmethod
+    def _stable_sample_key(
+        cls,
+        key: str,
+        sample_fraction: float,
+        sample_seed: str | int | bytes,
+    ) -> int:
+        """SQLite callback for stable key-based centroid sampling."""
+        threshold = cls._sampling_threshold(sample_fraction)
+        if threshold >= CENTROID_SAMPLE_BUCKETS:
+            return 1
+        return int(cls._stable_sampling_bucket(key, sample_seed) < threshold)
+
+    @classmethod
+    def _should_sample_position(
+        cls,
+        position: int,
+        sample_fraction: float,
+        sample_seed: str | int | bytes,
+    ) -> bool:
+        """Return whether a matched row position should be kept."""
+        threshold = cls._sampling_threshold(sample_fraction)
+        if threshold >= CENTROID_SAMPLE_BUCKETS:
+            return True
+        bucket = (
+            (position * CENTROID_SAMPLE_MULTIPLIER) + cls._sampling_offset(sample_seed)
+        ) % CENTROID_SAMPLE_BUCKETS
+        return bucket < threshold
 
     def serialise_geometry(  # type: ignore[override]  # skipcq: PYL-W0221
         self: SQLiteStore,
@@ -3293,26 +3381,123 @@ class SQLiteStore(AnnotationStore):
         where: Predicate | None = None,
         geometry_predicate: str = "intersects",
         distance: float = 0,
+        *,
+        sample_fraction: float = 1.0,
+        deterministic: bool = True,
+        sample_seed: str | int | bytes = 0,
     ) -> dict[str, Annotation]:
         """Query annotations as centroid point geometries.
 
         This avoids decoding the source geometry and is useful for coarse
         overview renderers where a representative point is sufficient.
+
+        Args:
+            geometry (QueryGeometry or None):
+                Geometry used to spatially constrain the centroid query.
+            where (Predicate or None):
+                Optional property predicate used to filter annotations.
+            geometry_predicate (str):
+                Spatial predicate applied to the query geometry.
+            distance (float):
+                Optional distance margin used by distance-aware predicates.
+            sample_fraction (float):
+                Fraction of centroid rows to keep. ``1.0`` preserves the current
+                exact behaviour. Values in ``(0, 1)`` sample the candidate stream
+                before ``Annotation`` materialisation when the predicate can be
+                executed fully in SQLite.
+            deterministic (bool):
+                Whether sampling should be stable per annotation using the
+                annotation key. Defaults to ``True``.
+            sample_seed (str or int or bytes):
+                Stable salt for deterministic sampling, or a phase offset for the
+                cheaper non-deterministic path.
         """
-        cur = self._query(
-            columns="[key], properties, cx, cy",
-            geometry=geometry,
-            geometry_predicate=geometry_predicate,
-            where=where,
-            distance=distance,
-            order_by_area=False,
-        )
-        rows = cur.fetchall()
+        if geometry is None and where is None:
+            msg = "At least one of `geometry` or `where` must be specified."
+            raise ValueError(msg)
+        if geometry_predicate not in self._geometry_predicate_names:
+            msg = (
+                "Invalid geometry predicate. Allowed values are: "
+                f"{', '.join(self._geometry_predicate_names)}."
+            )
+            raise ValueError(msg)
+
+        sample_fraction = self._validate_sample_fraction(sample_fraction)
+        columns = "[key], properties, cx, cy"
+
+        if callable(where):
+            cur = self._query(
+                columns=columns,
+                geometry=geometry,
+                geometry_predicate=geometry_predicate,
+                where=where,
+                distance=distance,
+                order_by_area=False,
+            )
+            rows = cur.fetchall()
+        else:
+            query_parameters: dict[str, object] = {}
+            query_string, query_parameters = self._initialize_query_string_parameters(
+                Polygon.from_bounds(*geometry)
+                if isinstance(geometry, Iterable)
+                else geometry,
+                query_parameters,
+                geometry_predicate,
+                columns,
+                where,
+                distance=distance,
+            )
+            if sample_fraction < 1:
+                if deterministic:
+                    query_string += (
+                        "\nAND stable_sample_key("  # skipcq: BAN-B608
+                        "annotations.[key], :sample_fraction, :sample_seed)"
+                    )
+                    query_parameters["sample_fraction"] = sample_fraction
+                    query_parameters["sample_seed"] = self._coerce_sample_seed_bytes(
+                        sample_seed,
+                    )
+                else:
+                    query_parameters.update(
+                        {
+                            "sample_bucket_count": CENTROID_SAMPLE_BUCKETS,
+                            "sample_bucket_threshold": self._sampling_threshold(
+                                sample_fraction,
+                            ),
+                            "sample_multiplier": CENTROID_SAMPLE_MULTIPLIER,
+                            "sample_offset": self._sampling_offset(sample_seed),
+                        },
+                    )
+                    query_string += (
+                        "\nAND ((((annotations.id * :sample_multiplier) + "
+                        ":sample_offset) % :sample_bucket_count) < "
+                        ":sample_bucket_threshold)"
+                    )
+            cur = self.con.cursor()
+            cur.execute(query_string, query_parameters)
+            rows = cur.fetchall()
+
+        sample_threshold = self._sampling_threshold(sample_fraction)
         centroids: dict[str, Annotation] = {}
+        matched_position = 0
         for key, properties, cx, cy in rows:
             parsed_properties = json.loads(properties)
             if callable(where) and not where(parsed_properties):
                 continue
+            if sample_fraction < 1:
+                keep = (
+                    self._stable_sampling_bucket(key, sample_seed)
+                    < sample_threshold
+                    if deterministic
+                    else self._should_sample_position(
+                        matched_position,
+                        sample_fraction,
+                        sample_seed,
+                    )
+                )
+                matched_position += 1
+                if not keep:
+                    continue
             centroids[key] = Annotation(Point(cx, cy), parsed_properties)
         return centroids
 

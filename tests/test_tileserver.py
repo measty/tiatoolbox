@@ -22,6 +22,9 @@ from tiatoolbox.cli.common import cli_name
 from tiatoolbox.utils import imread, imwrite
 from tiatoolbox.utils.misc import store_from_dat
 from tiatoolbox.visualization import TileServer
+from tiatoolbox.visualization.tileserver import (
+    ANNOTATION_MVT_OVERVIEW_CENTROID_SAMPLE_FRACTION,
+)
 from tiatoolbox.wsicore import WSIReader
 
 if TYPE_CHECKING:
@@ -1569,6 +1572,91 @@ def test_get_annotations_mvt_cache_serves_conditional_hits_without_reencoding(
     assert cached_response.status_code == 304
     assert query_calls == 1
     assert encode_calls == 1
+
+
+def test_aggregate_annotation_overview_reweights_sampled_counts() -> None:
+    """Sampled overview cells should scale counts back up before styling."""
+    annotations = {
+        "ann-1": Annotation(Point(10, 10), {"type": "cell"}),
+        "ann-2": Annotation(Point(11, 11), {"type": "cell"}),
+    }
+
+    overview = TileServer._aggregate_annotation_overview(
+        annotations,
+        (0, 0, 100, 100),
+        1.0,
+        "type",
+        sample_fraction=0.5,
+    )
+
+    assert len(overview) == 1
+    aggregated = next(iter(overview.values()))
+    assert aggregated.properties["count"] == 4
+    assert aggregated.properties["type"] == "cell"
+    assert aggregated.properties["overview_kind"] == "density"
+
+
+def test_query_annotations_for_mvt_overview_sampling_only_applies_to_dense_tiles(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Dense overview tiles should opt into centroid sampling, full tiles should not."""
+    sample_slide = WSIReader.open(np.zeros((1000, 1000, 3), dtype=np.uint8))
+    store = SQLiteStore(compression=None)
+    store.append_many(
+        [
+            Annotation(Point(i % 1000, i // 1000), {"type": "cell"})
+            for i in range(5500)
+        ],
+    )
+
+    app = TileServer("Testing TileServer", [sample_slide, store])
+    app.config.from_mapping({"TESTING": True})
+    ann_layer = app.pyramids["default"]["layer-1"]
+    tile_bounds = app._get_annotation_tile_bounds(ann_layer, 0, 0, 0)
+    render_hints = app._get_annotation_mvt_hints(ann_layer, 0)
+
+    recorded_calls: list[dict[str, object]] = []
+    original_query_centroids = store.query_centroids
+
+    def record_query_centroids(
+        *args: object,
+        **kwargs: object,
+    ) -> dict[str, Annotation]:
+        recorded_calls.append(dict(kwargs))
+        return original_query_centroids(*args, **kwargs)
+
+    monkeypatch.setattr(store, "query_centroids", record_query_centroids)
+
+    overview_annotations, _ = app._query_annotations_for_mvt(
+        ann_layer,
+        tile_bounds,
+        None,
+        render_hints,
+        "overview",
+        "type",
+        (),
+    )
+    app._query_annotations_for_mvt(
+        ann_layer,
+        tile_bounds,
+        None,
+        render_hints,
+        "full",
+        "type",
+        (),
+    )
+
+    assert len(recorded_calls) == 1
+    assert recorded_calls[0]["sample_fraction"] == (
+        ANNOTATION_MVT_OVERVIEW_CENTROID_SAMPLE_FRACTION
+    )
+    density_properties = [
+        properties
+        for _, properties in overview_annotations
+        if properties.get("overview_kind") == "density"
+    ]
+    assert density_properties
+    assert all(properties["count"] >= 1 for properties in density_properties)
 
 
 def test_get_annotations_mvt_overview_representation_blends_cells_with_geometry(

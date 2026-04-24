@@ -95,6 +95,7 @@ ANNOTATION_MVT_OVERVIEW_GRID_PIXEL_SIZE = 24
 ANNOTATION_MVT_OVERVIEW_GEOMETRY_MIN_SPAN_CELLS = 1.25
 ANNOTATION_MVT_OVERVIEW_GEOMETRY_MIN_AREA_CELLS = 1.5
 ANNOTATION_MVT_OVERVIEW_SIMPLIFICATION_PIXEL_TOLERANCE = 1.0
+ANNOTATION_MVT_OVERVIEW_CENTROID_SAMPLE_FRACTION = 0.25
 ANNOTATION_MVT_OVERVIEW_KIND_PROPERTY = "overview_kind"
 ANNOTATION_MVT_OVERVIEW_KIND_DENSITY = "density"
 ANNOTATION_MVT_OVERVIEW_KIND_GEOMETRY = "geometry"
@@ -775,8 +776,14 @@ class TileServer(Flask):
         slide_units_per_pixel: float,
         color_property: str | None,
         excluded_keys: set[str] | None = None,
+        *,
+        sample_fraction: float = 1.0,
     ) -> dict[str, Annotation]:
         """Aggregate centroid points into a coarse grid for overview rendering."""
+        if not 0 < sample_fraction <= 1:
+            msg = "sample_fraction must be in the interval (0, 1]."
+            raise ValueError(msg)
+
         overview_hints = TileServer._get_annotation_overview_hints(
             slide_units_per_pixel,
         )
@@ -785,6 +792,7 @@ class TileServer(Flask):
         max_cell_x = max(int(np.ceil((max_x - min_x) / cell_size)) - 1, 0)
         max_cell_y = max(int(np.ceil((max_y - min_y) / cell_size)) - 1, 0)
         excluded_keys = excluded_keys or set()
+        sample_weight = 1.0 / sample_fraction
 
         overview_cells: dict[
             tuple[int, int],
@@ -802,17 +810,17 @@ class TileServer(Flask):
             cell = overview_cells.setdefault(
                 cell_key,
                 {
-                    "count": 0,
-                    "properties": defaultdict(int),
+                    "count": 0.0,
+                    "properties": defaultdict(float),
                     "property_values": {},
                 },
             )
-            cell["count"] = int(cell["count"]) + 1
+            cell["count"] = float(cell["count"]) + sample_weight
             if color_property:
                 value = annotation.properties.get(color_property)
                 if value is not None:
                     value_key = json.dumps(value, sort_keys=True, default=str)
-                    cell["properties"][value_key] += 1
+                    cell["properties"][value_key] += sample_weight
                     cell["property_values"][value_key] = value
 
         overview_annotations: dict[str, Annotation] = {}
@@ -823,7 +831,7 @@ class TileServer(Flask):
             cell_max_x = min(max_x, cell_min_x + cell_size)
             cell_max_y = min(max_y, cell_min_y + cell_size)
             properties = {
-                "count": int(cell["count"]),
+                "count": round(float(cell["count"])),
                 ANNOTATION_MVT_OVERVIEW_KIND_PROPERTY: (
                     ANNOTATION_MVT_OVERVIEW_KIND_DENSITY
                 ),
@@ -1115,10 +1123,16 @@ class TileServer(Flask):
                     requested_fields=requested_fields,
                 )
             )
+            centroid_sample_fraction = (
+                ANNOTATION_MVT_OVERVIEW_CENTROID_SAMPLE_FRACTION
+                if len(ann_layer.store) >= ANNOTATION_MVT_LOW_ZOOM_POINT_MIN_FEATURES
+                else 1.0
+            )
             annotations = ann_layer.store.query_centroids(
                 geometry=tile_bounds,
                 where=where,
                 geometry_predicate="bbox_intersects",
+                sample_fraction=centroid_sample_fraction,
             )
             annotations = TileServer._aggregate_annotation_overview(
                 annotations,
@@ -1126,6 +1140,7 @@ class TileServer(Flask):
                 float(render_hints["slide_units_per_pixel"]),
                 color_property,
                 excluded_keys=set(projected_overview_geometries),
+                sample_fraction=centroid_sample_fraction,
             )
             annotations = {**annotations, **projected_overview_geometries}
             return (

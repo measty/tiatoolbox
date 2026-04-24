@@ -1011,6 +1011,70 @@ def test_sqlite_hot_spatial_queries_skip_area_sorting() -> None:
     assert "ORDER BY area DESC" not in renderable_sql
 
 
+def test_sqlite_query_centroids_deterministic_sampling_uses_annotation_key() -> None:
+    """Deterministic centroid sampling should be stable across insertion order."""
+    annotations = [
+        Annotation(Point(i, 0), properties={"index": i})
+        for i in range(40)
+    ]
+    keys = [f"ann-{i:03d}" for i in range(len(annotations))]
+
+    store_a = SQLiteStore(compression=None)
+    store_b = SQLiteStore(compression=None)
+    store_a.append_many(annotations, keys=keys)
+    store_b.append_many(list(reversed(annotations)), keys=list(reversed(keys)))
+
+    sample_kwargs = {
+        "geometry": (-1, -1, 100, 1),
+        "geometry_predicate": "bbox_intersects",
+        "sample_fraction": 0.35,
+        "sample_seed": "stable-seed",
+    }
+    sample_a = store_a.query_centroids(**sample_kwargs)
+    sample_b = store_b.query_centroids(**sample_kwargs)
+    repeated_sample = store_a.query_centroids(**sample_kwargs)
+    full_sample = store_a.query_centroids(
+        (-1, -1, 100, 1),
+        geometry_predicate="bbox_intersects",
+        sample_fraction=1.0,
+    )
+
+    assert sample_a
+    assert set(sample_a) == set(sample_b)
+    assert set(sample_a) == set(repeated_sample)
+    assert 0 < len(sample_a) < len(full_sample)
+    assert set(full_sample) == set(keys)
+
+
+def test_sqlite_query_centroids_nondeterministic_sampling_depends_on_row_order(
+) -> None:
+    """Cheap non-deterministic centroid sampling may track row order instead."""
+    annotations = [
+        Annotation(Point(i, 0), properties={"index": i})
+        for i in range(40)
+    ]
+    keys = [f"ann-{i:03d}" for i in range(len(annotations))]
+
+    store_a = SQLiteStore(compression=None)
+    store_b = SQLiteStore(compression=None)
+    store_a.append_many(annotations, keys=keys)
+    store_b.append_many(list(reversed(annotations)), keys=list(reversed(keys)))
+
+    sample_kwargs = {
+        "geometry": (-1, -1, 100, 1),
+        "geometry_predicate": "bbox_intersects",
+        "sample_fraction": 0.35,
+        "deterministic": False,
+        "sample_seed": "row-order-seed",
+    }
+    sample_a = store_a.query_centroids(**sample_kwargs)
+    sample_b = store_b.query_centroids(**sample_kwargs)
+
+    assert sample_a
+    assert sample_b
+    assert set(sample_a) != set(sample_b)
+
+
 def test_sqlite_query_renderable_geometries_prefilter() -> None:
     """Test scale-aware renderable geometry prefiltering for SQLiteStore."""
     store = SQLiteStore()
