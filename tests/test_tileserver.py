@@ -1011,6 +1011,10 @@ def test_get_layers_metadata(app: TileServer) -> None:
         assert kinds["tile"] == "raster"
         assert kinds["overlay"] == "annotation"
 
+        slide = next(layer for layer in layers if layer["name"] == "slide")
+        assert slide["tile_revision"] == 0
+        assert slide["url"].endswith("@1x.jpg?rev=0")
+
         overlay = next(layer for layer in layers if layer["name"] == "overlay")
         assert overlay["vector_format"] == "mvt"
         assert overlay["vector_url"].endswith("/mvt/{z}/{x}/{y}.pbf")
@@ -1033,6 +1037,36 @@ def test_get_layers_metadata(app: TileServer) -> None:
                 "vector_url": "/tileserver/layer/overlay/default/mvt/{z}/{x}/{y}.pbf",
             },
         ]
+
+
+def test_slide_change_bumps_zoomify_tile_url_revision(app: TileServer) -> None:
+    """Changing the slide should make Zoomify tile URLs cache-distinct."""
+    with app.test_client() as client:
+        session_id = setup_app(client)
+        response = client.get("/tileserver/layers")
+        assert response.status_code == 200
+        initial_slide = next(
+            layer for layer in response.get_json() if layer["name"] == "slide"
+        )
+
+        response = client.put(
+            "/tileserver/slide",
+            data={"slide_path": initial_slide["path"]},
+        )
+        assert response.status_code == 200
+
+        response = client.get("/tileserver/layers")
+        assert response.status_code == 200
+        updated_slide = next(
+            layer for layer in response.get_json() if layer["name"] == "slide"
+        )
+
+        assert session_id == "default"
+        assert updated_slide["tile_revision"] == initial_slide["tile_revision"] + 1
+        assert updated_slide["url"] != initial_slide["url"]
+        assert updated_slide["url"].endswith(
+            f"@1x.jpg?rev={updated_slide['tile_revision']}",
+        )
 
 
 def test_get_layers_metadata_reports_missing_coarse_prefilter_support(

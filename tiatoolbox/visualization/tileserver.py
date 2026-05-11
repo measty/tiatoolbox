@@ -486,13 +486,15 @@ class TileServer(Flask):
             source_path = str(layer.info.file_path)
 
         mpp = [1, 1] if getattr(layer.info, "mpp", None) is None else layer.info.mpp
+        tile_revision = int(self.annotation_revisions.get(session_id, 0))
         return {
             "name": name,
             "kind": kind,
             "path": source_path,
             "url": f"/tileserver/layer/{urllib.parse.quote(name, safe='')}/"
             f"{session_id}/zoomify/"
-            "{TileGroup}/{z}-{x}-{y}@1x.jpg",
+            f"{{TileGroup}}/{{z}}-{{x}}-{{y}}@1x.jpg?rev={tile_revision}",
+            "tile_revision": tile_revision,
             "size": [int(x) for x in slide_dimensions],
             "mpp": float(np.mean(mpp)),
             **metadata,
@@ -1279,7 +1281,7 @@ class TileServer(Flask):
         return projected
 
     def _bump_annotation_revision(self: TileServer, session_id: str) -> None:
-        """Invalidate cached annotation tile URLs for a session."""
+        """Invalidate cached tile URLs and annotation metadata for a session."""
         self.annotation_revisions[session_id] = (
             int(self.annotation_revisions.get(session_id, 0)) + 1
         )
@@ -1642,6 +1644,7 @@ class TileServer(Flask):
             self.pyramids[session_id]["slide"] = ZoomifyGenerator(
                 self.layers[session_id]["slide"]
             )
+            self._bump_annotation_revision(session_id)
 
         if other_session_id is not None:
             logger.warning("Using slide in other window as target slide.")
@@ -1700,6 +1703,7 @@ class TileServer(Flask):
         self.pyramids[session_id][layer] = ZoomifyGenerator(
             self.layers[session_id][layer]
         )
+        self._bump_annotation_revision(session_id)
         return json.dumps(layer)
 
     def _add_annotation_overlay(self, session_id: str, overlay_path: Path) -> str:
