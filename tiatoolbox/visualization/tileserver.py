@@ -859,8 +859,9 @@ class TileServer(Flask):
                     "channels": self.layers[session_id]["slide"].post_proc.color_dict,
                     "active": self.layers[session_id]["slide"].post_proc.channels,
                 },
+                sort_keys=False
             )
-        return jsonify({"channels": {}, "active": []})
+        return jsonify({"channels": {}, "active": []},sort_keys=False)
 
     def set_channels(self: TileServer) -> str:
         """Set the channels of the slide."""
