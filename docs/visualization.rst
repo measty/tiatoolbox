@@ -3,7 +3,12 @@
 Visualization Interface Usage
 =============================
 
-TIAToolbox provides a flexible visualization tool for viewing slides and overlaying associated model outputs or annotations. It is a browser-based UI built using TIAToolbox and `Bokeh <https://bokeh.org/>`_. The following assumes TIAToolbox has been installed per the instructions here: :ref:`Installation <installation>`.
+TIAToolbox provides a flexible browser-based tool for viewing slides and
+overlaying associated model outputs or annotations. The established interface
+uses `Bokeh <https://bokeh.org/>`_ and remains the default. An efficient
+OpenLayers interface is also available as an opt-in preview for large
+annotation stores. The following assumes TIAToolbox has been installed per the
+instructions here: :ref:`Installation <installation>`.
 
 1. Launching the Interface
 --------------------------
@@ -30,6 +35,48 @@ If you need to change the port on which the interface is launched from the defau
 
 Though in most cases this should not be necessary.
 
+Trying the Efficient OpenLayers Interface
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Pass ``--ui openlayers`` to use the new vector-tile interface:
+
+.. code-block:: console
+
+    tiatoolbox visualize --slides path/to/slides --overlays path/to/overlays --ui openlayers
+
+The ``--base-path`` and ``--port`` options work in the same way. For example,
+to try the interface with the conventional ``slides`` and ``overlays``
+subdirectories:
+
+.. code-block:: console
+
+    tiatoolbox visualize --base-path path/to/parent_of_slides_and_overlays --ui openlayers
+
+The OpenLayers application is served at ``http://127.0.0.1:5006/viewer/`` by
+default. It uses one origin and therefore only the selected ``--port`` needs to
+be exposed. Add ``--noshow`` when launching on a machine where a browser should
+not be opened automatically. When automatic launch is enabled, TIAToolbox waits
+until the viewer endpoint is responding before opening the browser.
+
+The interface offers ``Auto``, ``Canvas``, and ``WebGL`` annotation renderers.
+``Auto`` tries WebGL when the browser reports a suitable implementation and
+falls back to Canvas if it is unavailable or cannot be initialised. The WebGL
+vector-tile renderer is experimental; Canvas is the semantic baseline and the
+recommended fallback while fixed-hardware browser measurements are collected.
+For reproducible comparisons, select the renderer in the toolbar or append
+``?renderer=canvas`` or ``?renderer=webgl`` to the viewer URL.
+
+The OpenLayers preview currently covers the efficient core workflow: slide
+selection and tiled WSI display; multiple raster and annotation overlays;
+layer visibility, opacity, categorical, numeric, or per-feature colour styling;
+filters, fill, and outline controls; per-layer ``Low zoom`` selection between
+aggregate dots and a slide-only overview; annotation inspection; overview maps;
+PNG export; versioned JSON configuration; and optional linked compare views.
+Model execution, annotation editing/saving, graph overlays, multichannel
+mixing, registration controls, and some specialist Bokeh display controls
+remain in the established interface for now. The sections below describe that
+established Bokeh interface unless explicitly stated otherwise.
+
 Launching on a Remote Machine
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
@@ -39,7 +86,9 @@ As the UI is browser-based, you can launch the interface on a remote machine by 
 
     ssh -L 5006:localhost:5006 -L 5000:localhost:5000 user@remote_machine
 
-This will start an SSH session where the two ports the interface uses by default (5006 and 5000) are forwarded.
+This will start an SSH session where the two ports used by the default Bokeh
+interface (5006 and 5000) are forwarded. When using ``--ui openlayers``, forward
+only the selected interface port (5006 by default).
 
 You can then launch the interface on the remote machine as above (TIAToolbox must be installed on the remote machine) and open the browser on your local machine. Navigate to ``localhost:5006`` to view the interface.
 

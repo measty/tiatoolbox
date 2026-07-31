@@ -75,6 +75,10 @@ class TileServer(Flask):
         title: str,
         layers: dict[str, WSIReader | str] | list[WSIReader | str],
         renderer: AnnotationRenderer | None = None,
+        *,
+        slide_roots: tuple[str | Path, ...] | list[str | Path] = (),
+        overlay_roots: tuple[str | Path, ...] | list[str | Path] = (),
+        viewer_cache_dir: str | Path | None = None,
     ) -> None:
         """Initialize :class:`TileServer`."""
         super().__init__(
@@ -178,6 +182,21 @@ class TileServer(Flask):
         self.route("/tileserver/shutdown", methods=["POST"])(self.shutdown)
         self.route("/tileserver/sessions", methods=["GET"])(self.sessions)
         self.route("/tileserver/healthcheck", methods=["GET"])(self.healthcheck)
+
+        # Register the new application as an additive, versioned surface. Legacy
+        # Bokeh and raster routes above remain available throughout migration.
+        from tiatoolbox.visualization.api import (  # noqa: PLC0415
+            VisualizationServices,
+            create_viewer_blueprint,
+        )
+
+        self.viewer_services = VisualizationServices(
+            self,
+            slide_roots=slide_roots,
+            overlay_roots=overlay_roots,
+            cache_dir=viewer_cache_dir,
+        )
+        self.register_blueprint(create_viewer_blueprint(self.viewer_services))
 
     def _get_session_id(self: TileServer) -> str:
         """Get the session_id from the request.

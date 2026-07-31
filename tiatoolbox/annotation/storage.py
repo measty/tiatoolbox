@@ -29,14 +29,17 @@ import contextlib
 import copy
 import io
 import json
+import math
 import os
 import pickle
+import re
 import sqlite3
 import struct
 import sys
 import tempfile
 import threading
 import uuid
+import weakref
 import zlib
 from abc import ABC, abstractmethod
 from collections import defaultdict
@@ -47,7 +50,9 @@ from collections.abc import (
     Iterable,
     Iterator,
     KeysView,
+    Mapping,
     MutableMapping,
+    Sequence,
     ValuesView,
 )
 from dataclasses import dataclass, field
@@ -438,6 +443,333 @@ class Annotation:
 
 
 StoreInstanceType = TypeVar("StoreInstanceType", bound="AnnotationStore")
+
+
+@dataclass(frozen=True, **USE_SLOTS)
+class AnnotationRecord:
+    """A thin SQLite annotation record for high-throughput spatial queries.
+
+    Unlike :class:`Annotation`, this object does not construct a Shapely
+    geometry. Geometry, when requested, is returned as decompressed WKB.
+
+    Attributes:
+        id:
+            SQLite integer row identifier, local to this store.
+        key:
+            Canonical annotation identifier.
+        object_type:
+            Stored geometry type name.
+        cx:
+            X coordinate of the annotation centroid.
+        cy:
+            Y coordinate of the annotation centroid.
+        bounds:
+            Bounding box in ``(min_x, min_y, max_x, max_y)`` order.
+        area:
+            Stored area, or ``None`` for legacy stores without the column.
+        wkb:
+            Decompressed WKB, or ``None`` when geometry was not requested.
+        properties:
+            Requested top-level properties which exist on the annotation.
+
+    """
+
+    id: int
+    key: str
+    object_type: str
+    cx: float
+    cy: float
+    bounds: tuple[float, float, float, float]
+    area: float | None
+    wkb: bytes | None
+    properties: dict[str, object]
+
+
+PropertyFilter = dict[str, object]
+PROPERTY_FILTER_MAX_BYTES = 4096
+PROPERTY_FILTER_MAX_DEPTH = 5
+PROPERTY_FILTER_MAX_NODES = 64
+PROPERTY_FILTER_MAX_IN_VALUES = 64
+_PROPERTY_FILTER_MAX_ARGS = 16
+_PROPERTY_FILTER_MAX_STRING_LENGTH = 1024
+_PROPERTY_FILTER_NAME_PATTERN = re.compile(r'^[^\x00-\x1f"\\]{1,128}$')
+_PROPERTY_FILTER_COMPARISONS = frozenset(
+    {"eq", "ne", "lt", "lte", "gt", "gte", "in"},
+)
+_PROPERTY_FILTER_RELATIONS = frozenset({"lt", "lte", "gt", "gte"})
+_PROPERTY_FILTER_BOOLEANS = frozenset({"and", "or"})
+_PROPERTY_FILTER_SQL_OPERATORS = {
+    "lt": "<",
+    "lte": "<=",
+    "gt": ">",
+    "gte": ">=",
+}
+_SQLITE_INTEGER_MIN = -(2**63)
+_SQLITE_INTEGER_MAX = (2**63) - 1
+
+
+def normalize_property_filter(  # noqa: C901, PLR0915
+    property_filter: Mapping[str, object] | None,
+    *,
+    max_depth: int = PROPERTY_FILTER_MAX_DEPTH,
+    max_nodes: int = PROPERTY_FILTER_MAX_NODES,
+    max_in_values: int = PROPERTY_FILTER_MAX_IN_VALUES,
+) -> PropertyFilter | None:
+    """Validate and canonicalize a safe top-level property filter AST.
+
+    Supported leaves use ``{"op", "property", "value"}`` for ``eq``, ``ne``,
+    ``lt``, ``lte``, ``gt`` and ``gte``. Membership uses ``values`` instead of
+    ``value``. Boolean nodes use ``{"op": "and"|"or", "args": [...]}``.
+    Values are JSON scalars; relational comparisons accept only strings or
+    finite numbers. Property names address one top-level JSON property only.
+
+    The returned dictionaries have exact keys, de-duplicated/sorted ``in``
+    values, and sorted boolean children, making their compact sorted JSON
+    serialization a stable cache-key component.
+
+    Args:
+        property_filter:
+            Filter AST or ``None``.
+        max_depth:
+            Maximum nested AST depth, counting the root as one.
+        max_nodes:
+            Maximum number of boolean and comparison nodes.
+        max_in_values:
+            Maximum values in one ``in`` comparison.
+
+    Returns:
+        A canonical filter dictionary or ``None``.
+
+    Raises:
+        ValueError:
+            If the filter is malformed, unsupported, or exceeds a limit.
+
+    """
+    if property_filter is None:
+        return None
+    if min(max_depth, max_nodes, max_in_values) <= 0:
+        msg = "Property filter limits must be positive."
+        raise ValueError(msg)
+
+    node_count = 0
+
+    def normalize_scalar(value: object) -> bool | int | float | str | None:
+        if value is None or isinstance(value, bool):
+            return value
+        if isinstance(value, int):
+            if not _SQLITE_INTEGER_MIN <= value <= _SQLITE_INTEGER_MAX:
+                msg = "Property filter integer is outside SQLite's signed range."
+                raise ValueError(msg)
+            return value
+        if isinstance(value, float):
+            if not math.isfinite(value):
+                msg = "Property filter numbers must be finite."
+                raise ValueError(msg)
+            return value
+        if isinstance(value, str):
+            if len(value) > _PROPERTY_FILTER_MAX_STRING_LENGTH:
+                msg = "Property filter string value is too long."
+                raise ValueError(msg)
+            return value
+        msg = "Property filter values must be JSON scalars."
+        raise ValueError(msg)
+
+    def canonical_json(value: object) -> str:
+        return json.dumps(
+            value,
+            allow_nan=False,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+
+    def visit(  # noqa: C901, PLR0912, PLR0915
+        node: object,
+        depth: int,
+    ) -> PropertyFilter:
+        nonlocal node_count
+        if depth > max_depth:
+            msg = f"Property filter exceeds maximum depth {max_depth}."
+            raise ValueError(msg)
+        node_count += 1
+        if node_count > max_nodes:
+            msg = f"Property filter exceeds maximum node count {max_nodes}."
+            raise ValueError(msg)
+        if not isinstance(node, Mapping):
+            msg = "Each property filter node must be a JSON object."
+            raise ValueError(msg)  # noqa: TRY004
+        op = node.get("op")
+        if not isinstance(op, str):
+            msg = "Each property filter node requires a string 'op'."
+            raise ValueError(msg)  # noqa: TRY004
+
+        if op in _PROPERTY_FILTER_BOOLEANS:
+            if set(node) != {"op", "args"}:
+                msg = f"Property filter '{op}' accepts only 'op' and 'args'."
+                raise ValueError(msg)
+            args = node["args"]
+            if not isinstance(args, Sequence) or isinstance(args, (str, bytes)):
+                msg = f"Property filter '{op}' requires an array of arguments."
+                raise ValueError(msg)
+            if not 1 <= len(args) <= _PROPERTY_FILTER_MAX_ARGS:
+                msg = (
+                    f"Property filter '{op}' requires between 1 and "
+                    f"{_PROPERTY_FILTER_MAX_ARGS} arguments."
+                )
+                raise ValueError(msg)
+            children = [visit(child, depth + 1) for child in args]
+            children.sort(key=canonical_json)
+            return {"op": op, "args": children}
+
+        if op not in _PROPERTY_FILTER_COMPARISONS:
+            msg = f"Unsupported property filter operator: {op!r}."
+            raise ValueError(msg)
+        property_name = node.get("property")
+        if not isinstance(
+            property_name, str
+        ) or not _PROPERTY_FILTER_NAME_PATTERN.fullmatch(
+            property_name,
+        ):
+            msg = "Invalid property filter property name."
+            raise ValueError(msg)
+
+        if op == "in":
+            if set(node) != {"op", "property", "values"}:
+                msg = (
+                    "Property filter 'in' accepts only 'op', 'property', and 'values'."
+                )
+                raise ValueError(msg)
+            values = node["values"]
+            if not isinstance(values, Sequence) or isinstance(values, (str, bytes)):
+                msg = "Property filter 'in' requires an array of values."
+                raise ValueError(msg)
+            if not 1 <= len(values) <= max_in_values:
+                msg = (
+                    "Property filter 'in' requires between 1 and "
+                    f"{max_in_values} values."
+                )
+                raise ValueError(msg)
+            canonical_values = {
+                canonical_json(normalized): normalized
+                for normalized in map(normalize_scalar, values)
+            }
+            return {
+                "op": op,
+                "property": property_name,
+                "values": [canonical_values[key] for key in sorted(canonical_values)],
+            }
+
+        if set(node) != {"op", "property", "value"}:
+            msg = f"Property filter '{op}' accepts only 'op', 'property', and 'value'."
+            raise ValueError(msg)
+        value = normalize_scalar(node["value"])
+        if op in _PROPERTY_FILTER_RELATIONS and (
+            value is None or isinstance(value, bool)
+        ):
+            msg = f"Property filter '{op}' requires a string or numeric value."
+            raise ValueError(msg)
+        return {"op": op, "property": property_name, "value": value}
+
+    return visit(property_filter, 1)
+
+
+def canonical_property_filter(
+    property_filter: Mapping[str, object] | None,
+    **limits: int,
+) -> str | None:
+    """Return stable compact JSON for a validated property filter."""
+    normalized = normalize_property_filter(property_filter, **limits)
+    if normalized is None:
+        return None
+    return json.dumps(
+        normalized,
+        allow_nan=False,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+
+
+def _compile_property_filter_sql(
+    property_filter: PropertyFilter,
+    parameters: dict[str, object],
+) -> str:
+    """Compile a normalized property filter to parameterized SQLite SQL."""
+
+    def bind(value: object) -> str:
+        name = f"property_filter_{len(parameters)}"
+        parameters[name] = value
+        return f":{name}"
+
+    def json_path(property_name: str) -> str:
+        return f'$."{property_name}"'
+
+    def equality(property_name: str, value: object) -> str:
+        path = json_path(property_name)
+        if value is None:
+            return f"json_type(annotations.properties, {bind(path)}) = 'null'"
+        if isinstance(value, bool):
+            json_type = "true" if value else "false"
+            return f"json_type(annotations.properties, {bind(path)}) = '{json_type}'"
+        type_parameter = bind(path)
+        value_parameter = bind(value)
+        extract_parameter = bind(path)
+        if isinstance(value, (int, float)):
+            return (
+                f"(json_type(annotations.properties, {type_parameter}) "
+                "IN ('integer', 'real') AND "
+                f"json_extract(annotations.properties, {extract_parameter}) "
+                f"= {value_parameter})"
+            )
+        return (
+            f"(json_type(annotations.properties, {type_parameter}) = 'text' AND "
+            f"json_extract(annotations.properties, {extract_parameter}) "
+            f"= {value_parameter})"
+        )
+
+    def visit(node: PropertyFilter) -> str:
+        op = cast("str", node["op"])
+        if op in _PROPERTY_FILTER_BOOLEANS:
+            conjunction = " AND " if op == "and" else " OR "
+            children = cast("list[PropertyFilter]", node["args"])
+            return "(" + conjunction.join(visit(child) for child in children) + ")"
+
+        property_name = cast("str", node["property"])
+        if op == "in":
+            values = cast("list[object]", node["values"])
+            return (
+                "("
+                + " OR ".join(equality(property_name, value) for value in values)
+                + ")"
+            )
+
+        value = node["value"]
+        if op == "eq":
+            return equality(property_name, value)
+        if op == "ne":
+            exists = bind(json_path(property_name))
+            return (
+                f"(json_type(annotations.properties, {exists}) IS NOT NULL AND "
+                f"NOT ({equality(property_name, value)}))"
+            )
+
+        path = json_path(property_name)
+        type_parameter = bind(path)
+        extract_parameter = bind(path)
+        value_parameter = bind(value)
+        type_guard = (
+            f"json_type(annotations.properties, {type_parameter}) "
+            "IN ('integer', 'real')"
+            if isinstance(value, (int, float)) and not isinstance(value, bool)
+            else f"json_type(annotations.properties, {type_parameter}) = 'text'"
+        )
+        return (
+            f"({type_guard} AND "
+            f"json_extract(annotations.properties, {extract_parameter}) "
+            f"{_PROPERTY_FILTER_SQL_OPERATORS[op]} {value_parameter})"
+        )
+
+    return visit(property_filter)
 
 
 class AnnotationStore(ABC, MutableMapping[str, Annotation]):
@@ -2255,13 +2587,19 @@ class SQLiteMetadata(MutableMapping):
 
     """
 
-    def __init__(self: SQLiteMetadata, con: sqlite3.Connection) -> None:
+    def __init__(
+        self: SQLiteMetadata,
+        con: sqlite3.Connection,
+        *,
+        create: bool = True,
+    ) -> None:
         """Initialize :class:`SQLiteMetadata`."""
         self.con = con
-        self.con.execute(
-            "CREATE TABLE IF NOT EXISTS metadata (key TEXT UNIQUE, value TEXT)",
-        )
-        self.con.commit()
+        if create:
+            self.con.execute(
+                "CREATE TABLE IF NOT EXISTS metadata (key TEXT UNIQUE, value TEXT)",
+            )
+            self.con.commit()
 
     def __contains__(self: SQLiteMetadata, key: object) -> bool:
         """Test whether the object contains the specified object or not."""
@@ -2332,8 +2670,25 @@ class SQLiteStore(AnnotationStore):
         compression_level: int = 9,
         *,
         auto_commit: bool = True,
+        read_only: bool = False,
     ) -> None:
-        """Initialize :class:`SQLiteStore`."""
+        """Initialize :class:`SQLiteStore`.
+
+        Args:
+            connection:
+                Path, file object, or ``":memory:"`` SQLite connection target.
+            compression:
+                Geometry compression used when creating a store.
+            compression_level:
+                Geometry compression level used when creating a store.
+            auto_commit:
+                Commit each mutation automatically.
+            read_only:
+                Open an existing file-backed store using SQLite ``mode=ro``
+                and ``PRAGMA query_only``. Read-only stores do not create
+                metadata, commit, or optimize the source database on close.
+
+        """
         super().__init__()
         # Check that JSON and RTree support is enabled
         compile_options = self.compile_options()
@@ -2369,6 +2724,17 @@ class SQLiteStore(AnnotationStore):
         self.connection = connection
         self.path = self._connection_to_path(self.connection)
         self.auto_commit = auto_commit
+        self.read_only = read_only
+
+        if self.read_only and self.path == Path(":memory:"):
+            msg = "read_only=True requires an existing file-backed SQLiteStore."
+            raise ValueError(msg)
+        if self.read_only and not self.path.is_file():
+            msg = f"Cannot open read-only SQLiteStore: {self.path} does not exist."
+            raise FileNotFoundError(msg)
+        if self.read_only and self.path.stat().st_size == 0:
+            msg = "read_only=True requires an existing non-empty SQLiteStore."
+            raise ValueError(msg)
 
         # Check if the path is a non-empty file
         exists = (
@@ -2376,10 +2742,12 @@ class SQLiteStore(AnnotationStore):
             self.path.is_file() and self.path.stat().st_size > 0
         )
         self.cons: dict = {}
-        self.con.execute("BEGIN")
+        self._closed = False
+        if not self.read_only:
+            self.con.execute("BEGIN")
 
         # Set up metadata
-        self.metadata = SQLiteMetadata(self.con)
+        self.metadata = SQLiteMetadata(self.con, create=not self.read_only)
         if not exists:
             self.metadata["version"] = "1.0.1"
             self.metadata["compression"] = compression
@@ -2435,8 +2803,37 @@ class SQLiteStore(AnnotationStore):
 
     def get_connection(self: SQLiteStore, thread_id: int) -> sqlite3.Connection:
         """Get a connection to the database."""
+        if self._closed:
+            msg = "SQLiteStore is closed."
+            raise RuntimeError(msg)
         if thread_id not in self.cons:
-            con = sqlite3.connect(str(self.path), isolation_level="DEFERRED", uri=True)
+            connection = str(self.path)
+            if self.read_only:
+                connection = f"{self.path.resolve().as_uri()}?mode=ro"
+            # Connections remain isolated per worker thread via ``self.cons``.
+            # Disabling sqlite3's Python-level owner-thread check allows the
+            # service which joined those workers to close every connection
+            # during deterministic shutdown.
+            con = sqlite3.connect(
+                connection,
+                isolation_level="DEFERRED",
+                uri=True,
+                check_same_thread=False,
+            )
+            if self.read_only:
+                con.execute("PRAGMA query_only = ON")
+
+            # SQLite retains registered Python functions for the lifetime of
+            # the connection. Capture a weak reference so the connection does
+            # not form a reference cycle with this store and delay ``close``.
+            store_ref = weakref.ref(self)
+
+            def get_store() -> SQLiteStore:
+                store = store_ref()
+                if store is None:  # pragma: no cover - connection outlived store
+                    msg = "SQLiteStore is no longer available."
+                    raise RuntimeError(msg)
+                return store
 
             # Register predicate functions as custom SQLite functions
             def wkb_predicate(
@@ -2447,9 +2844,10 @@ class SQLiteStore(AnnotationStore):
                 cy: float,
             ) -> bool:
                 """Wrapper function to allow WKB as inputs to binary predicates."""
+                store = get_store()
                 a = shapely_wkb.loads(wkb_a)
-                b = self._unpack_geometry(b, cx, cy)
-                return self._geometry_predicate(name, a, b)
+                b = store._unpack_geometry(b, cx, cy)  # noqa: SLF001
+                return store._geometry_predicate(name, a, b)  # noqa: SLF001
 
             def pickle_expression(pickle_bytes: bytes, properties: str) -> bool:
                 """Function to load and execute pickle bytes with "properties" dict."""
@@ -2459,11 +2857,8 @@ class SQLiteStore(AnnotationStore):
 
             def get_area(wkb_bytes: bytes, cx: float, cy: float) -> float:
                 """Function to get the area of a geometry."""
-                return self._unpack_geometry(
-                    wkb_bytes,
-                    cx,
-                    cy,
-                ).area
+                store = get_store()
+                return store._unpack_geometry(wkb_bytes, cx, cy).area  # noqa: SLF001
 
             # Register custom functions
             def register_custom_function(
@@ -2682,12 +3077,29 @@ class SQLiteStore(AnnotationStore):
 
     def close(self: SQLiteStore) -> None:
         """Closes :class:`SQLiteStore` from file pointer or path."""
-        if self.auto_commit:
-            self.con.commit()
-        self.optimize(vacuum=False, limit=1000)
-        for con in self.cons.values():
-            con.close()
-        self.cons = {}
+        if self.__dict__.get("_closed", True):
+            return
+
+        # Mark the store closed before releasing connections so that cleanup
+        # can never cause ``self.con`` to silently create a replacement.
+        self._closed = True
+        current_con = self.cons.get(threading.get_ident())
+        try:
+            if current_con is not None and not self.read_only:
+                if self.auto_commit:
+                    current_con.commit()
+                current_con.execute("PRAGMA analysis_limit = 1000")
+                current_con.execute("PRAGMA optimize")
+        finally:
+            for con in self.cons.values():
+                con.close()
+            self.cons = {}
+
+    def _ensure_writable(self: SQLiteStore) -> None:
+        """Raise a clear error when mutating a read-only store."""
+        if self.read_only:
+            msg = "SQLiteStore was opened with read_only=True."
+            raise PermissionError(msg)
 
     def _make_token(self: SQLiteStore, annotation: Annotation, key: str | None) -> dict:
         """Create token data dict for tokenized SQL transaction."""
@@ -2717,6 +3129,7 @@ class SQLiteStore(AnnotationStore):
         keys: Iterable[str] | None = None,
     ) -> list[str]:
         """Appends new annotations to specified keys."""
+        self._ensure_writable()
         annotations = list(annotations)
         keys = list(keys) if keys else [str(uuid.uuid4()) for _ in annotations]
         self._validate_equal_lengths(keys, annotations)
@@ -3115,6 +3528,199 @@ class SQLiteStore(AnnotationStore):
             )
             for key, properties, cx, cy, blob in cur.fetchall()
         }
+
+    def query_records(
+        self: SQLiteStore,
+        geometry: QueryGeometry,
+        selected_properties: Iterable[str] = (),
+        *,
+        include_geometry: bool = True,
+        min_area: float | None = None,
+        limit: int | None = None,
+        property_filter: Mapping[str, object] | None = None,
+    ) -> Iterator[AnnotationRecord]:
+        """Stream thin records whose bounding boxes intersect a geometry.
+
+        This is intended for high-throughput consumers such as vector-tile
+        encoders. It performs only an RTree bounding-box query, does not
+        instantiate :class:`Annotation` or Shapely geometries, and deliberately
+        does not apply the area ordering used by :meth:`query`.
+
+        Args:
+            geometry:
+                Bounds in ``(min_x, min_y, max_x, max_y)`` order or a Shapely
+                geometry. For a Shapely geometry, only its bounds are used.
+            selected_properties:
+                Top-level property names to return. Missing properties are
+                omitted. Properties JSON is not loaded when this is empty.
+            include_geometry:
+                Include decompressed WKB. Defaults to ``True``.
+            min_area:
+                Optional minimum stored area. Requires an area column.
+            limit:
+                Optional maximum number of records. Results have no guaranteed
+                ordering.
+            property_filter:
+                Optional safe property-filter AST accepted by
+                :func:`normalize_property_filter`. This is compiled entirely
+                to parameterized SQLite JSON expressions; raw SQL and the
+                legacy callable/pickle/string DSL are never accepted here.
+
+        Returns:
+            Iterator[AnnotationRecord]:
+                A streaming iterator over matching records.
+
+        """
+        property_names = tuple(selected_properties)
+        if not all(isinstance(name, str) for name in property_names):
+            msg = "selected_properties must contain only strings."
+            raise TypeError(msg)
+        property_names = tuple(dict.fromkeys(property_names))
+        normalized_filter = normalize_property_filter(property_filter)
+        if limit is not None and not isinstance(limit, int):
+            msg = "limit must be a non-negative integer or None."
+            raise TypeError(msg)
+        if limit is not None and (isinstance(limit, bool) or limit < 0):
+            msg = "limit must be a non-negative integer or None."
+            raise ValueError(msg)
+
+        min_x, min_y, max_x, max_y = self._query_record_bounds(geometry)
+
+        has_area = "area" in self.table_columns
+        if min_area is not None and not has_area:
+            msg = (
+                "Cannot use `min_area` without an area column.\n"
+                "SQLiteStore.add_area_column() can be used to add an area column."
+            )
+            raise ValueError(msg)
+
+        columns = [
+            "annotations.id",
+            "annotations.[key]",
+            "annotations.objtype",
+            "annotations.cx",
+            "annotations.cy",
+            "rtree.min_x",
+            "rtree.min_y",
+            "rtree.max_x",
+            "rtree.max_y",
+            "annotations.area" if has_area else "NULL",
+        ]
+        if include_geometry:
+            columns.append("annotations.geometry")
+        if property_names:
+            columns.append("annotations.properties")
+
+        query = (
+            "SELECT "  # noqa: S608 - all column names are fixed above
+            + ", ".join(columns)
+            + """
+                FROM rtree
+                JOIN annotations ON annotations.id = rtree.id
+                WHERE rtree.max_x >= :min_x
+                  AND rtree.min_x <= :max_x
+                  AND rtree.max_y >= :min_y
+                  AND rtree.min_y <= :max_y
+            """
+        )
+        parameters: dict[str, object] = {
+            "min_x": min_x,
+            "min_y": min_y,
+            "max_x": max_x,
+            "max_y": max_y,
+        }
+        if min_area is not None:
+            query += " AND annotations.area > :min_area"
+            parameters["min_area"] = min_area
+        if normalized_filter is not None:
+            query += " AND " + _compile_property_filter_sql(
+                normalized_filter,
+                parameters,
+            )
+        if limit is not None:
+            query += " LIMIT :limit"
+            parameters["limit"] = limit
+
+        cur = self.con.execute(query, parameters)
+        try:
+            for row in cur:
+                yield self._annotation_record_from_row(
+                    row,
+                    property_names,
+                    include_geometry=include_geometry,
+                )
+        finally:
+            cur.close()
+
+    @staticmethod
+    def _query_record_bounds(
+        geometry: QueryGeometry,
+    ) -> tuple[float, float, float, float]:
+        """Normalize and validate bounds for :meth:`query_records`."""
+        if hasattr(geometry, "bounds"):
+            bounds = tuple(geometry.bounds)
+        else:
+            try:
+                bounds = tuple(geometry)
+            except TypeError as exc:
+                msg = "geometry must be bounds or a Shapely geometry."
+                raise TypeError(msg) from exc
+        try:
+            min_x, min_y, max_x, max_y = bounds
+        except ValueError as exc:
+            msg = "geometry bounds must contain exactly four values."
+            raise ValueError(msg) from exc
+        if min_x > max_x or min_y > max_y:
+            msg = "geometry bounds must satisfy min_x <= max_x and min_y <= max_y."
+            raise ValueError(msg)
+        return min_x, min_y, max_x, max_y
+
+    def _annotation_record_from_row(
+        self: SQLiteStore,
+        row: tuple,
+        property_names: tuple[str, ...],
+        *,
+        include_geometry: bool,
+    ) -> AnnotationRecord:
+        """Convert a raw SQLite row to an :class:`AnnotationRecord`."""
+        (
+            annotation_id,
+            key,
+            object_type,
+            cx,
+            cy,
+            min_x,
+            min_y,
+            max_x,
+            max_y,
+            area,
+            *optional,
+        ) = row
+        serialised_geometry = optional.pop(0) if include_geometry else None
+        serialised_properties = optional.pop(0) if property_names else None
+        properties = {}
+        if serialised_properties is not None:
+            all_properties = json.loads(serialised_properties)
+            properties = {
+                name: all_properties[name]
+                for name in property_names
+                if name in all_properties
+            }
+        return AnnotationRecord(
+            id=annotation_id,
+            key=key,
+            object_type=object_type,
+            cx=cx,
+            cy=cy,
+            bounds=(min_x, min_y, max_x, max_y),
+            area=area,
+            wkb=(
+                self._unpack_wkb(serialised_geometry, cx, cy)
+                if include_geometry
+                else None
+            ),
+            properties=properties,
+        )
 
     def bquery(
         self: SQLiteStore,
@@ -3643,6 +4249,7 @@ class SQLiteStore(AnnotationStore):
                 An iterable of keys for each annotation to be updated.
 
         """
+        self._ensure_writable()
         # Validate inputs
         if not any([geometries, properties_iter]):
             msg = "At least one of geometries or properties_iter must be given"
@@ -3742,6 +4349,7 @@ class SQLiteStore(AnnotationStore):
                 An iterable of keys for the annotation to be removed.
 
         """
+        self._ensure_writable()
         cur = self.con.cursor()
         if self.auto_commit:
             cur.execute("BEGIN")
@@ -3767,6 +4375,7 @@ class SQLiteStore(AnnotationStore):
 
     def __setitem__(self: SQLiteStore, key: str, annotation: Annotation) -> None:
         """Implements a method to assign a value to an item."""
+        self._ensure_writable()
         if key in self:
             self.patch(key, annotation.geometry, annotation.properties)
             return
@@ -3779,6 +4388,7 @@ class SQLiteStore(AnnotationStore):
 
     def add_area_column(self: SQLiteStore, *, mk_index: bool = True) -> None:
         """Add a column to store the area of the geometry."""
+        self._ensure_writable()
         cur = self.con.cursor()
         cur.execute(
             """
@@ -3799,6 +4409,7 @@ class SQLiteStore(AnnotationStore):
 
     def remove_area_column(self: SQLiteStore) -> None:
         """Remove the area column from the store."""
+        self._ensure_writable()
         if "area" in self.indexes():
             self.drop_index("area")
         cur = self.con.cursor()
@@ -3844,6 +4455,7 @@ class SQLiteStore(AnnotationStore):
 
     def commit(self: SQLiteStore) -> None:
         """Commit any in-memory changes to disk."""
+        self._ensure_writable()
         self.con.commit()
 
     def dump(self: SQLiteStore, fp: Path | str | IO) -> None:
@@ -3872,6 +4484,7 @@ class SQLiteStore(AnnotationStore):
 
     def clear(self: SQLiteStore) -> None:
         """Remove all annotations from the store."""
+        self._ensure_writable()
         cur = self.con.cursor()
         cur.execute("DELETE FROM rtree")
         cur.execute("DELETE FROM annotations")
@@ -3904,6 +4517,7 @@ class SQLiteStore(AnnotationStore):
                 index.
 
         """
+        self._ensure_writable()
         if sqlite3.sqlite_version_info < (3, 9, 0):
             msg = "Requires sqlite version 3.9.0 or higher."
             raise OSError(msg)
@@ -3939,6 +4553,7 @@ class SQLiteStore(AnnotationStore):
                 The name of the index to drop.
 
         """
+        self._ensure_writable()
         cur = self.con.cursor()
         cur.execute(f"DROP INDEX {name}")
 
@@ -3955,6 +4570,7 @@ class SQLiteStore(AnnotationStore):
                 https://www.sqlite.org/pragma.html#pragma_analysis_limit.
 
         """
+        self._ensure_writable()
         if vacuum:
             self.con.execute("VACUUM")
         # Cannot use parameterized statements with PRAGMA!

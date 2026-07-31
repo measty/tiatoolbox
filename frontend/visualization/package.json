@@ -1,0 +1,35 @@
+{
+  "name": "@tiatoolbox/visualization",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "scripts": {
+    "dev": "vite",
+    "prebuild": "npm run verify:openlayers-patch",
+    "build": "tsc -b && vite build",
+    "postinstall": "patch-package",
+    "typecheck": "tsc -b --pretty false",
+    "pretest": "npm run verify:openlayers-patch",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "verify:openlayers-patch": "node scripts/verify-openlayers-patch.mjs"
+  },
+  "dependencies": {
+    "ol": "10.9.0",
+    "react": "19.2.8",
+    "react-dom": "19.2.8"
+  },
+  "devDependencies": {
+    "@types/node": "24.10.13",
+    "@types/react": "19.2.17",
+    "@types/react-dom": "19.2.3",
+    "@vitejs/plugin-react-swc": "4.3.2",
+    "patch-package": "^8.0.1",
+    "typescript": "6.0.3",
+    "vite": "8.1.5",
+    "vitest": "4.1.10"
+  }
+}
