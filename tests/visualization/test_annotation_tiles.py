@@ -24,6 +24,7 @@ from tiatoolbox.visualization.annotation_tiles.lod import LODIndex
 from tiatoolbox.visualization.annotation_tiles.mvt import TileFeature, encode_mvt
 from tiatoolbox.visualization.annotation_tiles.source import (
     AnnotationTileSource,
+    TileBudgetExceededError,
     TileBudgets,
 )
 
@@ -77,11 +78,11 @@ def test_tile_matrix_matches_zoomify_contract() -> None:
         matrix.tile_bounds(9, 416, 0)
 
 
-def test_default_overview_hands_off_to_adaptive_detail_at_zoom_four(
+def test_default_auto_lod_is_uniform_for_each_zoom(
     synthetic_store: SQLiteStore,
     tmp_path: Path,
 ) -> None:
-    """The supplied slide matrix persists aggregates only through zoom three."""
+    """The supplied slide uses one representation across every tile at a zoom."""
     matrix = TileMatrix(106_496, 85_248)
     source = AnnotationTileSource(
         synthetic_store,
@@ -93,16 +94,42 @@ def test_default_overview_hands_off_to_adaptive_detail_at_zoom_four(
     )
     try:
         assert matrix.max_zoom == 9
-        assert source.manifest()["representations"]["aggregate"]["maxZoom"] == 3
+        manifest = source.manifest()
+        assert manifest["representations"]["aggregate"]["maxZoom"] == 3
+        assert manifest["representations"]["auto"]["policy"] == {
+            "scope": "store-zoom",
+            "ranges": [
+                {"minZoom": 0, "maxZoom": 3, "representation": "aggregate"},
+                {"minZoom": 4, "maxZoom": 6, "representation": "centroid"},
+                {"minZoom": 7, "maxZoom": 9, "representation": "polygon"},
+            ],
+        }
+        assert manifest["budgets"]["point_features"] == 32_000
+        assert manifest["budgets"]["compressed_bytes"] == 256 * 1024
+        assert manifest["budgets"]["hard_features"] == 100_000
+        assert manifest["budgets"]["hard_compressed_bytes"] == 1024 * 1024
+        assert manifest["maxConcurrentTileBuilds"] == 1
         source.ensure_lod()
         assert source.lod.manifest()["overviewMaxZoom"] == 3
+        assert [source._choose_representation("auto", z) for z in range(10)] == [
+            "aggregate",
+            "aggregate",
+            "aggregate",
+            "aggregate",
+            "centroid",
+            "centroid",
+            "centroid",
+            "polygon",
+            "polygon",
+            "polygon",
+        ]
 
         overview = source.vector_tile("auto", 3, 0, 0)
         assert overview.representation == "aggregate"
 
         stale_key = json.dumps(
             {
-                "version": 3,
+                "version": 4,
                 "store": source.store_id,
                 "revision": source.revision,
                 "lod": "ready",
@@ -124,8 +151,98 @@ def test_default_overview_hands_off_to_adaptive_detail_at_zoom_four(
         assert detail.cache_status == "miss"
         assert detail.representation == "centroid"
         assert detail.data != b"stale-z4-aggregate"
+
+        polygon = source.vector_tile("auto", 7, 0, 0)
+        assert polygon.representation == "polygon"
     finally:
         source.close()
+
+
+@pytest.mark.parametrize(
+    ("matrix", "category_property", "budgets", "expected_representation"),
+    [
+        (TileMatrix(53_248, 42_624), "type", None, "polygon"),
+        (TileMatrix(106_496, 85_248), "class", None, "polygon"),
+        (
+            TileMatrix(106_496, 85_248),
+            "type",
+            TileBudgets(polygon_max_downsample=2),
+            "centroid",
+        ),
+    ],
+)
+def test_vector_cache_isolated_by_complete_tile_contract(
+    synthetic_store: SQLiteStore,
+    tmp_path: Path,
+    matrix: TileMatrix,
+    category_property: str,
+    budgets: TileBudgets | None,
+    expected_representation: str,
+) -> None:
+    """Reopening a revision with different semantics never serves stale bytes."""
+    cache_dir = tmp_path / "contract-cache"
+    baseline = AnnotationTileSource(
+        synthetic_store,
+        TileMatrix(106_496, 85_248),
+        store_id="contract-store",
+        revision="revision",
+        name="synthetic",
+        cache_dir=cache_dir,
+    )
+    baseline_payload = baseline.vector_tile("auto", 7, 0, 0)
+    assert baseline_payload.cache_status == "miss"
+    assert baseline_payload.representation == "polygon"
+    baseline.close()
+
+    reopened = AnnotationTileSource(
+        synthetic_store,
+        matrix,
+        store_id="contract-store",
+        revision="revision",
+        name="synthetic",
+        cache_dir=cache_dir,
+        category_property=category_property,
+        budgets=budgets,
+    )
+    try:
+        payload = reopened.vector_tile("auto", 7, 0, 0)
+        assert payload.cache_status == "miss"
+        assert payload.representation == expected_representation
+    finally:
+        reopened.close()
+
+
+def test_label_cache_isolated_by_tile_matrix_contract(
+    synthetic_store: SQLiteStore,
+    tmp_path: Path,
+) -> None:
+    """Label bytes from a different slide matrix are never reused."""
+    cache_dir = tmp_path / "label-contract-cache"
+    baseline = AnnotationTileSource(
+        synthetic_store,
+        TileMatrix(256, 256),
+        store_id="label-contract-store",
+        revision="revision",
+        name="synthetic",
+        cache_dir=cache_dir,
+    )
+    baseline.ensure_lod()
+    assert baseline.label_tile(0, 0, 0).cache_status == "miss"
+    baseline.close()
+
+    reopened = AnnotationTileSource(
+        synthetic_store,
+        TileMatrix(512, 256),
+        store_id="label-contract-store",
+        revision="revision",
+        name="synthetic",
+        cache_dir=cache_dir,
+    )
+    try:
+        payload = reopened.label_tile(0, 0, 0)
+        assert payload.cache_status == "miss"
+    finally:
+        reopened.close()
 
 
 def test_lod_sidecar_rebuilds_when_overview_boundary_changes(
@@ -162,25 +279,19 @@ def test_lod_sidecar_rebuilds_when_overview_boundary_changes(
         current.close()
 
 
-def test_adaptive_selection_counts_the_mvt_seam_buffer(
+def test_auto_selection_does_not_preflight_or_change_with_tile_density(
+    synthetic_store: SQLiteStore,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Buffered neighbours trigger direct aggregation without failed encodes."""
-    store = SQLiteStore(tmp_path / "buffered-count.db")
-    store.append_many(
-        [
-            Annotation(Polygon.from_bounds(96, 32, 104, 40), {"type": 0}),
-            Annotation(Polygon.from_bounds(260, 32, 268, 40), {"type": 1}),
-        ],
-    )
+    """Soft targets do not create tile-local representation decisions."""
     source = AnnotationTileSource(
-        store,
-        TileMatrix(512, 256),
-        store_id="buffered-count",
+        synthetic_store,
+        TileMatrix(106_496, 85_248),
+        store_id="uniform-selection",
         revision="revision",
-        name="buffered-count",
-        cache_dir=tmp_path / "buffered-count-cache",
+        name="uniform-selection",
+        cache_dir=tmp_path / "uniform-selection-cache",
         budgets=TileBudgets(polygon_features=1, point_features=1),
     )
     feature_builds: list[str] = []
@@ -206,13 +317,13 @@ def test_adaptive_selection_counts_the_mvt_seam_buffer(
 
     monkeypatch.setattr(source, "_features", recording_features)
     try:
-        assert source._candidate_count(1, 0, 0, None) == 2
-        payload = source.vector_tile("auto", 1, 0, 0)
-        assert payload.representation == "aggregate"
-        assert feature_builds == ["aggregate"]
+        source.ensure_lod()
+        payload = source.vector_tile("auto", 4, 0, 0)
+        assert payload.representation == "centroid"
+        assert payload.feature_count == 16
+        assert feature_builds == ["centroid"]
     finally:
         source.close()
-        store.close()
 
 
 def test_mvt_has_numeric_ids_and_is_deterministic() -> None:
@@ -270,6 +381,80 @@ def test_byte_cache_and_single_flight_are_bounded() -> None:
         results = [future.result() for future in futures]
     assert len(results) == 4
     assert calls == 1
+
+
+def test_cold_tile_builds_are_bounded_per_source(
+    synthetic_store: SQLiteStore,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Only two distinct cache misses may query/encode concurrently."""
+    source = AnnotationTileSource(
+        synthetic_store,
+        TileMatrix(1024, 1024),
+        store_id="cold-build-limit",
+        revision="revision",
+        name="synthetic",
+        cache_dir=tmp_path / "cold-build-limit-cache",
+        max_concurrent_tile_builds=2,
+    )
+    active = 0
+    peak = 0
+    calls = 0
+    lock = threading.Lock()
+    saturated = threading.Event()
+    release = threading.Event()
+
+    def build_tile(
+        _representation: str,
+        _z: int,
+        x: int,
+        y: int,
+        _fields: tuple[str, ...],
+        _property_filter: Mapping[str, object] | None,
+    ) -> TilePayload:
+        nonlocal active, calls, peak
+        with lock:
+            active += 1
+            calls += 1
+            peak = max(peak, active)
+            if active == 2:
+                saturated.set()
+        assert release.wait(timeout=5)
+        with lock:
+            active -= 1
+        return TilePayload(
+            f"{x},{y}".encode(),
+            "application/vnd.mapbox-vector-tile",
+            representation="polygon",
+        )
+
+    monkeypatch.setattr(source, "_build_vector_tile", build_tile)
+    try:
+        coordinates = [(0, 0), (1, 0), (2, 0), (3, 0)]
+        with ThreadPoolExecutor(max_workers=4) as executor:
+            futures = [
+                executor.submit(source.vector_tile, "auto", 2, x, y)
+                for x, y in coordinates
+            ]
+            assert saturated.wait(timeout=5)
+            assert peak == 2
+            release.set()
+            payloads = [future.result(timeout=5) for future in futures]
+
+        assert calls == 4
+        assert peak == 2
+        assert all(payload.cache_status == "miss" for payload in payloads)
+        assert all(
+            "queue;dur=" in (payload.server_timing or "") for payload in payloads
+        )
+
+        cached = source.vector_tile("auto", 2, 0, 0)
+        assert cached.cache_status == "memory"
+        assert calls == 4
+    finally:
+        release.set()
+        source.close()
 
 
 def test_lod_overview_never_uses_interactive_query(
@@ -353,10 +538,10 @@ def test_pending_overview_does_not_count_entire_store(
         cache_dir=tmp_path / "pending-cache",
     )
 
-    def fail_count(*_args, **_kwargs):  # noqa: ANN002, ANN003, ANN202
-        pytest.fail("overview counted source candidates")
+    def fail_query(*_args, **_kwargs):  # noqa: ANN002, ANN003, ANN202
+        pytest.fail("pending overview queried source candidates")
 
-    monkeypatch.setattr(source, "_candidate_count", fail_count)
+    monkeypatch.setattr(synthetic_store, "query_records", fail_query)
     payload = source.vector_tile("auto", 0, 0, 0)
     assert payload.representation == "building"
     assert gzip.decompress(payload.data)
@@ -400,11 +585,11 @@ def test_failed_lod_overview_is_explicit_and_never_scans_source(
     source.close()
 
 
-def test_polygon_budget_degrades_to_centroids(
+def test_explicit_representation_fails_instead_of_cross_family_fallback(
     synthetic_store: SQLiteStore,
     tmp_path: Path,
 ) -> None:
-    """An explicit polygon request still respects hard tile budgets."""
+    """A hard-limit failure never turns one polygon tile into centroids."""
     source = AnnotationTileSource(
         synthetic_store,
         TileMatrix(256, 256),
@@ -412,19 +597,21 @@ def test_polygon_budget_degrades_to_centroids(
         revision="revision",
         name="synthetic",
         cache_dir=tmp_path / "budget-cache",
-        budgets=TileBudgets(polygon_features=2, point_features=100),
+        budgets=TileBudgets(hard_features=2),
     )
-    payload = source.vector_tile("polygon", 0, 0, 0)
-    assert payload.representation == "centroid"
-    assert payload.feature_count == 16
+    with pytest.raises(
+        TileBudgetExceededError,
+        match=r"Uniform polygon.*not changed",
+    ):
+        source.vector_tile("polygon", 0, 0, 0)
     source.close()
 
 
-def test_terminal_representations_obey_compressed_byte_budget(
+def test_terminal_representations_fail_at_absolute_byte_limit(
     synthetic_store: SQLiteStore,
     tmp_path: Path,
 ) -> None:
-    """Aggregate output is reduced and oversized label tiles fail explicitly."""
+    """Vector and label tiles report an absolute limit instead of degrading."""
     source = AnnotationTileSource(
         synthetic_store,
         TileMatrix(1024, 768),
@@ -432,14 +619,15 @@ def test_terminal_representations_obey_compressed_byte_budget(
         revision="revision",
         name="synthetic",
         cache_dir=tmp_path / "byte-budget-cache",
-        budgets=TileBudgets(compressed_bytes=64),
+        budgets=TileBudgets(hard_compressed_bytes=64),
     )
     source.ensure_lod()
-    aggregate = source.vector_tile("aggregate", 0, 0, 0)
-
-    assert len(aggregate.data) <= source.budgets.compressed_bytes
-    assert aggregate.representation in {"aggregate-count", "empty-budget"}
-    with pytest.raises(ValueError, match="Label tile exceeds"):
+    with pytest.raises(
+        TileBudgetExceededError,
+        match=r"Uniform aggregate.*not changed",
+    ):
+        source.vector_tile("aggregate", 0, 0, 0)
+    with pytest.raises(TileBudgetExceededError, match="Label tile exceeds"):
         source.label_tile(0, 0, 0)
     source.close()
 

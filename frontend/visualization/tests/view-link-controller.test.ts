@@ -35,4 +35,19 @@ describe("ViewLinkController", () => {
     first.setCenter([50, -60]);
     expect(second.getCenter()).toEqual([0, 0]);
   });
+
+  it("does not restore the previous slide viewport when asked to fit a new slide", () => {
+    const controller = new ViewLinkController();
+    const previous = new View({ center: [100, -200], resolution: 2 });
+    const unregister = controller.register("primary", previous);
+    unregister();
+
+    const replacement = new View();
+    controller.register("primary", replacement, undefined, {
+      restoreLastState: false,
+    });
+
+    expect(replacement.getCenter()).toBeUndefined();
+    expect(replacement.getResolution()).toBeUndefined();
+  });
 });

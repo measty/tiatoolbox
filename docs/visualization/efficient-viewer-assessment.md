@@ -12,7 +12,7 @@ viewer the default.
 The important architectural change is not Bokeh-to-OpenLayers by itself. It is
 moving annotation rendering from a server-generated image into a bounded,
 revisioned data pipeline. WSI and raster overlays remain raster tiles;
-annotation stores are exposed through adaptive vector representations, compact
+annotation stores are exposed through scheduled vector representations, compact
 identifiers, exact-detail endpoints, and caches. This removes presentation
 choices such as colour, opacity, or category visibility from the expensive
 geometry-generation path.
@@ -65,20 +65,26 @@ The principal design properties are:
   modification time alone. Successful immutable manifests, feature details,
   and tiles support conditional ETags; temporary `building` responses are not
   cached as immutable content.
-- Polygon tiles have hard feature, vertex, and compressed-byte budgets. Dense
-  requests degrade predictably from polygon to centroid to aggregate rather
-  than returning an unbounded payload. Aggregate vector tiles and label/data
-  tiles also enforce terminal compressed-byte limits.
+- The automatic path uses one immutable geometry family per store and source
+  zoom. For the supplied max-zoom-9 slide this is aggregate z0-z3, centroid
+  z4-z6, and polygon z7-z9; tile density, style fields, and filters cannot turn
+  individual tiles into a different family.
+- Pathology-calibrated operating targets are 32,000 centroid features and 256
+  KiB compressed. Larger absolute feature, vertex, and byte limits remain as
+  safety stops. Exceeding one produces an explicit error instead of silently
+  degrading a single tile and creating a misleading patchwork; the HTTP API
+  reports this as a non-retryable 422 response.
 - Ready low-zoom categorical filters use the persisted LOD index. Unsupported
   overview filters fail fast instead of falling back to a whole-store scan.
 - MVTs carry compact numeric feature IDs and only requested style properties.
   Exact geometry, canonical annotation key, and complete properties are fetched
   after selection. Aggregate overview cells intentionally have no authoritative
   annotation ID and cannot be selected as if they were cells.
-- Tile construction is protected by single-flight work coalescing plus bounded
-  memory and persistent caches. The browser caps annotation requests at 16 and
-  aborts superseded requests where possible; already-running Flask work is not
-  cooperatively cancellable.
+- Tile construction is protected by single-flight work coalescing, at most one
+  active cold builders per annotation source, and bounded memory/persistent
+  caches. The browser caps annotation requests at 16 and aborts superseded
+  requests where possible; already-running Flask work is not cooperatively
+  cancellable.
 - The browser renderer is behind a small adapter. Canvas and WebGL consume the
   same coordinates, manifests, tile URLs, style state, and inspection API; the
   backend does not know which renderer is active.
@@ -89,13 +95,13 @@ image encoding, transfer, and image decoding again.
 
 ## Phase status
 
-| Phase                       | Current assessment                                                                                                                                                                                                                                                                                       |
-| --------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 0: contract and baselines   | Delivered. The functional contract, dataset tiers, HTTP scenarios, and initial large-store observations are recorded.                                                                                                                                                                                    |
-| 1: renderer-neutral backend | Delivered for assessment. The versioned API, resources, sessions, raster tiles, read-only store access, manifests, exact feature lookup, and revision-aware responses are implemented while the Bokeh route remains available.                                                                           |
-| 2: renderer comparison      | Candidate implementations and manual semantic smoke tests are delivered, but renderer selection is not concluded. Canvas and WebGL can be forced against the same protocol; controlled frame-time, GPU-memory, and context-loss results remain outstanding.                                              |
-| 3: core JavaScript viewer   | The main viewing workflow is delivered. It intentionally does not yet have complete Bokeh feature parity; exceptions are listed below.                                                                                                                                                                   |
-| 4: bounded dense-store path | Delivered for assessment: adaptive LOD, background overview construction, budgets, compact data, caching, bounded client requests, and batched/custom vector encoding. Initial integrated large-store CPU measurements are recorded below; fixed-host browser, memory, and endurance acceptance remains. |
+| Phase                       | Current assessment                                                                                                                                                                                                                                                                                                                                       |
+| --------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 0: contract and baselines   | Delivered. The functional contract, dataset tiers, HTTP scenarios, and initial large-store observations are recorded.                                                                                                                                                                                                                                    |
+| 1: renderer-neutral backend | Delivered for assessment. The versioned API, resources, sessions, raster tiles, read-only store access, manifests, exact feature lookup, and revision-aware responses are implemented while the Bokeh route remains available.                                                                                                                           |
+| 2: renderer comparison      | Candidate implementations and manual semantic smoke tests are delivered, but renderer selection is not concluded. Canvas and WebGL can be forced against the same protocol; controlled frame-time, GPU-memory, and context-loss results remain outstanding.                                                                                              |
+| 3: core JavaScript viewer   | The main viewing workflow is delivered. It intentionally does not yet have complete Bokeh feature parity; exceptions are listed below.                                                                                                                                                                                                                   |
+| 4: bounded dense-store path | Delivered for assessment: uniform store-zoom LOD, background overview construction, budgets, compact data, caching, bounded client/server cold work, and batched/custom vector encoding. Initial integrated large-store CPU measurements are recorded below; broader representative-store, fixed-host browser, memory, and endurance acceptance remains. |
 
 ## Core functionality preserved in the OpenLayers viewer
 
@@ -273,22 +279,38 @@ p50 and 11-12 ms p95 per request. A fixed-host keep-alive run is still needed
 before treating the 5 ms memory-cache HTTP target as accepted.
 
 The aggregate-to-detail handoff was subsequently moved down by one source
-level for the supplied max-zoom-9 slide: persisted aggregates now cover z0-z3
-and z4 enters the adaptive centroid path. Across all 143 z4 tiles, a cold local
-build reported 112 centroid responses (including empty tiles) and 31 bounded
-aggregate fallbacks, with p50 26.0 ms, p95 231.0 ms, and a 517.3 ms maximum.
-The same 35-tile dense viewport took 3.2 ms serially once resident in the
-application cache. Counting the encoder's seam buffer during representation
-selection removed six avoidable centroid-then-aggregate retries; before that
-correction the same experiment measured p95 361.2 ms and a 711.0 ms maximum.
+level for the supplied max-zoom-9 slide: persisted aggregates cover z0-z3 and
+z4 begins the centroid range. An earlier tile-local policy produced 112
+centroid responses and 31 aggregate responses across the 143 z4 tiles. That
+measurement exposed a correctness problem rather than a useful optimization:
+dense and sparse neighbours formed a visually ambiguous patchwork. The current
+policy therefore makes every z4 tile a centroid tile and raises the normal
+centroid envelope to cover the observed buffered maximum of 22,096 cells (the
+z4 mean was 4,991 and p95 19,043) without adding a density pre-scan.
 
-A deliberately cold 40-distinct-tile, concurrency-16 stress burst still took
-24.3 seconds wall time on this development host because store queries and MVT
-encoding contend heavily. This is not representative of incremental browser
-pans, which painted the tested sparse, dense, and mixed z4 views in roughly a
-second and produced no WebGL warnings or errors, but it remains a useful
-upper-bound warning: large uncached teleports should be included in the fixed-
-host acceptance workload rather than judged from warm-cache interaction alone.
+A fresh complete z4 sweep after the uniform-policy change requested all 143
+tiles with the UI's `type` field. Every response reported `centroid`; none
+reported aggregate or an absolute-limit error. The largest response contained
+21,983 points and was 144,972 bytes compressed, below both the normal 32,000-
+point/256-KiB envelope and the absolute safety ceiling.
+
+A deliberately cold 40-distinct-tile experiment showed that unconstrained
+parallelism is counterproductive on this path: representative wall times were
+about 7.2 seconds with one builder, 12.3 seconds with two, 18.9 seconds with
+four, and 24 seconds with 8-16 competing workers. A follow-up viewport run also
+found that one builder beat two for first-tile, first-eight-tile, and complete
+viewport latency. The service therefore admits one active cold build per
+source. Large uncached teleports remain an important
+fixed-host workload, and queued WSGI work is not yet cooperatively cancelled
+when a browser request is abandoned.
+
+A cold browser pass then traversed every source level from z1 through z7. At
+the z4 boundary the WebGL layer showed a temporary blank while cold centroid
+tiles arrived, followed by a visually uniform centroid field. At z7 it again
+showed a blank rather than substituting centroid parents, then rendered
+polygons. Canvas produced the same z4 centroid field, and neither renderer
+logged a warning or error. This validates the band-limited source handoff in a
+real render, in addition to its tile-grid unit tests.
 
 The manual browser pass covered both Canvas and WebGL, the overview map, slide
 switching, a raster overlay, categorical and direct-colour controls, and linked

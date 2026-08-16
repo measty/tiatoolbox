@@ -3,13 +3,17 @@ import { describe, expect, it } from "vitest";
 import type { StoreManifest } from "../src/api/types";
 import {
   DIRECT_COLOR_OPTION,
+  aggregateOverviewMaxZoom,
   annotationLayerMinZoom,
+  annotationRepresentationSummary,
   defaultPresentation,
   matchesPresentation,
   presentationForProperty,
   presentationForStore,
   refreshProvisionalPresentation,
   requiredTileProperties,
+  zoomRepresentationAt,
+  zoomRepresentationPolicyRanges,
 } from "../src/domain/style-spec";
 import {
   colorForValue,
@@ -72,6 +76,55 @@ describe("portable annotation presentation", () => {
         overviewMode: "hidden",
       }),
     ).toBe(-Infinity);
+  });
+
+  it("describes and resolves only the authoritative uniform zoom policy", () => {
+    const policyStore: StoreManifest = {
+      ...store,
+      representations: [
+        {
+          kind: "auto",
+          minZoom: 0,
+          maxZoom: 9,
+          urlTemplate: "/auto/{z}/{x}/{y}",
+          policy: {
+            scope: "store-zoom",
+            ranges: [
+              { minZoom: 0, maxZoom: 3, representation: "aggregate" },
+              { minZoom: 4, maxZoom: 6, representation: "centroid" },
+              { minZoom: 7, maxZoom: 9, representation: "polygon" },
+            ],
+          },
+        },
+      ],
+    };
+
+    expect(zoomRepresentationPolicyRanges(policyStore).map((range) =>
+      range.representation,
+    )).toEqual(["aggregate", "centroid", "polygon"]);
+    expect(zoomRepresentationAt(policyStore, 3)).toBe("aggregate");
+    expect(zoomRepresentationAt(policyStore, 4)).toBe("centroid");
+    expect(zoomRepresentationAt(policyStore, 7)).toBe("polygon");
+    expect(annotationRepresentationSummary(policyStore)).toBe(
+      "Rendering schedule: aggregates z0-3, centroids z4-6, polygons z7-9.",
+    );
+    expect(aggregateOverviewMaxZoom(policyStore)).toBe(3);
+
+    const overlapping: StoreManifest = {
+      ...policyStore,
+      representations: [{
+        ...policyStore.representations[0]!,
+        policy: {
+          scope: "store-zoom",
+          ranges: [
+            { minZoom: 0, maxZoom: 4, representation: "aggregate" },
+            { minZoom: 4, maxZoom: 9, representation: "centroid" },
+          ],
+        },
+      }],
+    };
+    expect(zoomRepresentationPolicyRanges(overlapping)).toEqual([]);
+    expect(annotationRepresentationSummary(overlapping)).toBeUndefined();
   });
 
   it("filters hidden categories without a server request", () => {

@@ -1,4 +1,9 @@
-import type { PropertyValue, StoreManifest } from "../api/types";
+import type {
+  ConcreteRepresentationKind,
+  PropertyValue,
+  StoreManifest,
+  ZoomRepresentationRange,
+} from "../api/types";
 
 export interface CategoryStyle {
   value: PropertyValue;
@@ -136,6 +141,10 @@ export function annotationLayerMinZoom(
 export function aggregateOverviewMaxZoom(
   store: StoreManifest,
 ): number | undefined {
+  const policyAggregate = zoomRepresentationPolicyRanges(store).find(
+    (range) => range.representation === "aggregate" && range.minZoom === 0,
+  );
+  if (policyAggregate) return policyAggregate.maxZoom;
   const aggregate = store.representations.find(
     (representation) => representation.kind === "aggregate",
   );
@@ -146,6 +155,78 @@ export function aggregateOverviewMaxZoom(
     maxZoom < Number.MAX_SAFE_INTEGER
     ? maxZoom
     : undefined;
+}
+
+/**
+ * Return the server-advertised, contiguous monotone zoom policy when usable.
+ *
+ * This metadata is descriptive: vector tile requests always use the `auto`
+ * endpoint, which remains the only authority that selects a representation.
+ */
+export function zoomRepresentationPolicyRanges(
+  store: StoreManifest,
+): ZoomRepresentationRange[] {
+  const policy = store.representations.find(
+    (representation) => representation.kind === "auto",
+  )?.policy;
+  if (policy?.scope !== "store-zoom" || policy.ranges.length === 0) return [];
+  const ranges = [...policy.ranges];
+  let previousMax = -1;
+  let previousRank = -1;
+  const representationRank: Record<ConcreteRepresentationKind, number> = {
+    aggregate: 0,
+    centroid: 1,
+    polygon: 2,
+  };
+  for (const range of ranges) {
+    const rank = representationRank[range.representation];
+    if (
+      !Number.isSafeInteger(range.minZoom) ||
+      !Number.isSafeInteger(range.maxZoom) ||
+      range.minZoom < 0 ||
+      range.maxZoom < range.minZoom ||
+      range.minZoom !== previousMax + 1 ||
+      rank <= previousRank
+    ) {
+      return [];
+    }
+    previousMax = range.maxZoom;
+    previousRank = rank;
+  }
+  return ranges;
+}
+
+/** Return the advertised representation at one source-tile zoom. */
+export function zoomRepresentationAt(
+  store: StoreManifest,
+  zoom: number,
+): ConcreteRepresentationKind | undefined {
+  if (!Number.isSafeInteger(zoom)) return undefined;
+  return zoomRepresentationPolicyRanges(store).find(
+    (range) => zoom >= range.minZoom && zoom <= range.maxZoom,
+  )?.representation;
+}
+
+/** Human-readable rendering schedule for layer help text. */
+export function annotationRepresentationSummary(
+  store: StoreManifest,
+): string | undefined {
+  const ranges = zoomRepresentationPolicyRanges(store);
+  if (ranges.length === 0) return undefined;
+  return `Rendering schedule: ${ranges.map(rangeSummary).join(", ")}.`;
+}
+
+const REPRESENTATION_LABELS: Record<ConcreteRepresentationKind, string> = {
+  aggregate: "aggregates",
+  centroid: "centroids",
+  polygon: "polygons",
+};
+
+function rangeSummary(range: ZoomRepresentationRange): string {
+  const zooms = range.minZoom === range.maxZoom
+    ? `z${range.minZoom}`
+    : `z${range.minZoom}-${range.maxZoom}`;
+  return `${REPRESENTATION_LABELS[range.representation]} ${zooms}`;
 }
 
 export function presentationForProperty(

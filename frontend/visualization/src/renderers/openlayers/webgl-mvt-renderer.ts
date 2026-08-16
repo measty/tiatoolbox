@@ -1,5 +1,7 @@
+import type { EventsKey } from "ol/events.js";
 import WebGLVectorTileLayer from "ol/layer/WebGLVectorTile.js";
 import type Map from "ol/Map.js";
+import { unByKey } from "ol/Observable.js";
 import type { Pixel } from "ol/pixel.js";
 import type RenderFeature from "ol/render/Feature.js";
 import type VectorTileSource from "ol/source/VectorTile.js";
@@ -15,7 +17,10 @@ import type {
   PickResult,
 } from "../annotation-renderer";
 import { compileWebGlStyle } from "./style-compiler";
-import { createManagedVectorTileSource } from "./vector-tile-source";
+import {
+  createManagedVectorTileSource,
+  type ManagedVectorTileSource,
+} from "./vector-tile-source";
 import { pickFeatureOnServer } from "./server-pick";
 
 export class WebGlMvtRenderer implements AnnotationLayerHandle {
@@ -33,12 +38,15 @@ export class WebGlMvtRenderer implements AnnotationLayerHandle {
     VectorTileSource<RenderFeature>,
     RenderFeature
   >;
+  private readonly managed: ManagedVectorTileSource;
   private readonly requests;
   private readonly store: StoreManifest;
   private structureKey: string;
+  private resolutionKey: EventsKey | undefined;
 
   constructor(context: AnnotationRendererContext) {
     const managed = createManagedVectorTileSource(context);
+    this.managed = managed;
     this.requests = managed.requests;
     this.store = context.store;
     const compiled = compileWebGlStyle(context.presentation);
@@ -61,10 +69,17 @@ export class WebGlMvtRenderer implements AnnotationLayerHandle {
   }
 
   attach(map: Map): void {
+    const view = map.getView();
+    this.synchronizeSource(view.getResolution());
+    this.resolutionKey = view.on("change:resolution", () => {
+      this.synchronizeSource(view.getResolution());
+    });
     map.addLayer(this.layer);
   }
 
   detach(map: Map): void {
+    if (this.resolutionKey) unByKey(this.resolutionKey);
+    this.resolutionKey = undefined;
     map.removeLayer(this.layer);
   }
 
@@ -94,9 +109,18 @@ export class WebGlMvtRenderer implements AnnotationLayerHandle {
   }
 
   dispose(): void {
+    if (this.resolutionKey) unByKey(this.resolutionKey);
+    this.resolutionKey = undefined;
     this.requests.abortAll();
-    this.layer.getSource()?.clear();
     // WebGLVectorTileLayer must be disposed explicitly or its context survives.
     this.layer.dispose();
+    this.managed.disposeSources();
+  }
+
+  private synchronizeSource(resolution: number | undefined): void {
+    const source = this.managed.sourceForResolution(resolution);
+    if (this.layer.getSource() === source) return;
+    this.requests.abortAll();
+    this.layer.setSource(source);
   }
 }

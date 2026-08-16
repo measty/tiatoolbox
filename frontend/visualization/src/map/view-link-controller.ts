@@ -19,6 +19,10 @@ interface CanonicalViewState {
   rotation: number;
 }
 
+interface ViewRegistrationOptions {
+  restoreLastState?: boolean;
+}
+
 export const slideViewTransform: ViewCoordinateTransform = {
   toCanonical: (coordinate) => [coordinate[0] ?? 0, -(coordinate[1] ?? 0)],
   fromCanonical: (coordinate) => [coordinate[0], -coordinate[1]],
@@ -34,6 +38,7 @@ export class ViewLinkController {
     id: string,
     view: View,
     transform: ViewCoordinateTransform = slideViewTransform,
+    options: ViewRegistrationOptions = {},
   ): () => void {
     this.unregister(id);
     const sync = () => this.handleChange(id);
@@ -47,8 +52,15 @@ export class ViewLinkController {
       ],
     };
     this.views.set(id, entry);
-    if (this.enabled && this.lastState) this.apply(entry, this.lastState);
-    else this.capture(entry);
+    if (
+      options.restoreLastState !== false &&
+      this.enabled &&
+      this.lastState
+    ) {
+      this.apply(entry, this.lastState);
+    } else {
+      this.capture(entry);
+    }
     return () => this.unregister(id);
   }
 

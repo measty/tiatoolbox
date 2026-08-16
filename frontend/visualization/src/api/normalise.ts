@@ -1,11 +1,13 @@
 import type {
   AddedOverlay,
   BootstrapManifest,
+  ConcreteRepresentationKind,
   FeatureDetail,
   PropertyKind,
   PropertyValue,
   RepresentationKind,
   RepresentationManifest,
+  RepresentationPolicy,
   RasterLayerManifest,
   ResourceKind,
   ResourceSummary,
@@ -343,6 +345,46 @@ const REPRESENTATIONS: RepresentationKind[] = [
   "auto",
 ];
 
+const CONCRETE_REPRESENTATIONS: ConcreteRepresentationKind[] = [
+  "aggregate",
+  "centroid",
+  "polygon",
+];
+
+function representationPolicy(value: unknown): RepresentationPolicy | undefined {
+  if (value === undefined || value === null) return undefined;
+  const raw = object(value, "representation.policy");
+  const rangesValue = first(raw, "ranges");
+  if (!Array.isArray(rangesValue)) {
+    throw new TypeError("representation.policy.ranges must be an array.");
+  }
+  return {
+    scope: String(first(raw, "scope") ?? ""),
+    ranges: rangesValue.map((value, index) => {
+      const range = object(value, `representation.policy.ranges[${index}]`);
+      const representation = String(
+        first(range, "representation", "kind"),
+      ) as ConcreteRepresentationKind;
+      if (!CONCRETE_REPRESENTATIONS.includes(representation)) {
+        throw new TypeError(
+          `Unsupported policy representation: ${representation}`,
+        );
+      }
+      return {
+        minZoom: finiteNumber(
+          first(range, "minZoom", "min_zoom"),
+          `representation.policy.ranges[${index}].min_zoom`,
+        ),
+        maxZoom: finiteNumber(
+          first(range, "maxZoom", "max_zoom"),
+          `representation.policy.ranges[${index}].max_zoom`,
+        ),
+        representation,
+      };
+    }),
+  };
+}
+
 function representation(
   value: unknown,
   index: number,
@@ -352,6 +394,7 @@ function representation(
   if (!REPRESENTATIONS.includes(kind)) {
     throw new TypeError(`Unsupported representation kind: ${kind}`);
   }
+  const policy = representationPolicy(first(raw, "policy"));
   return {
     kind,
     minZoom: finiteNumber(first(raw, "minZoom", "min_zoom") ?? 0, "min_zoom"),
@@ -369,6 +412,7 @@ function representation(
     ...(optionalFiniteNumber(first(raw, "maxVertices", "max_vertices")) === undefined
       ? {}
       : { maxVertices: optionalFiniteNumber(first(raw, "maxVertices", "max_vertices")) }),
+    ...(policy === undefined ? {} : { policy }),
   };
 }
 

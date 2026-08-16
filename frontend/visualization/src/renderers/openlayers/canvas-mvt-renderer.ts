@@ -1,6 +1,8 @@
 import type { FeatureLike } from "ol/Feature.js";
+import type { EventsKey } from "ol/events.js";
 import VectorTileLayer from "ol/layer/VectorTile.js";
 import type Map from "ol/Map.js";
+import { unByKey } from "ol/Observable.js";
 import type { Pixel } from "ol/pixel.js";
 
 import {
@@ -14,7 +16,10 @@ import type {
   PickResult,
 } from "../annotation-renderer";
 import { createCanvasStyleFunction } from "./style-compiler";
-import { createManagedVectorTileSource } from "./vector-tile-source";
+import {
+  createManagedVectorTileSource,
+  type ManagedVectorTileSource,
+} from "./vector-tile-source";
 import { pickFeatureOnServer } from "./server-pick";
 
 export class CanvasMvtRenderer implements AnnotationLayerHandle {
@@ -26,12 +31,15 @@ export class CanvasMvtRenderer implements AnnotationLayerHandle {
   };
 
   private readonly layer: VectorTileLayer;
+  private readonly managed: ManagedVectorTileSource;
   private readonly requests;
   private readonly store: StoreManifest;
   private map: Map | null = null;
+  private resolutionKey: EventsKey | undefined;
 
   constructor(context: AnnotationRendererContext) {
     const managed = createManagedVectorTileSource(context);
+    this.managed = managed;
     this.requests = managed.requests;
     this.store = context.store;
     this.layer = new VectorTileLayer({
@@ -51,10 +59,17 @@ export class CanvasMvtRenderer implements AnnotationLayerHandle {
 
   attach(map: Map): void {
     this.map = map;
+    const view = map.getView();
+    this.synchronizeSource(view.getResolution());
+    this.resolutionKey = view.on("change:resolution", () => {
+      this.synchronizeSource(view.getResolution());
+    });
     map.addLayer(this.layer);
   }
 
   detach(map: Map): void {
+    if (this.resolutionKey) unByKey(this.resolutionKey);
+    this.resolutionKey = undefined;
     map.removeLayer(this.layer);
     if (this.map === map) this.map = null;
   }
@@ -106,8 +121,17 @@ export class CanvasMvtRenderer implements AnnotationLayerHandle {
   }
 
   dispose(): void {
+    if (this.resolutionKey) unByKey(this.resolutionKey);
+    this.resolutionKey = undefined;
     this.requests.abortAll();
-    this.layer.getSource()?.clear();
     this.layer.dispose();
+    this.managed.disposeSources();
+  }
+
+  private synchronizeSource(resolution: number | undefined): void {
+    const source = this.managed.sourceForResolution(resolution);
+    if (this.layer.getSource() === source) return;
+    this.requests.abortAll();
+    this.layer.setSource(source);
   }
 }

@@ -3,6 +3,7 @@ import type { LayerPresentation } from "../domain/style-spec";
 import {
   DIRECT_COLOR_OPTION,
   aggregateOverviewMaxZoom,
+  annotationRepresentationSummary,
   presentationForProperty,
   supportsDirectColor,
 } from "../domain/style-spec";
@@ -26,6 +27,7 @@ export function LayerPanel({
       ? DIRECT_COLOR_OPTION
       : presentation.colorBy.property;
   const aggregateMaxZoom = aggregateOverviewMaxZoom(store);
+  const representationSummary = annotationRepresentationSummary(store);
   return (
     <details className="layer-panel" open>
       <summary>
@@ -70,8 +72,10 @@ export function LayerPanel({
       {aggregateMaxZoom !== undefined && (
         <label
           title={
-            `Aggregate dots cover zoom levels 0-${aggregateMaxZoom}. ` +
-            `When hidden, exact annotations begin at zoom ${aggregateMaxZoom + 1}.`
+            representationSummary
+              ? `${representationSummary} Hiding low zoom suppresses the aggregate range.`
+              : `Aggregate dots cover zoom levels 0-${aggregateMaxZoom}. ` +
+                `When hidden, annotations begin at zoom ${aggregateMaxZoom + 1}.`
           }
         >
           Low zoom

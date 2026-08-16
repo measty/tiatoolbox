@@ -37,7 +37,7 @@ if TYPE_CHECKING:  # pragma: no cover
 # Bump whenever tile geometry/properties or derived LOD semantics change. It is
 # part of the public store identity so browser/CDN immutable URLs cannot reuse
 # bytes produced by an older representation pipeline after an upgrade.
-_ANNOTATION_PIPELINE_VERSION = 4
+_ANNOTATION_PIPELINE_VERSION = 5
 
 
 @dataclass(slots=True)

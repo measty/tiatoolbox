@@ -69,6 +69,14 @@ and y increasing down. OpenLayers uses `[x, -y]`; z=0 is the overview and
 z=`max_zoom` is baseline resolution. Annotation MVTs use an extent of 4096 and
 must align with the slide's advertised tile grid.
 
+The `auto` representation advertises a contiguous `store-zoom` policy. Every
+tile at one source zoom uses the same family; for a max-zoom-9 cellular store
+the default ranges are aggregate z0-z3, centroid z4-z6, and polygon z7-z9.
+Canvas and WebGL continue requesting only the `auto` URL. They use separate,
+band-limited OpenLayers sources at the advertised boundaries so a loaded
+aggregate parent cannot temporarily fill a missing centroid tile (or a
+centroid parent a polygon tile).
+
 Session slide and raster-overlay tile templates carry a committed slide
 generation as well as the opaque resource ID and revision. Every slide
 selection advances that generation, including reselecting the same slide, so
@@ -86,7 +94,8 @@ authoritative feature ID and are intentionally not selectable.
 
 Each annotation layer's **Low zoom** control can retain those aggregate dots
 (the default) or hide the annotation layer until the first non-aggregate zoom.
-The hidden mode uses the aggregate representation's advertised `maxZoom`, so it
+The hidden mode uses the automatic policy's aggregate prefix (falling back to
+the aggregate representation's advertised `maxZoom` for older manifests), so it
 does not request raw annotations at overview levels or change the server's
 bounded representation policy. The setting is independent per comparison view
 and is included in exported viewer configurations. The detail transition itself
@@ -116,9 +125,11 @@ silently produce an unsafe viewer bundle.
 The OpenLayers map queue caps concurrent tile loads at 16 across raster and
 vector sources. Repeated requests for the same annotation tile supersede older
 fetches, transient failures and empty HTTP responses receive two short retries,
-and renderer disposal aborts all outstanding client work. This bounds browser
-pressure, but an aborted HTTP request does not cooperatively stop
-SQLite/encoding work already executing in Flask.
+renderer disposal aborts all outstanding client work, and a representation-band
+change aborts outgoing browser requests. The backend independently limits each
+annotation source to one active cold tile build while cache hits bypass that
+limit. This bounds pressure, but an aborted HTTP request does not cooperatively
+stop SQLite/encoding work already executing in Flask.
 
 Each map view has a collapsible overview map backed by the same slide source and
 projection. **Save view as PNG** waits for a complete render and composites the

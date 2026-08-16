@@ -94,21 +94,27 @@ Deferral does not authorize removal from the legacy viewer during phases 0-4.
 
 ### Representation selection
 
-Selection is governed by projected visibility and hard budgets, not by zoom
-alone.
+The automatic representation is a revisioned, whole-store zoom schedule. A
+given source zoom must use one geometry family for every tile, independent of
+tile density, requested style fields, and filters. The manifest advertises the
+schedule as contiguous `store-zoom` ranges and the `auto` endpoint remains the
+authority that applies it.
 
 | Regime                             | Preferred representation                                                                  |
 | ---------------------------------- | ----------------------------------------------------------------------------------------- |
 | Whole-slide                        | Persisted density/count/class-composition aggregates.                                     |
-| Intermediate                       | Aggregates, centroids, or class/scalar data tiles.                                        |
+| Intermediate                       | Centroids, or optional class/scalar data tiles.                                           |
 | Cell-detail                        | Simplified or full polygon MVT within budget.                                             |
 | Selected/editing                   | Exact source geometry in a small ordinary vector layer.                                   |
 | Dense non-overlapping segmentation | Optional class, scalar, and annotation-ID data-tile pyramid, with polygons at close zoom. |
 
-Every response must obey configured maximum feature, output-vertex, and encoded
-byte budgets. If a detailed representation exceeds a budget, the service must
-degrade deterministically to a cheaper representation. It must never emit an
-unbounded tile merely because a nominal polygon zoom was reached.
+Normal feature/vertex/byte targets are calibrated for pathology annotations;
+larger absolute safety limits remain bounded. A tile that exceeds an absolute
+limit must return an explicit 422 failure without silently changing geometry family. This
+prefers an occasional missing/error tile over a misleading centroid/aggregate
+or polygon/centroid patchwork. The default schedule must be derivable from the
+slide matrix and inexpensive manifest settings; it may not require a whole-
+store density scan before the first useful view.
 
 ### Styling and filtering
 
@@ -123,11 +129,14 @@ unbounded tile merely because a nominal polygon zoom was reached.
 
 ### Cache and request lifecycle
 
-- Cache keys must include store ID, revision, representation, schema/property
-  projection, geometry-affecting filter, and tile coordinates.
+- Cache keys must include store ID, revision, representation policy and
+  budgets, matrix/category contract, schema/property projection,
+  geometry-affecting filter, and tile coordinates.
 - Memory caches must be bounded by bytes. Persistent caches must be revisioned
   and atomically published.
 - Concurrent misses for one key should be coalesced into one build.
+- Active cold builds must be bounded per annotation source so a viewport burst
+  cannot turn SQLite/encoder contention into lower total throughput.
 - Obsolete viewport requests must be abortable. Cancelled queued work should not
   enter expensive encoding, and stale results must not replace current tiles.
 - Responses must provide stable ETags and honour conditional requests.
@@ -139,8 +148,12 @@ timing.
 
 1. **No overview full scan.** An interactive overview request must use persisted
    aggregate/LOD data and may not query or hash every source annotation.
-1. **Bounded output.** Every tile respects the configured feature, vertex, and
-   byte limits and reports the representation actually used.
+1. **Bounded output.** Every successful tile respects the configured feature,
+   vertex, and byte limits and reports the representation actually used;
+   failures emit no partial or cross-family tile bytes.
+1. **Uniform LOD.** Dense and sparse tiles at the same source zoom use the same
+   advertised geometry family; neither preflight nor post-encode overflow may
+   change one tile to a cheaper family.
 1. **Style independence.** Client-supported style changes cause no annotation
    tile request and do not change tile cache keys.
 1. **Identity.** Every displayed/picked compact ID resolves to the exact canonical

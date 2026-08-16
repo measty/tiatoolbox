@@ -1,8 +1,9 @@
-"""Annotation-store tile source with adaptive representations and budgets."""
+"""Annotation-store tile source with uniform zoom LOD and bounded encoding."""
 
 from __future__ import annotations
 
 import gzip
+import hashlib
 import json
 import re
 import struct
@@ -59,19 +60,33 @@ _DATA_TILE_MAGIC = b"TIAD"
 _DATA_TILE_VERSION = 1
 _DATA_TILE_DTYPE_UINT32 = 4
 _LOD_FAILED_MESSAGE = "Overview LOD preprocessing failed; reload the overlay to retry."
-_VECTOR_TILE_CACHE_VERSION = 4
+_VECTOR_TILE_CACHE_VERSION = 5
+
+
+class TileBudgetExceededError(RuntimeError):
+    """Raised when an exact tile representation exceeds an absolute limit."""
 
 
 @dataclass(frozen=True, slots=True)
 class TileBudgets:
-    """Hard per-tile limits used by adaptive representation selection."""
+    """Pathology-calibrated tile targets and absolute safety limits.
+
+    The target values describe the expected operating envelope and are exposed
+    for diagnostics. They do not change an individual tile's representation.
+    The larger ``hard_*`` values are terminal safety limits: exceeding one
+    raises an explicit error instead of silently returning another geometry
+    family and producing a patchwork overlay.
+    """
 
     polygon_features: int = 4_000
-    point_features: int = 12_000
+    point_features: int = 32_000
     vertices: int = 120_000
-    compressed_bytes: int = 128 * 1024
+    compressed_bytes: int = 256 * 1024
     polygon_max_downsample: int = 4
     density_bins: int = 16
+    hard_features: int = 100_000
+    hard_vertices: int = 500_000
+    hard_compressed_bytes: int = 1024 * 1024
 
 
 class AnnotationTileSource:
@@ -89,8 +104,12 @@ class AnnotationTileSource:
         budgets: TileBudgets | None = None,
         category_property: str = "type",
         owns_store: bool = False,
+        max_concurrent_tile_builds: int = 1,
     ) -> None:
         """Initialise a revisioned tile source."""
+        if max_concurrent_tile_builds <= 0:
+            msg = "Concurrent tile build limit must be positive."
+            raise ValueError(msg)
         self.store = store
         self.matrix = matrix
         self.store_id = store_id
@@ -99,6 +118,20 @@ class AnnotationTileSource:
         self.budgets = budgets or TileBudgets()
         self.category_property = category_property
         self.owns_store = owns_store
+        tile_contract = json.dumps(
+            {
+                "version": _VECTOR_TILE_CACHE_VERSION,
+                "matrix": matrix.as_dict(),
+                "categoryProperty": category_property,
+                "budgets": asdict(self.budgets),
+            },
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+        self._tile_contract_digest = hashlib.blake2b(
+            tile_contract.encode(),
+            digest_size=12,
+        ).hexdigest()
         revision_dir = Path(cache_dir) / store_id / revision
         revision_dir.mkdir(parents=True, exist_ok=True)
         self.memory_cache = ByteLRUCache()
@@ -111,6 +144,13 @@ class AnnotationTileSource:
             bins_per_tile=self.budgets.density_bins,
         )
         self._single_flight = SingleFlight()
+        # SQLite queries and Python MVT encoding contend when a cold viewport
+        # starts many tiles at once. One builder gave both faster first output
+        # and higher total throughput than competing builds on the dense store.
+        self._tile_build_slots = threading.BoundedSemaphore(
+            max_concurrent_tile_builds,
+        )
+        self.max_concurrent_tile_builds = max_concurrent_tile_builds
         self._lod_future: Future[None] | None = None
         self._lod_lock = threading.Lock()
 
@@ -166,7 +206,13 @@ class AnnotationTileSource:
             "lodStatus": self.lod_status,
             "categoryProperty": self.category_property,
             "representations": {
-                "auto": {"format": "mvt"},
+                "auto": {
+                    "format": "mvt",
+                    "policy": {
+                        "scope": "store-zoom",
+                        "ranges": self._auto_representation_ranges(),
+                    },
+                },
                 "aggregate": {
                     "format": "mvt",
                     "maxZoom": self.lod.overview_max_zoom,
@@ -184,6 +230,7 @@ class AnnotationTileSource:
                 },
             },
             "budgets": asdict(self.budgets),
+            "maxConcurrentTileBuilds": self.max_concurrent_tile_builds,
         }
 
     def feature(self, feature_id: int) -> dict[str, Any] | None:
@@ -264,7 +311,7 @@ class AnnotationTileSource:
         fields: Iterable[str] = (),
         property_filter: Mapping[str, object] | None = None,
     ) -> TilePayload:
-        """Return a gzip-compressed vector tile with adaptive fallback."""
+        """Return a gzip-compressed vector tile with uniform zoom LOD."""
         self.matrix.validate_tile(z, x, y)
         selected_fields = self._normalise_fields(fields)
         persisted_manifest = self.lod.manifest()
@@ -290,6 +337,7 @@ class AnnotationTileSource:
         cache_key = json.dumps(
             {
                 "version": _VECTOR_TILE_CACHE_VERSION,
+                "contract": self._tile_contract_digest,
                 "store": self.store_id,
                 "revision": self.revision,
                 "lod": lod_generation,
@@ -312,39 +360,40 @@ class AnnotationTileSource:
             return replace(cached, cache_status="disk", server_timing="cache;dur=0")
 
         def build_once() -> TilePayload:
-            second_hit = self.memory_cache.get(cache_key)
-            if second_hit is not None:
-                return replace(
-                    second_hit,
-                    cache_status="memory",
-                    server_timing="cache;dur=0",
+            queued_at = time.perf_counter()
+            with self._tile_build_slots:
+                started = time.perf_counter()
+                second_hit = self.memory_cache.get(cache_key)
+                if second_hit is not None:
+                    return replace(
+                        second_hit,
+                        cache_status="memory",
+                        server_timing="cache;dur=0",
+                    )
+                payload = self._build_vector_tile(
+                    representation,
+                    z,
+                    x,
+                    y,
+                    selected_fields,
+                    normalized_filter,
                 )
-            started = time.perf_counter()
-            payload = self._build_vector_tile(
-                representation,
-                z,
-                x,
-                y,
-                selected_fields,
-                normalized_filter,
-            )
-            elapsed_ms = (time.perf_counter() - started) * 1000
-            stages = payload.server_timing
-            payload = replace(
-                payload.with_etag(),
-                cache_status="miss",
-                server_timing=(
-                    f"tile;dur={elapsed_ms:.3f}"
-                    if not stages
-                    else f"tile;dur={elapsed_ms:.3f}, {stages}"
-                ),
-            )
-            # A pending overview is deliberately not persisted: once the LOD build
-            # completes, its cache key changes and the real aggregate replaces it.
-            self.memory_cache.put(cache_key, payload)
-            if payload.representation != "building":
-                self.persistent_cache.put(cache_key, payload)
-            return payload
+                elapsed_ms = (time.perf_counter() - started) * 1000
+                queued_ms = (started - queued_at) * 1000
+                stages = payload.server_timing
+                timing = f"queue;dur={queued_ms:.3f}, tile;dur={elapsed_ms:.3f}"
+                payload = replace(
+                    payload.with_etag(),
+                    cache_status="miss",
+                    server_timing=timing if not stages else f"{timing}, {stages}",
+                )
+                # A pending overview is deliberately not persisted: once the LOD
+                # build completes, its cache key changes and the aggregate replaces
+                # it.
+                self.memory_cache.put(cache_key, payload)
+                if payload.representation != "building":
+                    self.persistent_cache.put(cache_key, payload)
+                return payload
 
         return self._single_flight.run(cache_key, build_once)
 
@@ -364,7 +413,8 @@ class AnnotationTileSource:
         self.matrix.validate_tile(z, x, y)
         category_property = category_property or self.category_property
         cache_key = (
-            f"labels:1:{self.store_id}:{self.revision}:{category_property}:{z}:{x}:{y}"
+            f"labels:1:{self._tile_contract_digest}:{self.store_id}:{self.revision}:"
+            f"{category_property}:{z}:{x}:{y}"
         )
         cached = self.memory_cache.get(cache_key)
         if cached is not None:
@@ -375,19 +425,29 @@ class AnnotationTileSource:
             return replace(cached, cache_status="disk", server_timing="cache;dur=0")
 
         def build_once() -> TilePayload:
-            second_hit = self.memory_cache.get(cache_key)
-            if second_hit is not None:
-                return replace(second_hit, cache_status="memory")
-            started = time.perf_counter()
-            payload = self._build_label_tile(z, x, y, category_property).with_etag()
-            payload = replace(
-                payload,
-                cache_status="miss",
-                server_timing=f"tile;dur={(time.perf_counter() - started) * 1000:.3f}",
-            )
-            self.memory_cache.put(cache_key, payload)
-            self.persistent_cache.put(cache_key, payload)
-            return payload
+            queued_at = time.perf_counter()
+            with self._tile_build_slots:
+                started = time.perf_counter()
+                second_hit = self.memory_cache.get(cache_key)
+                if second_hit is not None:
+                    return replace(second_hit, cache_status="memory")
+                payload = self._build_label_tile(
+                    z,
+                    x,
+                    y,
+                    category_property,
+                ).with_etag()
+                payload = replace(
+                    payload,
+                    cache_status="miss",
+                    server_timing=(
+                        f"queue;dur={(started - queued_at) * 1000:.3f}, "
+                        f"tile;dur={(time.perf_counter() - started) * 1000:.3f}"
+                    ),
+                )
+                self.memory_cache.put(cache_key, payload)
+                self.persistent_cache.put(cache_key, payload)
+                return payload
 
         return self._single_flight.run(cache_key, build_once)
 
@@ -409,13 +469,7 @@ class AnnotationTileSource:
         property_filter: Mapping[str, object] | None,
     ) -> TilePayload:
         select_started = time.perf_counter()
-        representation = self._choose_representation(
-            requested,
-            z,
-            x,
-            y,
-            property_filter,
-        )
+        representation = self._choose_representation(requested, z)
         selected_at = time.perf_counter()
         tile_bounds = self.matrix.tile_bounds(z, x, y)
         if representation == "building":
@@ -449,74 +503,23 @@ class AnnotationTileSource:
             simplify_tolerance=(
                 downsample * 0.25 if representation == "polygon" else 0
             ),
-            max_features=(
-                self.budgets.polygon_features
-                if representation == "polygon"
-                else self.budgets.point_features
-            ),
-            max_vertices=self.budgets.vertices,
+            max_features=self.budgets.hard_features,
+            max_vertices=self.budgets.hard_vertices,
         )
         encoded_at = time.perf_counter()
         compressed = gzip.compress(result.data, compresslevel=5, mtime=0)
         compressed_at = time.perf_counter()
-        exceeded = (
-            result.budget_exceeded or len(compressed) > self.budgets.compressed_bytes
-        )
-        if exceeded and representation == "polygon":
-            return self._build_vector_tile(
-                "centroid",
-                z,
-                x,
-                y,
-                fields,
-                property_filter,
+        if (
+            result.budget_exceeded
+            or len(compressed) > self.budgets.hard_compressed_bytes
+        ):
+            msg = (
+                f"Uniform {representation} tile {z}/{x}/{y} exceeds the absolute "
+                "safety limit; its representation was not changed. "
+                f"Input features: {result.input_features:,}; encoded vertices: "
+                f"{result.output_vertices:,}; compressed bytes: {len(compressed):,}."
             )
-        if exceeded and representation == "centroid":
-            return self._build_vector_tile(
-                "aggregate",
-                z,
-                x,
-                y,
-                fields,
-                property_filter,
-            )
-        if exceeded and representation == "aggregate":
-            # Aggregate geometry is already the terminal LOD. Drop potentially
-            # large category/composition values but retain counts before ever
-            # allowing an oversized response to escape the service.
-            count_features = [
-                TileFeature(
-                    None,
-                    feature.geometry,
-                    {"count": feature.properties.get("count", 0)},
-                )
-                for feature in features
-            ]
-            result = encode_mvt(
-                "annotations",
-                count_features,
-                tile_bounds=tile_bounds,
-                extent=DEFAULT_EXTENT,
-                buffer=DEFAULT_BUFFER,
-                max_features=self.budgets.point_features,
-                max_vertices=self.budgets.vertices,
-            )
-            compressed = gzip.compress(result.data, compresslevel=5, mtime=0)
-            representation = "aggregate-count"
-            if (
-                result.budget_exceeded
-                or len(compressed) > self.budgets.compressed_bytes
-            ):
-                result = encode_mvt(
-                    "annotations",
-                    [],
-                    tile_bounds=tile_bounds,
-                    extent=DEFAULT_EXTENT,
-                    buffer=DEFAULT_BUFFER,
-                )
-                compressed = gzip.compress(result.data, compresslevel=5, mtime=0)
-                representation = "empty-budget"
-        compressed_at = time.perf_counter()
+            raise TileBudgetExceededError(msg)
         return TilePayload(
             data=compressed,
             content_type="application/vnd.mapbox-vector-tile",
@@ -536,9 +539,6 @@ class AnnotationTileSource:
         self,
         requested: Representation,
         z: int,
-        x: int,
-        y: int,
-        property_filter: Mapping[str, object] | None,
     ) -> str:
         if requested == "aggregate":
             if z <= self.lod.overview_max_zoom and not self.lod.ready:
@@ -546,39 +546,51 @@ class AnnotationTileSource:
                     raise RuntimeError(_LOD_FAILED_MESSAGE)
                 return "building"
             return "aggregate"
-        if requested == "auto" and z <= self.lod.overview_max_zoom:
+        if requested != "auto":
+            return requested
+        if z <= self.lod.overview_max_zoom:
             if self.lod_status == "failed":
                 raise RuntimeError(_LOD_FAILED_MESSAGE)
             return "aggregate" if self.lod.ready else "building"
+        if self.matrix.downsample(z) > self.budgets.polygon_max_downsample:
+            return "centroid"
+        return "polygon"
 
-        candidate_count = self._candidate_count(z, x, y, property_filter)
-        if requested == "centroid":
-            result = (
-                "aggregate"
-                if candidate_count > self.budgets.point_features
-                else requested
+    def _auto_representation_ranges(self) -> list[dict[str, int | str]]:
+        """Return the immutable whole-slide representation schedule."""
+        ranges: list[dict[str, int | str]] = [
+            {
+                "minZoom": 0,
+                "maxZoom": self.lod.overview_max_zoom,
+                "representation": "aggregate",
+            },
+        ]
+        detail_min = self.lod.overview_max_zoom + 1
+        polygon_min = next(
+            (
+                z
+                for z in range(detail_min, self.matrix.max_zoom + 1)
+                if self.matrix.downsample(z) <= self.budgets.polygon_max_downsample
+            ),
+            self.matrix.max_zoom + 1,
+        )
+        if detail_min < polygon_min:
+            ranges.append(
+                {
+                    "minZoom": detail_min,
+                    "maxZoom": polygon_min - 1,
+                    "representation": "centroid",
+                },
             )
-        elif requested == "polygon":
-            if candidate_count > self.budgets.polygon_features:
-                result = (
-                    "centroid"
-                    if candidate_count <= self.budgets.point_features
-                    else "aggregate"
-                )
-            else:
-                result = requested
-        elif (
-            self.matrix.downsample(z) > self.budgets.polygon_max_downsample
-            or candidate_count > self.budgets.polygon_features
-        ):
-            result = (
-                "centroid"
-                if candidate_count <= self.budgets.point_features
-                else "aggregate"
+        if polygon_min <= self.matrix.max_zoom:
+            ranges.append(
+                {
+                    "minZoom": polygon_min,
+                    "maxZoom": self.matrix.max_zoom,
+                    "representation": "polygon",
+                },
             )
-        else:
-            result = "polygon"
-        return result
+        return ranges
 
     def _features(
         self,
@@ -767,12 +779,12 @@ class AnnotationTileSource:
             compresslevel=5,
             mtime=0,
         )
-        if len(compressed) > self.budgets.compressed_bytes:
+        if len(compressed) > self.budgets.hard_compressed_bytes:
             msg = (
                 "Label tile exceeds the configured compressed-byte budget; "
-                "use the adaptive vector representation for this viewport."
+                "use a vector representation for this viewport."
             )
-            raise ValueError(msg)
+            raise TileBudgetExceededError(msg)
         return TilePayload(
             data=compressed,
             content_type="application/vnd.tiatoolbox.annotation-tile",
@@ -797,38 +809,6 @@ class AnnotationTileSource:
             ],
             dtype=np.int32,
         )
-
-    def _candidate_count(
-        self,
-        z: int,
-        x: int,
-        y: int,
-        property_filter: Mapping[str, object] | None,
-    ) -> int:
-        # Representation selection must count the same features that encoding
-        # will fetch. Otherwise seam-buffer features can trigger an expensive
-        # centroid encode followed by a second dynamic-aggregate build.
-        bounds = self._buffered_tile_bounds(z, x, y)
-        if property_filter is not None:
-            return sum(
-                1
-                for _ in self.store.query_records(
-                    bounds,
-                    include_geometry=False,
-                    limit=self.budgets.point_features + 1,
-                    property_filter=property_filter,
-                )
-            )
-        row = self.store.con.execute(
-            """
-            SELECT COUNT(*)
-              FROM rtree
-             WHERE max_x >= ? AND min_x <= ?
-               AND max_y >= ? AND min_y <= ?
-            """,
-            (bounds[0], bounds[2], bounds[1], bounds[3]),
-        ).fetchone()
-        return int(row[0])
 
     def _buffered_tile_bounds(
         self,

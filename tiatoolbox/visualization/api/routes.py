@@ -16,6 +16,9 @@ from tiatoolbox.annotation.storage import (
     PROPERTY_FILTER_MAX_NODES,
     normalize_property_filter,
 )
+from tiatoolbox.visualization.annotation_tiles.source import (
+    TileBudgetExceededError,
+)
 
 if TYPE_CHECKING:  # pragma: no cover
     from tiatoolbox.visualization.annotation_tiles.cache import TilePayload
@@ -282,6 +285,10 @@ def create_viewer_blueprint(  # noqa: C901, PLR0915
     @blueprint.errorhandler(ValueError)
     def handle_value_error(error: ValueError) -> Response:
         return json_response({"error": str(error)}, status=400)
+
+    @blueprint.errorhandler(TileBudgetExceededError)
+    def handle_tile_budget_error(error: TileBudgetExceededError) -> Response:
+        return json_response({"error": str(error)}, status=422)
 
     @blueprint.errorhandler(RuntimeError)
     def handle_runtime_error(error: RuntimeError) -> Response:

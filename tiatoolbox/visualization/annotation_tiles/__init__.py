@@ -8,12 +8,14 @@ from tiatoolbox.visualization.annotation_tiles.mvt import (
 )
 from tiatoolbox.visualization.annotation_tiles.source import (
     AnnotationTileSource,
+    TileBudgetExceededError,
     TileBudgets,
 )
 
 __all__ = [
     "AnnotationTileSource",
     "MVTEncodeResult",
+    "TileBudgetExceededError",
     "TileBudgets",
     "TileFeature",
     "TileMatrix",

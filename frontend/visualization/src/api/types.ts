@@ -66,6 +66,19 @@ export type RepresentationKind =
   | "polygon"
   | "auto";
 
+export type ConcreteRepresentationKind = Exclude<RepresentationKind, "auto">;
+
+export interface ZoomRepresentationRange {
+  minZoom: number;
+  maxZoom: number;
+  representation: ConcreteRepresentationKind;
+}
+
+export interface RepresentationPolicy {
+  scope: string;
+  ranges: ZoomRepresentationRange[];
+}
+
 export interface RepresentationManifest {
   kind: RepresentationKind;
   minZoom: number;
@@ -73,6 +86,8 @@ export interface RepresentationManifest {
   urlTemplate: string;
   maxFeatures?: number;
   maxVertices?: number;
+  /** Authoritative server-side policy metadata; requests still use `auto`. */
+  policy?: RepresentationPolicy;
 }
 
 export interface StoreManifest {

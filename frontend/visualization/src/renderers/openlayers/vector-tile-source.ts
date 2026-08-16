@@ -2,17 +2,28 @@ import MVT from "ol/format/MVT.js";
 import type { Extent } from "ol/extent.js";
 import type Projection from "ol/proj/Projection.js";
 import type RenderFeature from "ol/render/Feature.js";
+import TileGrid from "ol/tilegrid/TileGrid.js";
 import TileState from "ol/TileState.js";
 import type VectorTile from "ol/VectorTile.js";
-import VectorTileSource from "ol/source/VectorTile.js";
+import VectorTileSource, {
+  type Options as VectorTileSourceOptions,
+} from "ol/source/VectorTile.js";
 
 import type { AnnotationRendererContext } from "../annotation-renderer";
-import { requiredTileProperties } from "../../domain/style-spec";
+import {
+  requiredTileProperties,
+  zoomRepresentationPolicyRanges,
+} from "../../domain/style-spec";
 import { TileRequestManager } from "./tile-request-manager";
 
 export interface ManagedVectorTileSource {
-  source: VectorTileSource;
+  source: VectorTileSource<RenderFeature>;
   requests: TileRequestManager;
+  /** Return a source whose tile grid is confined to one semantic LOD band. */
+  sourceForResolution(
+    resolution: number | undefined,
+  ): VectorTileSource<RenderFeature>;
+  disposeSources(): void;
 }
 
 interface ManagedTileLoaderOptions {
@@ -21,6 +32,25 @@ interface ManagedTileLoaderOptions {
 }
 
 const TILE_RETRY_DELAYS = [100, 300] as const;
+
+/**
+ * OpenLayers normally expands a vector source's render grid down to z0 and up
+ * to its global default max zoom. Viewer sources and views share the same
+ * slide projection, so retaining the supplied grid is both correct and what
+ * prevents alternate-zoom rendering from crossing a semantic LOD boundary.
+ */
+class BandLimitedVectorTileSource extends VectorTileSource<RenderFeature> {
+  constructor(
+    private readonly bandGrid: TileGrid,
+    options: VectorTileSourceOptions<RenderFeature>,
+  ) {
+    super(options);
+  }
+
+  override getTileGridForProjection(_projection: Projection): TileGrid {
+    return this.bandGrid;
+  }
+}
 
 export function createManagedVectorTileSource(
   context: AnnotationRendererContext,
@@ -36,34 +66,90 @@ export function createManagedVectorTileSource(
   const fields = requiredTileProperties(context.presentation).join(",");
   const url = `${template}${separator}fields=${encodeURIComponent(fields)}`;
 
-  const source = new VectorTileSource({
-    format,
-    overlaps: context.store.overlaps,
-    projection: context.projection,
-    tileGrid: context.tileGrid,
-    url,
-    wrapX: false,
-    transition: 0,
-    tileLoadFunction: (tile, tileUrl) => {
-      const vectorTile = tile as VectorTile<RenderFeature>;
-      vectorTile.setLoader(async (
-        extent: Extent,
-        _resolution: number,
-        projection: Projection,
-      ) => {
-        return loadManagedVectorTile({
-          vectorTile,
-          tileUrl,
-          extent,
-          projection,
-          format,
-          requests,
-        });
-      });
+  const policyRanges = zoomRepresentationPolicyRanges(context.store);
+  const completePolicy =
+    policyRanges.length > 0 &&
+    policyRanges.at(-1)?.maxZoom === context.tileGrid.getMaxZoom();
+  const sourceBands = completePolicy
+    ? policyRanges.map((range) => ({
+        minZoom: range.minZoom,
+        maxZoom: range.maxZoom,
+        source: createSource(bandTileGrid(
+          context.tileGrid,
+          range.minZoom,
+          range.maxZoom,
+        )),
+      }))
+    : [{
+        minZoom: context.tileGrid.getMinZoom(),
+        maxZoom: context.tileGrid.getMaxZoom(),
+        source: createSource(context.tileGrid),
+      }];
+  const source = sourceBands[0]!.source;
+  return {
+    source,
+    requests,
+    sourceForResolution(resolution) {
+      if (resolution === undefined || sourceBands.length === 1) return source;
+      const zoom = context.tileGrid.getZForResolution(
+        resolution,
+        source.zDirection,
+      );
+      return sourceBands.find(
+        (band) => zoom >= band.minZoom && zoom <= band.maxZoom,
+      )?.source ?? source;
     },
-  });
+    disposeSources() {
+      for (const band of sourceBands) band.source.dispose();
+    },
+  };
 
-  return { source, requests };
+  function createSource(tileGrid: TileGrid): VectorTileSource<RenderFeature> {
+    return new BandLimitedVectorTileSource(tileGrid, {
+      format,
+      overlaps: context.store.overlaps,
+      projection: context.projection,
+      tileGrid,
+      url,
+      wrapX: false,
+      transition: 0,
+      tileLoadFunction: (tile, tileUrl) => {
+        const vectorTile = tile as VectorTile<RenderFeature>;
+        vectorTile.setLoader(async (
+          extent: Extent,
+          _resolution: number,
+          projection: Projection,
+        ) => {
+          return loadManagedVectorTile({
+            vectorTile,
+            tileUrl,
+            extent,
+            projection,
+            format,
+            requests,
+          });
+        });
+      },
+    });
+  }
+}
+
+/** Clone a tile grid while making other representation zooms unreachable. */
+function bandTileGrid(base: TileGrid, minZoom: number, maxZoom: number): TileGrid {
+  const resolutions = base.getResolutions().slice(0, maxZoom + 1);
+  const origins = resolutions.map((_, zoom) => [...base.getOrigin(zoom)]);
+  const tileSizes = resolutions.map((_, zoom) => {
+    const size = base.getTileSize(zoom);
+    return typeof size === "number" ? size : [...size];
+  });
+  const extent = base.getExtent();
+  return new TileGrid({
+    ...(extent ? { extent: [...extent] } : {}),
+    minZoom,
+    origins,
+    resolutions,
+    tileSizes,
+  });
 }
 
 export async function loadManagedVectorTile({

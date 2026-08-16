@@ -66,6 +66,7 @@ export function SlideMap({
 }: SlideMapProps) {
   const targetRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<OlMap | null>(null);
+  const slideIdRef = useRef<string | null>(null);
   const pickEpochRef = useRef(0);
   const handlesRef = useRef(new Map<string, AnnotationLayerHandle>());
   const rasterLayersRef = useRef(new Map<string, TileLayer<Zoomify | ImageTile>>());
@@ -96,6 +97,8 @@ export function SlideMap({
   useEffect(() => {
     const target = targetRef.current;
     if (!target) return;
+    const slideChanged = slideIdRef.current !== slide.id;
+    slideIdRef.current = slide.id;
     const rasterSource = createRasterSource(slide, projection, tileGrid);
     const view = new View({
       projection,
@@ -137,9 +140,13 @@ export function SlideMap({
     map.addLayer(selectionLayer);
     mapRef.current = map;
     setMapInstance(map);
-    const unregister = linkController.register(id, view, slideViewTransform);
+    const unregister = linkController.register(id, view, slideViewTransform, {
+      restoreLastState: !slideChanged,
+    });
     const needsInitialFit =
-      view.getCenter() === undefined || view.getResolution() === undefined;
+      slideChanged ||
+      view.getCenter() === undefined ||
+      view.getResolution() === undefined;
     const pointerKey = map.on("pointermove", (event) => {
       if (event.dragging) return;
       const slideCoordinate = mapToSlide(event.coordinate as [number, number]);

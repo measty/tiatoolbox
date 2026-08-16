@@ -16,6 +16,9 @@ from shapely.geometry import Point, Polygon
 from tests.visualization._mvt_decode import decode_mvt
 from tiatoolbox.annotation import Annotation, SQLiteStore
 from tiatoolbox.visualization.annotation_tiles.lod import LODIndex
+from tiatoolbox.visualization.annotation_tiles.source import (
+    TileBudgetExceededError,
+)
 from tiatoolbox.visualization.resources import file_revision
 from tiatoolbox.visualization.tileserver import TileServer
 
@@ -151,11 +154,11 @@ def test_source_identity_versions_annotation_pipeline_semantics(
             f"{source.matrix.width}:{source.matrix.height}:{source.matrix.tile_size}:"
         )
         current_id = hashlib.blake2b(
-            f"{identity}pipeline-4".encode(),
+            f"{identity}pipeline-5".encode(),
             digest_size=12,
         ).hexdigest()
         former_id = hashlib.blake2b(
-            f"{identity}pipeline-3".encode(),
+            f"{identity}pipeline-4".encode(),
             digest_size=12,
         ).hexdigest()
 
@@ -196,6 +199,35 @@ def test_failed_lod_url_returns_explicit_bounded_failure(
         assert tile.get_json() == {
             "error": "Overview LOD preprocessing failed; reload the overlay to retry.",
         }
+        assert tile.headers["Cache-Control"] == "no-cache"
+
+
+def test_uniform_tile_budget_failure_is_explicit(
+    phase4_app: tuple[TileServer, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An absolute limit returns an error instead of a cheaper tile family."""
+    app, _ = phase4_app
+    with app.test_client() as client:
+        manifest = _load_overlay(client)
+        source = app.viewer_services._sources[str(manifest["id"])]
+
+        def exceed_budget(*_args, **_kwargs):  # noqa: ANN002, ANN003, ANN202
+            msg = (
+                "Uniform polygon tile 1/0/0 exceeds the absolute safety limit; "
+                "its representation was not changed."
+            )
+            raise TileBudgetExceededError(msg)
+
+        monkeypatch.setattr(source, "vector_tile", exceed_budget)
+        tile_url = str(manifest["urls"]["tiles"]).format(z=1, x=0, y=0)
+
+        tile = client.get(tile_url)
+
+        assert tile.status_code == 422
+        assert tile.get_json()["error"].startswith(
+            "Uniform polygon tile 1/0/0 exceeds the absolute safety limit",
+        )
         assert tile.headers["Cache-Control"] == "no-cache"
 
 

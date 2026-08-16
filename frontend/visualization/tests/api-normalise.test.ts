@@ -103,7 +103,17 @@ describe("API manifest normalisation", () => {
           "/api/v1/stores/cells/revisions/sha256%3Aabc/features/{featureId}",
       },
       representations: {
-        auto: { format: "mvt" },
+        auto: {
+          format: "mvt",
+          policy: {
+            scope: "store-zoom",
+            ranges: [
+              { minZoom: 0, maxZoom: 3, representation: "aggregate" },
+              { minZoom: 4, maxZoom: 6, representation: "centroid" },
+              { minZoom: 7, maxZoom: 9, representation: "polygon" },
+            ],
+          },
+        },
         aggregate: { format: "mvt", maxZoom: 3 },
         polygon: { format: "mvt", maxZoom: 9 },
       },
@@ -118,6 +128,15 @@ describe("API manifest normalisation", () => {
     expect(store.tileUrlTemplates.auto).toContain("lod=ready");
     expect(store.representations.find(({ kind }) => kind === "aggregate"))
       .toMatchObject({ minZoom: 0, maxZoom: 3 });
+    expect(store.representations.find(({ kind }) => kind === "auto")?.policy)
+      .toEqual({
+        scope: "store-zoom",
+        ranges: [
+          { minZoom: 0, maxZoom: 3, representation: "aggregate" },
+          { minZoom: 4, maxZoom: 6, representation: "centroid" },
+          { minZoom: 7, maxZoom: 9, representation: "polygon" },
+        ],
+      });
     expect(store.featureUrlTemplate).toContain("{featureId}");
     expect(store.geometryTypes.Polygon).toBe(627_761);
     expect(store.lodStatus).toBe("ready");

@@ -3,14 +3,112 @@ import { describe, expect, it, vi } from "vitest";
 import TileState from "ol/TileState.js";
 import Projection from "ol/proj/Projection.js";
 import type RenderFeature from "ol/render/Feature.js";
+import TileGrid from "ol/tilegrid/TileGrid.js";
 
+import type { StoreManifest } from "../src/api/types";
+import { defaultPresentation } from "../src/domain/style-spec";
 import { TileRequestManager } from "../src/renderers/openlayers/tile-request-manager";
-import { loadManagedVectorTile } from "../src/renderers/openlayers/vector-tile-source";
+import {
+  createManagedVectorTileSource,
+  loadManagedVectorTile,
+} from "../src/renderers/openlayers/vector-tile-source";
 
 const projection = new Projection({ code: "test-slide", units: "pixels" });
 const extent: [number, number, number, number] = [0, 0, 256, 256];
 
 describe("managed vector tile loading", () => {
+  it("isolates alternate-zoom caches at server-advertised LOD boundaries", () => {
+    const resolutions = Array.from({ length: 10 }, (_, zoom) => 2 ** (9 - zoom));
+    const tileGrid = new TileGrid({
+      extent: [0, -1024, 1024, 0],
+      origin: [0, 0],
+      resolutions,
+      tileSize: 256,
+    });
+    const store: StoreManifest = {
+      id: "cells",
+      name: "Cells",
+      revision: "policy-1",
+      count: 627_761,
+      bounds: [0, 0, 1024, 1024],
+      overlaps: false,
+      geometryTypes: { Polygon: 627_761 },
+      properties: [{ name: "type", kind: "categorical", values: [0, 1] }],
+      representations: [{
+        kind: "auto",
+        minZoom: 0,
+        maxZoom: 9,
+        urlTemplate: "/auto/{z}/{x}/{y}.mvt",
+        policy: {
+          scope: "store-zoom",
+          ranges: [
+            { minZoom: 0, maxZoom: 3, representation: "aggregate" },
+            { minZoom: 4, maxZoom: 6, representation: "centroid" },
+            { minZoom: 7, maxZoom: 9, representation: "polygon" },
+          ],
+        },
+      }],
+      tileUrlTemplates: {
+        auto: "/auto/{z}/{x}/{y}.mvt",
+        aggregate: "/aggregate/{z}/{x}/{y}.mvt",
+      },
+      featureUrlTemplate: "/features/{fid}",
+    };
+    const managed = createManagedVectorTileSource({
+      slide: {
+        id: "slide",
+        name: "Slide",
+        width: 1024,
+        height: 1024,
+        mpp: null,
+        tileSize: 256,
+        maxZoom: 9,
+        resolutions,
+        mapExtent: [0, -1024, 1024, 0],
+        rasterTileUrlTemplate: "/slide/{z}/{x}/{y}",
+        associatedOverlays: [],
+      },
+      store,
+      projection,
+      tileGrid,
+      presentation: defaultPresentation(store),
+    });
+
+    const aggregateSource = managed.sourceForResolution(resolutions[3]);
+    expect(managed.sourceForResolution(resolutions[2])).toBe(aggregateSource);
+    expect(aggregateSource.getTileGrid()?.getMinZoom()).toBe(0);
+    expect(aggregateSource.getTileGrid()?.getMaxZoom()).toBe(3);
+
+    const centroidSource = managed.sourceForResolution(resolutions[4]);
+    expect(centroidSource).not.toBe(aggregateSource);
+    expect(managed.sourceForResolution(resolutions[6])).toBe(centroidSource);
+    expect(centroidSource.getTileGrid()?.getMinZoom()).toBe(4);
+    expect(centroidSource.getTileGrid()?.getMaxZoom()).toBe(6);
+    expect(
+      centroidSource.getTileCoordForTileUrlFunction([3, 0, 0], projection),
+    ).toBeNull();
+    expect(
+      centroidSource.getTile(3, 0, 0, 1, projection)?.getState(),
+    ).toBe(TileState.EMPTY);
+    expect(
+      centroidSource.getTileCoordForTileUrlFunction([4, 0, 0], projection),
+    ).toEqual([4, 0, 0]);
+
+    const polygonSource = managed.sourceForResolution(resolutions[7]);
+    expect(polygonSource).not.toBe(centroidSource);
+    expect(polygonSource.getTileGrid()?.getMinZoom()).toBe(7);
+    expect(polygonSource.getTileGrid()?.getMaxZoom()).toBe(9);
+    expect(
+      polygonSource.getTileCoordForTileUrlFunction([6, 0, 0], projection),
+    ).toBeNull();
+    expect(
+      polygonSource.getTile(6, 0, 0, 1, projection)?.getState(),
+    ).toBe(TileState.EMPTY);
+    expect(polygonSource.getUrls()).toEqual([
+      "/auto/{z}/{x}/{y}.mvt?fields=type",
+    ]);
+  });
+
   it("terminalizes a superseded tile without writing stale feature data", async () => {
     const requests = new TileRequestManager();
     let resolveResponse: ((response: Response) => void) | undefined;
