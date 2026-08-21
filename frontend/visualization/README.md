@@ -70,12 +70,22 @@ z=`max_zoom` is baseline resolution. Annotation MVTs use an extent of 4096 and
 must align with the slide's advertised tile grid.
 
 The `auto` representation advertises a contiguous `store-zoom` policy. Every
-tile at one source zoom uses the same family; for a max-zoom-9 cellular store
-the default ranges are aggregate z0-z3, centroid z4-z6, and polygon z7-z9.
+tile at one source zoom uses the same base family and the same deterministic
+screen-area rule; for a max-zoom-9 cellular store the default ranges are
+aggregate z0-z3, centroid z4-z6, and polygon z7-z9. In the aggregate and
+centroid ranges, a polygon whose projected area is at least 36 CSS pixels
+squared remains a simplified polygon. This preserves visible glands and other
+larger structures while cell-scale objects still use the bounded base family.
+Promoted annotations are removed from their aggregate/centroid representation,
+so they are neither duplicated nor selected according to tile density.
 Canvas and WebGL continue requesting only the `auto` URL. They use separate,
 band-limited OpenLayers sources at the advertised boundaries so a loaded
 aggregate parent cannot temporarily fill a missing centroid tile (or a
 centroid parent a polygon tile).
+Polygon MVTs use a deterministic largest-first feature order, so Canvas and
+WebGL paint smaller cell-scale polygons above larger structural polygons in
+every tile. The tile-contract token in annotation URLs changes when encoded
+tile semantics change, without requiring the reusable LOD sidecar to rebuild.
 
 Session slide and raster-overlay tile templates carry a committed slide
 generation as well as the opaque resource ID and revision. Every slide
@@ -93,14 +103,19 @@ only after picking a compact MVT feature ID. Aggregate overview cells have no
 authoritative feature ID and are intentionally not selectable.
 
 Each annotation layer's **Low zoom** control can retain those aggregate dots
-(the default) or hide the annotation layer until the first non-aggregate zoom.
-The hidden mode uses the automatic policy's aggregate prefix (falling back to
-the aggregate representation's advertised `maxZoom` for older manifests), so it
-does not request raw annotations at overview levels or change the server's
-bounded representation policy. The setting is independent per comparison view
-and is included in exported viewer configurations. The detail transition itself
-is intentionally not movable below the manifest boundary: doing that without a
-different precomputed LOD would reintroduce expensive overview store queries.
+(the default) or hide only aggregate point primitives. Promoted screen-visible
+polygons remain visible in either mode, and suppressing aggregates is a local
+style change: it does not request raw annotations at overview levels or change
+the server's bounded representation policy. The setting is independent per
+comparison view and is included in exported viewer configurations. The detail
+transition itself is intentionally not movable below the manifest boundary:
+doing that without a different precomputed LOD would reintroduce expensive
+overview store queries.
+
+Centroids render as fill-only dots; polygon outlines do not apply to them. The
+**Dot size** setting controls the radius at the most detailed centroid zoom,
+with the renderer reducing it linearly to half that radius at the lowest
+centroid zoom. Aggregate dots retain their fixed overview size.
 
 The per-feature colour option is exposed only when the manifest contains an
 exact `color` property. Legacy float/byte RGB arrays and strict CSS hex/RGB

@@ -3,9 +3,14 @@ import CircleStyle from "ol/style/Circle.js";
 import Fill from "ol/style/Fill.js";
 import Stroke from "ol/style/Stroke.js";
 import Style from "ol/style/Style.js";
+import type TileGrid from "ol/tilegrid/TileGrid.js";
 
+import type { StoreManifest, ZoomRepresentationRange } from "../../api/types";
 import type { ColorBy, LayerPresentation } from "../../domain/style-spec";
-import { matchesPresentation } from "../../domain/style-spec";
+import {
+  centroidRepresentationRange,
+  matchesPresentation,
+} from "../../domain/style-spec";
 
 type Expression = unknown[];
 type WebGlRule = { filter?: Expression; style: Record<string, unknown> };
@@ -16,32 +21,51 @@ export interface CompiledWebGlStyle {
   structureKey: string;
 }
 
+// OpenLayers incorporates property keys into GLSL identifiers; a leading
+// underscore would create a reserved double underscore after its own prefix.
+const AGGREGATE_PROPERTY = "tiatoolbox_aggregate";
+const AGGREGATE_POINT_RADIUS = 3;
+const CENTROID_LOW_ZOOM_SCALE = 0.5;
+
 export function createCanvasStyleFunction(
   presentation: LayerPresentation,
-): (feature: FeatureLike) => Style | undefined {
+  store?: StoreManifest,
+  tileGrid?: TileGrid,
+): (feature: FeatureLike, resolution: number) => Style | undefined {
   const cache = new Map<string, Style>();
-  return (feature) => {
+  const centroidRange = store ? centroidRepresentationRange(store) : undefined;
+  return (feature, resolution) => {
     const properties = feature.getProperties();
     if (!matchesPresentation(properties, presentation)) return undefined;
-    const color = colorForValue(presentation.colorBy, properties);
     const geometryType = feature.getGeometry()?.getType() ?? "Polygon";
-    const cacheKey = `${geometryType}:${color}`;
+    const isPoint = geometryType.includes("Point");
+    const isAggregate = properties[AGGREGATE_PROPERTY] === true;
+    if (isPoint && isAggregate && presentation.overviewMode === "hidden") {
+      return undefined;
+    }
+    const color = colorForValue(presentation.colorBy, properties);
+    const zoom = tileGrid?.getZForResolution(resolution);
+    const pointRadius = isAggregate
+      ? AGGREGATE_POINT_RADIUS
+      : centroidRadiusAtZoom(presentation.pointRadius, centroidRange, zoom);
+    const cacheKey = `${geometryType}:${color}:${pointRadius}`;
     let style = cache.get(cacheKey);
     if (!style) {
       const fill = new Fill({ color: colorWithAlpha(color, presentation.fillOpacity) });
-      const stroke = new Stroke({
-        color: presentation.strokeColor,
-        width: presentation.strokeWidth,
-      });
-      style = geometryType.includes("Point")
+      style = isPoint
         ? new Style({
             image: new CircleStyle({
-              radius: presentation.pointRadius,
+              radius: pointRadius,
               fill,
-              stroke,
             }),
           })
-        : new Style({ fill, stroke });
+        : new Style({
+            fill,
+            stroke: new Stroke({
+              color: presentation.strokeColor,
+              width: presentation.strokeWidth,
+            }),
+          });
       cache.set(cacheKey, style);
     }
     return style;
@@ -50,9 +74,17 @@ export function createCanvasStyleFunction(
 
 export function compileWebGlStyle(
   presentation: LayerPresentation,
+  store?: StoreManifest,
 ): CompiledWebGlStyle {
   const featureFilter = webGlFilter(presentation);
   const color = webGlColor(presentation.colorBy);
+  const centroidRange = store ? centroidRepresentationRange(store) : undefined;
+  const pointGeometryFilter: Expression = [
+    "any",
+    ["==", ["geometry-type"], "Point"],
+    ["==", ["geometry-type"], "MultiPoint"],
+  ];
+  const aggregateMarker: Expression = ["has", AGGREGATE_PROPERTY];
   const polygonFilter: Expression = [
     "all",
     featureFilter,
@@ -62,14 +94,18 @@ export function compileWebGlStyle(
       ["==", ["geometry-type"], "MultiPolygon"],
     ],
   ];
-  const pointFilter: Expression = [
+  const aggregatePointFilter: Expression = [
     "all",
     featureFilter,
-    [
-      "any",
-      ["==", ["geometry-type"], "Point"],
-      ["==", ["geometry-type"], "MultiPoint"],
-    ],
+    pointGeometryFilter,
+    aggregateMarker,
+    ["==", ["var", "showAggregates"], 1],
+  ];
+  const centroidPointFilter: Expression = [
+    "all",
+    featureFilter,
+    pointGeometryFilter,
+    ["!", aggregateMarker],
   ];
   const rules: WebGlRule[] = [
     {
@@ -81,12 +117,17 @@ export function compileWebGlStyle(
       },
     },
     {
-      filter: pointFilter,
+      filter: aggregatePointFilter,
       style: {
-        "circle-radius": ["var", "pointRadius"],
+        "circle-radius": AGGREGATE_POINT_RADIUS,
         "circle-fill-color": color,
-        "circle-stroke-color": presentation.strokeColor,
-        "circle-stroke-width": ["var", "strokeWidth"],
+      },
+    },
+    {
+      filter: centroidPointFilter,
+      style: {
+        "circle-radius": webGlCentroidRadius(centroidRange),
+        "circle-fill-color": color,
       },
     },
   ];
@@ -96,6 +137,7 @@ export function compileWebGlStyle(
       fillOpacity: presentation.fillOpacity,
       strokeWidth: presentation.strokeWidth,
       pointRadius: presentation.pointRadius,
+      showAggregates: presentation.overviewMode === "aggregate" ? 1 : 0,
       rangeMin: presentation.rangeFilter?.min ?? -Number.MAX_VALUE,
       rangeMax: presentation.rangeFilter?.max ?? Number.MAX_VALUE,
     },
@@ -104,8 +146,43 @@ export function compileWebGlStyle(
       strokeColor: presentation.strokeColor,
       rangeProperty: presentation.rangeFilter?.property,
       hasRange: Boolean(presentation.rangeFilter),
+      centroidRange: centroidRange
+        ? [centroidRange.minZoom, centroidRange.maxZoom]
+        : undefined,
     }),
   };
+}
+
+function centroidRadiusAtZoom(
+  baseRadius: number,
+  range: ZoomRepresentationRange | undefined,
+  zoom: number | undefined,
+): number {
+  if (!range || zoom === undefined || range.minZoom === range.maxZoom) {
+    return baseRadius;
+  }
+  const progress = Math.max(
+    0,
+    Math.min(1, (zoom - range.minZoom) / (range.maxZoom - range.minZoom)),
+  );
+  return baseRadius * (
+    CENTROID_LOW_ZOOM_SCALE + ((1 - CENTROID_LOW_ZOOM_SCALE) * progress)
+  );
+}
+
+function webGlCentroidRadius(
+  range: ZoomRepresentationRange | undefined,
+): number | Expression {
+  if (!range || range.minZoom === range.maxZoom) return ["var", "pointRadius"];
+  return [
+    "interpolate",
+    ["linear"],
+    ["zoom"],
+    range.minZoom,
+    ["*", ["var", "pointRadius"], CENTROID_LOW_ZOOM_SCALE],
+    range.maxZoom,
+    ["var", "pointRadius"],
+  ];
 }
 
 export function colorForValue(

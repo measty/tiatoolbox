@@ -37,7 +37,7 @@ if TYPE_CHECKING:  # pragma: no cover
 # Bump whenever tile geometry/properties or derived LOD semantics change. It is
 # part of the public store identity so browser/CDN immutable URLs cannot reuse
 # bytes produced by an older representation pipeline after an upgrade.
-_ANNOTATION_PIPELINE_VERSION = 5
+_ANNOTATION_PIPELINE_VERSION = 8
 
 
 @dataclass(slots=True)
@@ -254,7 +254,7 @@ class VisualizationServices:
         manifest = source.manifest()
         revision_base = f"/api/v1/stores/{store_id}/revisions/{source.revision}"
         lod_generation = manifest["lodStatus"]
-        generation_query = f"?lod={lod_generation}"
+        generation_query = f"?lod={lod_generation}&tileVersion={source.tile_revision}"
         manifest["urls"] = {
             "manifest": revision_base,
             "tiles": (

@@ -2,6 +2,7 @@ import type {
   AddedOverlay,
   BootstrapManifest,
   ConcreteRepresentationKind,
+  GeometryPromotionPolicy,
   FeatureDetail,
   PropertyKind,
   PropertyValue,
@@ -351,6 +352,39 @@ const CONCRETE_REPRESENTATIONS: ConcreteRepresentationKind[] = [
   "polygon",
 ];
 
+function geometryPromotionPolicy(
+  value: unknown,
+): GeometryPromotionPolicy | undefined {
+  if (value === undefined || value === null) return undefined;
+  const raw = object(value, "representation.policy.geometryPromotion");
+  const metric = String(first(raw, "metric"));
+  const representation = String(first(raw, "representation"));
+  if (metric !== "projected-area" || representation !== "polygon") {
+    throw new TypeError("Unsupported geometry-promotion policy.");
+  }
+  const minimumPixelsSquared = finiteNumber(
+    first(raw, "minimumPixelsSquared", "minimum_pixels_squared"),
+    "representation.policy.geometryPromotion.minimumPixelsSquared",
+  );
+  const maximumZoom = finiteNumber(
+    first(raw, "maximumZoom", "maximum_zoom"),
+    "representation.policy.geometryPromotion.maximumZoom",
+  );
+  if (
+    minimumPixelsSquared <= 0
+    || !Number.isSafeInteger(maximumZoom)
+    || maximumZoom < 0
+  ) {
+    throw new TypeError("Invalid geometry-promotion thresholds.");
+  }
+  return {
+    metric: "projected-area",
+    minimumPixelsSquared,
+    maximumZoom,
+    representation: "polygon",
+  };
+}
+
 function representationPolicy(value: unknown): RepresentationPolicy | undefined {
   if (value === undefined || value === null) return undefined;
   const raw = object(value, "representation.policy");
@@ -360,6 +394,9 @@ function representationPolicy(value: unknown): RepresentationPolicy | undefined 
   }
   return {
     scope: String(first(raw, "scope") ?? ""),
+    geometryPromotion: geometryPromotionPolicy(
+      first(raw, "geometryPromotion", "geometry_promotion"),
+    ),
     ranges: rangesValue.map((value, index) => {
       const range = object(value, `representation.policy.ranges[${index}]`);
       const representation = String(

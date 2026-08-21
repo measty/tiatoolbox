@@ -28,6 +28,9 @@ export function LayerPanel({
       : presentation.colorBy.property;
   const aggregateMaxZoom = aggregateOverviewMaxZoom(store);
   const representationSummary = annotationRepresentationSummary(store);
+  const preparingColourOptions =
+    store.properties.length === 0 &&
+    (store.lodStatus === "building" || store.lodStatus === "not-built");
   return (
     <details className="layer-panel" open>
       <summary>
@@ -73,9 +76,9 @@ export function LayerPanel({
         <label
           title={
             representationSummary
-              ? `${representationSummary} Hiding low zoom suppresses the aggregate range.`
+              ? `${representationSummary} Hiding aggregates leaves promoted visible structures in place.`
               : `Aggregate dots cover zoom levels 0-${aggregateMaxZoom}. ` +
-                `When hidden, annotations begin at zoom ${aggregateMaxZoom + 1}.`
+                `Hiding them leaves any promoted visible structures in place.`
           }
         >
           Low zoom
@@ -90,7 +93,7 @@ export function LayerPanel({
             }
           >
             <option value="aggregate">Aggregate dots</option>
-            <option value="hidden">Hide annotations</option>
+            <option value="hidden">Hide aggregates</option>
           </select>
         </label>
       )}
@@ -99,6 +102,8 @@ export function LayerPanel({
         Colour by
         <select
           value={selectedProperty}
+          disabled={preparingColourOptions}
+          title={preparingColourOptions ? "Preparing colour options" : undefined}
           onChange={(event) =>
             onChange(
               presentationForProperty(store, presentation, event.target.value),
@@ -120,6 +125,12 @@ export function LayerPanel({
             ))}
         </select>
       </label>
+
+      {preparingColourOptions && (
+        <p className="layer-panel__notice" role="status" aria-live="polite">
+          Preparing colour options…
+        </p>
+      )}
 
       {presentation.colorBy.mode === "constant" && (
         <label>
@@ -263,6 +274,22 @@ export function LayerPanel({
               onChange({
                 ...presentation,
                 fillOpacity: Number(event.target.value),
+              })
+            }
+          />
+        </label>
+        <label>
+          Dot size
+          <input
+            type="number"
+            min="0"
+            max="16"
+            step="0.25"
+            value={presentation.pointRadius}
+            onChange={(event) =>
+              onChange({
+                ...presentation,
+                pointRadius: Number(event.target.value),
               })
             }
           />

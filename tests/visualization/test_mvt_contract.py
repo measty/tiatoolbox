@@ -95,6 +95,48 @@ def test_source_buffer_repeats_shared_edge_geometry(tmp_path: Path) -> None:
     assert {x for x, _ in left_global} == {260, 263}
 
 
+def test_polygon_tiles_emit_large_structures_before_smaller_overlays(
+    tmp_path: Path,
+) -> None:
+    """Polygon painter order is stable on both sides of a tile seam."""
+    store_path = tmp_path / "polygon-order.db"
+    writer = SQLiteStore(store_path)
+    # Insert the cell first so row/RTree order is the opposite of painter order.
+    writer.append(
+        Annotation(Polygon.from_bounds(248, 80, 270, 120), {"type": "cell"}),
+        "cell",
+    )
+    writer.append(
+        Annotation(Polygon.from_bounds(220, 32, 300, 220), {"type": "gland"}),
+        "gland",
+    )
+    writer.close()
+    store = SQLiteStore(store_path, read_only=True)
+    source = AnnotationTileSource(
+        store,
+        TileMatrix(512, 256),
+        store_id="polygon-order",
+        revision="r1",
+        name="polygon-order",
+        cache_dir=tmp_path / "cache",
+    )
+    try:
+        orders = [
+            [
+                feature.feature_id
+                for feature in decode_mvt(
+                    gzip.decompress(source.vector_tile("polygon", 1, x, 0).data),
+                ).features
+            ]
+            for x in (0, 1)
+        ]
+    finally:
+        source.close()
+        store.close()
+
+    assert orders == [[2, 1], [2, 1]]
+
+
 def test_ready_aggregates_have_no_pickable_feature_ids(tmp_path: Path) -> None:
     """Density primitives deliberately cannot resolve as source annotations."""
     store_path = tmp_path / "aggregate.db"

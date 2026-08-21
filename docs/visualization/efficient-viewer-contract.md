@@ -95,18 +95,26 @@ Deferral does not authorize removal from the legacy viewer during phases 0-4.
 ### Representation selection
 
 The automatic representation is a revisioned, whole-store zoom schedule. A
-given source zoom must use one geometry family for every tile, independent of
-tile density, requested style fields, and filters. The manifest advertises the
-schedule as contiguous `store-zoom` ranges and the `auto` endpoint remains the
-authority that applies it.
+given source zoom must use one deterministic representation rule for every
+tile, independent of tile density, requested style fields, and filters. The
+manifest advertises the base schedule as contiguous `store-zoom` ranges and
+the `auto` endpoint remains the authority that applies it. At aggregate and
+centroid zooms, larger polygons may remain simplified polygons when their
+stored area projects to at least a fixed screen-area threshold. This decision
+is a pure function of feature area and zoom, is advertised in the manifest,
+and must remove the feature from its base representation to avoid duplicates.
+Within a store tile, polygon features are emitted from largest to smallest with
+a stable ID tie-break, so smaller structures are painted above larger
+structures consistently across independently queried tiles.
 
-| Regime                             | Preferred representation                                                                  |
-| ---------------------------------- | ----------------------------------------------------------------------------------------- |
-| Whole-slide                        | Persisted density/count/class-composition aggregates.                                     |
-| Intermediate                       | Centroids, or optional class/scalar data tiles.                                           |
-| Cell-detail                        | Simplified or full polygon MVT within budget.                                             |
-| Selected/editing                   | Exact source geometry in a small ordinary vector layer.                                   |
-| Dense non-overlapping segmentation | Optional class, scalar, and annotation-ID data-tile pyramid, with polygons at close zoom. |
+| Regime                             | Preferred representation                                                                      |
+| ---------------------------------- | --------------------------------------------------------------------------------------------- |
+| Whole-slide                        | Persisted density/count/class-composition aggregates.                                         |
+| Intermediate                       | Centroids, or optional class/scalar data tiles.                                               |
+| Mixed-scale structures             | Simplified polygons for screen-visible structures over the scheduled aggregate/centroid base. |
+| Cell-detail                        | Simplified or full polygon MVT within budget.                                                 |
+| Selected/editing                   | Exact source geometry in a small ordinary vector layer.                                       |
+| Dense non-overlapping segmentation | Optional class, scalar, and annotation-ID data-tile pyramid, with polygons at close zoom.     |
 
 Normal feature/vertex/byte targets are calibrated for pathology annotations;
 larger absolute safety limits remain bounded. A tile that exceeds an absolute
@@ -118,9 +126,10 @@ store density scan before the first useful view.
 
 ### Styling and filtering
 
-- Presentation-only state, including palette, opacity, fill, outline, edge
-  width, and class visibility, must not be part of geometry tile URLs or cache
-  keys.
+- Presentation-only state, including palette, opacity, fill, polygon outline,
+  centroid-dot size, aggregate visibility, and class visibility, must not be
+  part of geometry tile URLs or cache keys. Aggregate suppression must retain
+  promoted polygon structures at overview zooms.
 - Common property values needed for client styling may be included in tiles, but
   payload properties must be explicitly allow-listed.
 - Server-side filters form part of a tile cache key only when they alter the
@@ -132,6 +141,9 @@ store density scan before the first useful view.
 - Cache keys must include store ID, revision, representation policy and
   budgets, matrix/category contract, schema/property projection,
   geometry-affecting filter, and tile coordinates.
+- Public tile URLs must include the tile-contract revision independently of the
+  LOD revision, so renderer-affecting byte changes invalidate browser/CDN tile
+  caches without forcing an otherwise unnecessary LOD rebuild.
 - Memory caches must be bounded by bytes. Persistent caches must be revisioned
   and atomically published.
 - Concurrent misses for one key should be coalesced into one build.
@@ -151,9 +163,9 @@ timing.
 1. **Bounded output.** Every successful tile respects the configured feature,
    vertex, and byte limits and reports the representation actually used;
    failures emit no partial or cross-family tile bytes.
-1. **Uniform LOD.** Dense and sparse tiles at the same source zoom use the same
-   advertised geometry family; neither preflight nor post-encode overflow may
-   change one tile to a cheaper family.
+1. **Deterministic LOD.** Dense and sparse tiles at the same source zoom use the
+   same advertised base family and feature-area promotion rule; neither
+   preflight nor post-encode overflow may change one tile to a cheaper family.
 1. **Style independence.** Client-supported style changes cause no annotation
    tile request and do not change tile cache keys.
 1. **Identity.** Every displayed/picked compact ID resolves to the exact canonical

@@ -227,6 +227,12 @@ button.active {
   font-variant-numeric: tabular-nums;
 }
 
+.layer-panel__notice {
+  margin: -0.15rem 0.5rem 0.5rem;
+  color: #64748b;
+  font-size: 0.7rem;
+}
+
 .icon-button {
   border: 0;
   padding: 0.1rem 0.35rem;
@@ -280,10 +286,15 @@ input[type="color"] {
   border-radius: 0.35rem;
 }
 
-.range-filter,
-.compact-grid {
+.range-filter {
   display: grid;
   grid-template-columns: 1fr 1fr;
+  gap: 0.45rem;
+}
+
+.compact-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 0.45rem;
 }
 

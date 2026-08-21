@@ -5,6 +5,7 @@ from __future__ import annotations
 import gzip
 import hashlib
 import json
+import math
 import re
 import struct
 import threading
@@ -41,7 +42,7 @@ if TYPE_CHECKING:  # pragma: no cover
     from collections.abc import Iterable
     from concurrent.futures import Executor, Future
 
-    from tiatoolbox.annotation.storage import SQLiteStore
+    from tiatoolbox.annotation.storage import AnnotationRecord, SQLiteStore
     from tiatoolbox.visualization.annotation_tiles.grid import TileMatrix
 
 Representation = Literal["auto", "aggregate", "centroid", "polygon"]
@@ -60,7 +61,7 @@ _DATA_TILE_MAGIC = b"TIAD"
 _DATA_TILE_VERSION = 1
 _DATA_TILE_DTYPE_UINT32 = 4
 _LOD_FAILED_MESSAGE = "Overview LOD preprocessing failed; reload the overlay to retry."
-_VECTOR_TILE_CACHE_VERSION = 5
+_VECTOR_TILE_CACHE_VERSION = 9
 
 
 class TileBudgetExceededError(RuntimeError):
@@ -83,6 +84,7 @@ class TileBudgets:
     vertices: int = 120_000
     compressed_bytes: int = 256 * 1024
     polygon_max_downsample: int = 4
+    promoted_polygon_min_screen_area: float = 36.0
     density_bins: int = 16
     hard_features: int = 100_000
     hard_vertices: int = 500_000
@@ -142,6 +144,10 @@ class AnnotationTileSource:
             revision,
             category_property=category_property,
             bins_per_tile=self.budgets.density_bins,
+            polygon_max_downsample=self.budgets.polygon_max_downsample,
+            promoted_polygon_min_screen_area=(
+                self.budgets.promoted_polygon_min_screen_area
+            ),
         )
         self._single_flight = SingleFlight()
         # SQLite queries and Python MVT encoding contend when a cold viewport
@@ -153,6 +159,11 @@ class AnnotationTileSource:
         self.max_concurrent_tile_builds = max_concurrent_tile_builds
         self._lod_future: Future[None] | None = None
         self._lod_lock = threading.Lock()
+
+    @property
+    def tile_revision(self) -> str:
+        """Return the renderer-facing tile contract revision."""
+        return self._tile_contract_digest
 
     @property
     def lod_status(self) -> str:
@@ -183,6 +194,11 @@ class AnnotationTileSource:
 
     def manifest(self) -> dict[str, Any]:
         """Return current store metadata and immutable representation contract."""
+        # Read status before metadata. If a background build commits between
+        # these calls, returning ``building`` with ready metadata is harmless
+        # and will be polled once more; the inverse ``ready`` plus empty
+        # metadata would make clients stop polling before properties arrive.
+        lod_status = self.lod_status
         persisted = self.lod.manifest()
         feature_count = (
             int(persisted["featureCount"]) if persisted is not None else len(self.store)
@@ -203,7 +219,7 @@ class AnnotationTileSource:
             "geometryTypes": geometry_types,
             "properties": properties,
             "tileMatrix": self.matrix.as_dict(),
-            "lodStatus": self.lod_status,
+            "lodStatus": lod_status,
             "categoryProperty": self.category_property,
             "representations": {
                 "auto": {
@@ -211,6 +227,7 @@ class AnnotationTileSource:
                     "policy": {
                         "scope": "store-zoom",
                         "ranges": self._auto_representation_ranges(),
+                        "geometryPromotion": self._geometry_promotion_policy(),
                     },
                 },
                 "aggregate": {
@@ -484,6 +501,9 @@ class AnnotationTileSource:
                 ),
             )
 
+        promote_large = representation == "aggregate" or (
+            requested == "auto" and representation == "centroid"
+        )
         features = self._features(
             representation,
             z,
@@ -491,6 +511,7 @@ class AnnotationTileSource:
             y,
             fields,
             property_filter,
+            promote_large=promote_large,
         )
         queried_at = time.perf_counter()
         downsample = self.matrix.downsample(z)
@@ -501,7 +522,7 @@ class AnnotationTileSource:
             extent=DEFAULT_EXTENT,
             buffer=DEFAULT_BUFFER,
             simplify_tolerance=(
-                downsample * 0.25 if representation == "polygon" else 0
+                downsample * 0.25 if representation == "polygon" or promote_large else 0
             ),
             max_features=self.budgets.hard_features,
             max_vertices=self.budgets.hard_vertices,
@@ -514,8 +535,9 @@ class AnnotationTileSource:
             or len(compressed) > self.budgets.hard_compressed_bytes
         ):
             msg = (
-                f"Uniform {representation} tile {z}/{x}/{y} exceeds the absolute "
-                "safety limit; its representation was not changed. "
+                f"Deterministic {representation}-base tile {z}/{x}/{y} exceeds "
+                "the absolute safety limit; its representation rule was not "
+                "changed. "
                 f"Input features: {result.input_features:,}; encoded vertices: "
                 f"{result.output_vertices:,}; compressed bytes: {len(compressed):,}."
             )
@@ -592,6 +614,17 @@ class AnnotationTileSource:
             )
         return ranges
 
+    def _geometry_promotion_policy(self) -> dict[str, int | float | str] | None:
+        """Describe deterministic large-polygon promotion in auto tiles."""
+        if "area" not in self.store.table_columns or self.lod.promotion_max_zoom < 0:
+            return None
+        return {
+            "metric": "projected-area",
+            "minimumPixelsSquared": self.budgets.promoted_polygon_min_screen_area,
+            "maximumZoom": self.lod.promotion_max_zoom,
+            "representation": "polygon",
+        }
+
     def _features(
         self,
         representation: str,
@@ -600,11 +633,25 @@ class AnnotationTileSource:
         y: int,
         fields: tuple[str, ...],
         property_filter: Mapping[str, object] | None,
+        *,
+        promote_large: bool = False,
     ) -> list[TileFeature]:
         if representation == "aggregate":
             if self.lod.ready and z <= self.lod.overview_max_zoom:
                 if property_filter is None:
-                    return self.lod.density_features(z, x, y)
+                    aggregates = self.lod.density_features(z, x, y)
+                    return (
+                        aggregates
+                        + self._promoted_polygon_features(
+                            z,
+                            x,
+                            y,
+                            fields,
+                            property_filter,
+                        )
+                        if promote_large
+                        else aggregates
+                    )
                 category_values = _overview_category_filter_values(
                     property_filter,
                     self.category_property,
@@ -615,7 +662,24 @@ class AnnotationTileSource:
                         f"the indexed category property {self.category_property!r}."
                     )
                     raise ValueError(msg)
-                return self.lod.density_features(z, x, y, category_values)
+                aggregates = self.lod.density_features(
+                    z,
+                    x,
+                    y,
+                    category_values,
+                )
+                return (
+                    aggregates
+                    + self._promoted_polygon_features(
+                        z,
+                        x,
+                        y,
+                        fields,
+                        property_filter,
+                    )
+                    if promote_large
+                    else aggregates
+                )
             return self._dynamic_aggregates(z, x, y, property_filter)
         bounds = self._buffered_tile_bounds(z, x, y)
         include_geometry = representation == "polygon"
@@ -628,6 +692,22 @@ class AnnotationTileSource:
             ),
         )
         if representation == "centroid":
+            promoted = (
+                self._promoted_polygon_features(
+                    z,
+                    x,
+                    y,
+                    fields,
+                    property_filter,
+                )
+                if promote_large
+                else []
+            )
+            promoted_ids = {
+                feature.feature_id
+                for feature in promoted
+                if feature.feature_id is not None
+            }
             return [
                 TileFeature(
                     record.id,
@@ -638,7 +718,45 @@ class AnnotationTileSource:
                     ),
                 )
                 for record in records
-            ]
+                if record.id not in promoted_ids
+            ] + promoted
+        # OpenLayers uses the MVT feature sequence as the painter's order.
+        # Emit large structures first so progressively smaller polygons are
+        # painted over them consistently in every independently queried tile.
+        records.sort(key=_polygon_draw_order)
+        return [
+            TileFeature(
+                record.id,
+                record.wkb,
+                _normalise_tile_properties(
+                    record.properties,
+                    ensure_direct_color="color" in fields,
+                ),
+            )
+            for record in records
+            if record.wkb is not None
+        ]
+
+    def _promoted_polygon_features(
+        self,
+        z: int,
+        x: int,
+        y: int,
+        fields: tuple[str, ...],
+        property_filter: Mapping[str, object] | None,
+    ) -> list[TileFeature]:
+        """Return screen-visible polygons selected by the persisted macro index."""
+        bounds = self._buffered_tile_bounds(z, x, y)
+        promoted_ids = self.lod.promoted_ids(z, bounds)
+        records = sorted(
+            self.store.records_by_ids(
+                promoted_ids,
+                fields,
+                include_geometry=True,
+                property_filter=property_filter,
+            ),
+            key=_polygon_draw_order,
+        )
         return [
             TileFeature(
                 record.id,
@@ -682,6 +800,7 @@ class AnnotationTileSource:
             total = sum(counts.values())
             dominant, dominant_count = counts.most_common(1)[0]
             properties = {
+                "tiatoolbox_aggregate": True,
                 "count": total,
                 "dominant_type": dominant,
                 "dominant_fraction": dominant_count / total,
@@ -849,6 +968,15 @@ class AnnotationTileSource:
             msg = "Invalid display property name."
             raise ValueError(msg)
         return result
+
+
+def _polygon_draw_order(record: AnnotationRecord) -> tuple[float, int]:
+    """Return a stable largest-first painter order for one geometry record."""
+    area = record.area
+    if area is None or not math.isfinite(area) or area < 0:
+        min_x, min_y, max_x, max_y = record.bounds
+        area = max(0.0, max_x - min_x) * max(0.0, max_y - min_y)
+    return -area, record.id
 
 
 def _normalise_tile_properties(

@@ -34,7 +34,7 @@ export interface RangeFilter {
   max: number;
 }
 
-/** How an annotation layer behaves in the precomputed overview LOD range. */
+/** How aggregate primitives behave in the precomputed overview LOD range. */
 export type OverviewMode = "aggregate" | "hidden";
 
 export interface LayerPresentation {
@@ -119,22 +119,15 @@ export function defaultPresentation(store: StoreManifest): LayerPresentation {
 /**
  * Return the OpenLayers minimum zoom for this presentation.
  *
- * OpenLayers treats `minZoom` as an exclusive bound, while vector sources use
- * the lower source-tile zoom between integer view zooms.  Placing the bound
- * immediately below the first detail level therefore hides every aggregate
- * tile and admits exact detail tiles from that integer zoom onward.  This
- * deliberately never moves detail rendering into the overview range, where
- * doing so could require an unbounded source-store query.
+ * Aggregate suppression is handled by the style compiler so promoted polygon
+ * geometries remain visible. The layer itself must therefore stay active over
+ * the complete source zoom range.
  */
 export function annotationLayerMinZoom(
-  store: StoreManifest,
-  presentation: LayerPresentation,
+  _store: StoreManifest,
+  _presentation: LayerPresentation,
 ): number {
-  if (presentation.overviewMode !== "hidden") return -Infinity;
-  const overviewMaxZoom = aggregateOverviewMaxZoom(store);
-  return overviewMaxZoom === undefined
-    ? -Infinity
-    : overviewMaxZoom + 1 - 1e-9;
+  return -Infinity;
 }
 
 /** Return a usable persisted-overview boundary advertised by the manifest. */
@@ -207,13 +200,27 @@ export function zoomRepresentationAt(
   )?.representation;
 }
 
+/** Return the advertised centroid range used for display-size interpolation. */
+export function centroidRepresentationRange(
+  store: StoreManifest,
+): ZoomRepresentationRange | undefined {
+  return zoomRepresentationPolicyRanges(store).find(
+    (range) => range.representation === "centroid",
+  );
+}
+
 /** Human-readable rendering schedule for layer help text. */
 export function annotationRepresentationSummary(
   store: StoreManifest,
 ): string | undefined {
   const ranges = zoomRepresentationPolicyRanges(store);
   if (ranges.length === 0) return undefined;
-  return `Rendering schedule: ${ranges.map(rangeSummary).join(", ")}.`;
+  const promotion = store.representations.find(
+    (representation) => representation.kind === "auto",
+  )?.policy?.geometryPromotion;
+  return `Rendering schedule: ${ranges
+    .map((range) => rangeSummary(range, promotion?.maximumZoom))
+    .join(", ")}.`;
 }
 
 const REPRESENTATION_LABELS: Record<ConcreteRepresentationKind, string> = {
@@ -222,11 +229,20 @@ const REPRESENTATION_LABELS: Record<ConcreteRepresentationKind, string> = {
   polygon: "polygons",
 };
 
-function rangeSummary(range: ZoomRepresentationRange): string {
+function rangeSummary(
+  range: ZoomRepresentationRange,
+  promotionMaximumZoom?: number,
+): string {
   const zooms = range.minZoom === range.maxZoom
     ? `z${range.minZoom}`
     : `z${range.minZoom}-${range.maxZoom}`;
-  return `${REPRESENTATION_LABELS[range.representation]} ${zooms}`;
+  const promoted = range.representation !== "polygon"
+    && promotionMaximumZoom !== undefined
+    && range.maxZoom <= promotionMaximumZoom;
+  const label = promoted
+    ? `${REPRESENTATION_LABELS[range.representation]} + visible structures`
+    : REPRESENTATION_LABELS[range.representation];
+  return `${label} ${zooms}`;
 }
 
 export function presentationForProperty(
@@ -355,7 +371,16 @@ export function refreshProvisionalPresentation(
   nextStore: StoreManifest,
 ): LayerPresentation {
   const previousDefault = defaultPresentation(previousStore);
-  if (!sameDataStyle(current, previousDefault)) return current;
+  const provisionalDefault = defaultPresentation({
+    ...nextStore,
+    properties: [],
+  });
+  if (
+    !sameDataStyle(current, previousDefault) &&
+    !sameDataStyle(current, provisionalDefault)
+  ) {
+    return current;
+  }
   const nextDefault = defaultPresentation(nextStore);
   if (sameDataStyle(current, nextDefault)) return current;
   return {

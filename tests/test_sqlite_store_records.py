@@ -153,6 +153,33 @@ def test_query_records_returns_thin_streamed_records(tmp_path: Path) -> None:
     store.close()
 
 
+def test_records_by_ids_is_thin_filtered_and_parameterized(tmp_path: Path) -> None:
+    """Known numeric IDs fetch only requested records without an RTree scan."""
+    path = tmp_path / "annotations.db"
+    _make_store(path)
+    store = SQLiteStore(path, read_only=True)
+    selected = list(store.query_records((-1, -1, 20, 20), include_geometry=False))
+    ids_by_key = {record.key: record.id for record in selected}
+
+    records = list(
+        store.records_by_ids(
+            [ids_by_key["small"], ids_by_key["large"], ids_by_key["small"]],
+            ("class",),
+            property_filter={"op": "eq", "property": "class", "value": "large"},
+        ),
+    )
+
+    assert [record.key for record in records] == ["large"]
+    assert records[0].properties == {"class": "large"}
+    assert shapely.from_wkb(records[0].wkb).area == pytest.approx(100)
+    assert list(store.records_by_ids([], include_geometry=False)) == []
+    with pytest.raises(TypeError, match="only integers"):
+        list(store.records_by_ids(["1"]))
+    with pytest.raises(ValueError, match="non-negative"):
+        list(store.records_by_ids([-1]))
+    store.close()
+
+
 def test_query_records_options_and_no_area_ordering(tmp_path: Path) -> None:
     """Geometry/properties can be omitted and limits do not add area sorting."""
     path = tmp_path / "annotations.db"

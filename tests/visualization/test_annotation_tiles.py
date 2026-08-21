@@ -13,6 +13,7 @@ import numpy as np
 import pytest
 from shapely.geometry import Point, Polygon
 
+from tests.visualization._mvt_decode import decode_mvt
 from tiatoolbox.annotation import Annotation, SQLiteStore
 from tiatoolbox.visualization.annotation_tiles.cache import (
     ByteLRUCache,
@@ -98,6 +99,12 @@ def test_default_auto_lod_is_uniform_for_each_zoom(
         assert manifest["representations"]["aggregate"]["maxZoom"] == 3
         assert manifest["representations"]["auto"]["policy"] == {
             "scope": "store-zoom",
+            "geometryPromotion": {
+                "metric": "projected-area",
+                "minimumPixelsSquared": 36.0,
+                "maximumZoom": 6,
+                "representation": "polygon",
+            },
             "ranges": [
                 {"minZoom": 0, "maxZoom": 3, "representation": "aggregate"},
                 {"minZoom": 4, "maxZoom": 6, "representation": "centroid"},
@@ -279,6 +286,60 @@ def test_lod_sidecar_rebuilds_when_overview_boundary_changes(
         current.close()
 
 
+def test_manifest_never_reports_ready_before_property_metadata(
+    synthetic_store: SQLiteStore,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A commit between status and metadata reads remains pollable."""
+    source = AnnotationTileSource(
+        synthetic_store,
+        TileMatrix(1024, 1024),
+        store_id="manifest-race",
+        revision="revision",
+        name="manifest-race",
+        cache_dir=tmp_path / "manifest-race-cache",
+    )
+    committed = False
+    manifest_calls = 0
+    ready_properties = {
+        "type": {
+            "kind": "categorical",
+            "categories": [{"value": 0, "count": 1}],
+        },
+    }
+
+    def racing_manifest() -> dict[str, object] | None:
+        nonlocal committed, manifest_calls
+        manifest_calls += 1
+        if manifest_calls == 1:
+            committed = True
+            return None
+        return {
+            "featureCount": len(synthetic_store),
+            "bounds": [0, 0, 1024, 1024],
+            "geometryTypes": {"Polygon": len(synthetic_store)},
+            "properties": ready_properties,
+        }
+
+    monkeypatch.setattr(
+        type(source.lod),
+        "ready",
+        property(lambda _index: committed),
+    )
+    monkeypatch.setattr(source.lod, "manifest", racing_manifest)
+    try:
+        transitional = source.manifest()
+        ready = source.manifest()
+    finally:
+        source.close()
+
+    assert transitional["lodStatus"] == "not-built"
+    assert transitional["properties"] == {}
+    assert ready["lodStatus"] == "ready"
+    assert ready["properties"] == ready_properties
+
+
 def test_auto_selection_does_not_preflight_or_change_with_tile_density(
     synthetic_store: SQLiteStore,
     tmp_path: Path,
@@ -304,6 +365,8 @@ def test_auto_selection_does_not_preflight_or_change_with_tile_density(
         y: int,
         fields: tuple[str, ...],
         property_filter: Mapping[str, object] | None,
+        *,
+        promote_large: bool = False,
     ) -> list[TileFeature]:
         feature_builds.append(representation)
         return original_features(
@@ -313,6 +376,7 @@ def test_auto_selection_does_not_preflight_or_change_with_tile_density(
             y,
             fields,
             property_filter,
+            promote_large=promote_large,
         )
 
     monkeypatch.setattr(source, "_features", recording_features)
@@ -324,6 +388,68 @@ def test_auto_selection_does_not_preflight_or_change_with_tile_density(
         assert feature_builds == ["centroid"]
     finally:
         source.close()
+
+
+def test_auto_lod_promotes_screen_visible_polygons_without_duplicates(
+    tmp_path: Path,
+) -> None:
+    """Large structures stay polygons while small objects follow base auto LOD."""
+    store = SQLiteStore(tmp_path / "mixed-scale.db")
+    store.append_many(
+        [
+            Annotation(
+                Polygon([(100, 100), (612, 100), (612, 612), (100, 612)]),
+                {"type": "gland"},
+            ),
+            Annotation(
+                Polygon([(700, 100), (716, 100), (716, 116), (700, 116)]),
+                {"type": "cell"},
+            ),
+        ],
+    )
+    source = AnnotationTileSource(
+        store,
+        TileMatrix(65_536, 65_536),
+        store_id="mixed-scale",
+        revision="revision",
+        name="mixed-scale",
+        cache_dir=tmp_path / "mixed-scale-cache",
+    )
+    try:
+        source.ensure_lod()
+        lod_manifest = source.lod.manifest()
+        assert lod_manifest is not None
+        assert lod_manifest["geometryPromotion"]["candidateCount"] == 1
+
+        aggregate = decode_mvt(
+            gzip.decompress(source.vector_tile("auto", 2, 0, 0).data),
+        )
+        assert sorted(feature.geometry_type for feature in aggregate.features) == [1, 3]
+        assert (
+            sum(feature.feature_id is not None for feature in aggregate.features) == 1
+        )
+        aggregate_point = next(
+            feature for feature in aggregate.features if feature.geometry_type == 1
+        )
+        promoted_polygon = next(
+            feature for feature in aggregate.features if feature.geometry_type == 3
+        )
+        assert aggregate_point.properties["tiatoolbox_aggregate"] is True
+        assert "tiatoolbox_aggregate" not in promoted_polygon.properties
+
+        centroid = decode_mvt(gzip.decompress(source.vector_tile("auto", 5, 0, 0).data))
+        assert sorted(feature.geometry_type for feature in centroid.features) == [1, 3]
+
+        explicit_centroid = decode_mvt(
+            gzip.decompress(source.vector_tile("centroid", 5, 0, 0).data),
+        )
+        assert [feature.geometry_type for feature in explicit_centroid.features] == [
+            1,
+            1,
+        ]
+    finally:
+        source.close()
+        store.close()
 
 
 def test_mvt_has_numeric_ids_and_is_deterministic() -> None:
@@ -601,7 +727,7 @@ def test_explicit_representation_fails_instead_of_cross_family_fallback(
     )
     with pytest.raises(
         TileBudgetExceededError,
-        match=r"Uniform polygon.*not changed",
+        match=r"Deterministic polygon-base.*not changed",
     ):
         source.vector_tile("polygon", 0, 0, 0)
     source.close()
@@ -624,7 +750,7 @@ def test_terminal_representations_fail_at_absolute_byte_limit(
     source.ensure_lod()
     with pytest.raises(
         TileBudgetExceededError,
-        match=r"Uniform aggregate.*not changed",
+        match=r"Deterministic aggregate-base.*not changed",
     ):
         source.vector_tile("aggregate", 0, 0, 0)
     with pytest.raises(TileBudgetExceededError, match="Label tile exceeds"):

@@ -74,9 +74,17 @@ export interface ZoomRepresentationRange {
   representation: ConcreteRepresentationKind;
 }
 
+export interface GeometryPromotionPolicy {
+  metric: "projected-area";
+  minimumPixelsSquared: number;
+  maximumZoom: number;
+  representation: "polygon";
+}
+
 export interface RepresentationPolicy {
   scope: string;
   ranges: ZoomRepresentationRange[];
+  geometryPromotion?: GeometryPromotionPolicy;
 }
 
 export interface RepresentationManifest {

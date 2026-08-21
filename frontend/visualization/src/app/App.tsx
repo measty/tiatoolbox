@@ -118,6 +118,18 @@ export function App() {
         : [],
     ),
   );
+  const loadedOverlaysRef = useRef<Record<string, SessionOverlay>>({});
+  loadedOverlaysRef.current = loadedOverlays;
+  const pendingAnnotationStores = useMemo(
+    () =>
+      Object.entries(loadedOverlays).flatMap(([resourceId, overlay]) =>
+        overlay.kind === "annotation" && isPendingLod(overlay.manifest)
+          ? [{ resourceId, storeId: overlay.manifest.id }]
+          : [],
+      ),
+    [loadedOverlays],
+  );
+  const pendingAnnotationStoreKey = JSON.stringify(pendingAnnotationStores);
 
   useEffect(() => {
     void api
@@ -201,20 +213,12 @@ export function App() {
 
   useEffect(() => {
     if (loading) return;
-    const pending = Object.entries(loadedOverlays).flatMap(
-      ([resourceId, overlay]) =>
-        overlay.kind === "annotation" &&
-        (overlay.manifest.lodStatus === "building" ||
-          overlay.manifest.lodStatus === "not-built")
-          ? [{ resourceId, storeId: overlay.manifest.id }]
-          : [],
-    );
-    if (pending.length === 0) return;
+    if (pendingAnnotationStores.length === 0) return;
     let cancelled = false;
     let timer: number | undefined;
     const poll = async () => {
       const results = await Promise.allSettled(
-        pending.map(async ({ resourceId, storeId }) => ({
+        pendingAnnotationStores.map(async ({ resourceId, storeId }) => ({
           resourceId,
           storeId,
           manifest: await api.store(storeId),
@@ -224,7 +228,7 @@ export function App() {
       for (const result of results) {
         if (result.status !== "fulfilled") continue;
         const { resourceId, storeId, manifest } = result.value;
-        const previous = loadedOverlays[resourceId];
+        const previous = loadedOverlaysRef.current[resourceId];
         if (
           previous?.kind !== "annotation" ||
           previous.manifest.id !== storeId
@@ -246,6 +250,7 @@ export function App() {
       }
       setLoadedOverlays((current) => {
         const next = { ...current };
+        let changed = false;
         for (const result of results) {
           if (result.status !== "fulfilled") continue;
           const { resourceId, storeId, manifest } = result.value;
@@ -253,9 +258,11 @@ export function App() {
           if (existing?.kind !== "annotation" || existing.manifest.id !== storeId) {
             continue;
           }
+          if (sameStoreManifest(existing.manifest, manifest)) continue;
           next[resourceId] = { ...existing, manifest };
+          changed = true;
         }
-        return next;
+        return changed ? next : current;
       });
       const failure = results.find(
         (result): result is PromiseRejectedResult => result.status === "rejected",
@@ -263,15 +270,24 @@ export function App() {
       if (failure && !isAbortError(failure.reason)) {
         setError(`Unable to refresh annotation metadata: ${errorMessage(failure.reason)}`);
       }
-      timer = window.setTimeout(() => void poll(), 1000);
+      const shouldContinue = results.some(
+        (result) =>
+          result.status === "rejected" || isPendingLod(result.value.manifest),
+      );
+      if (shouldContinue) timer = window.setTimeout(() => void poll(), 1000);
     };
     timer = window.setTimeout(() => void poll(), 1000);
     return () => {
       cancelled = true;
       if (timer !== undefined) window.clearTimeout(timer);
-      for (const { storeId } of pending) api.abort(`store:${storeId}`);
+      for (const { storeId } of pendingAnnotationStores) {
+        api.abort(`store:${storeId}`);
+      }
     };
-  }, [api, loadedOverlays, loading]);
+    // The serialised key deliberately represents the membership of the poll set.
+    // Building-manifest refreshes must not restart and abort their own poll loop.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [api, loading, pendingAnnotationStoreKey]);
 
   useEffect(() => {
     if (viewCount === 1) setActiveLayerView("primary");
@@ -1125,6 +1141,17 @@ function refreshPresentationState(
       ? current
       : { ...current, [resourceId]: refreshed };
   });
+}
+
+function isPendingLod(store: StoreManifest): boolean {
+  return store.lodStatus === "building" || store.lodStatus === "not-built";
+}
+
+function sameStoreManifest(
+  left: StoreManifest,
+  right: StoreManifest,
+): boolean {
+  return JSON.stringify(left) === JSON.stringify(right);
 }
 
 interface SelectionSetters {

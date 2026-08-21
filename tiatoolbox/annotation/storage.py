@@ -3652,6 +3652,101 @@ class SQLiteStore(AnnotationStore):
         finally:
             cur.close()
 
+    def records_by_ids(
+        self: SQLiteStore,
+        record_ids: Iterable[int],
+        selected_properties: Iterable[str] = (),
+        *,
+        include_geometry: bool = True,
+        property_filter: Mapping[str, object] | None = None,
+    ) -> Iterator[AnnotationRecord]:
+        """Stream thin records selected by their internal numeric IDs.
+
+        This complements :meth:`query_records` for callers that already have a
+        compact spatial index. IDs are passed to SQLite as one JSON parameter,
+        avoiding both SQL interpolation and SQLite's bound-variable limit.
+
+        Args:
+            record_ids:
+                Internal numeric annotation IDs.
+            selected_properties:
+                Top-level property names to return.
+            include_geometry:
+                Include decompressed WKB. Defaults to ``True``.
+            property_filter:
+                Optional safe property-filter AST accepted by
+                :func:`normalize_property_filter`.
+
+        Returns:
+            Iterator[AnnotationRecord]:
+                A streaming iterator over matching records.
+
+        """
+        property_names = tuple(selected_properties)
+        if not all(isinstance(name, str) for name in property_names):
+            msg = "selected_properties must contain only strings."
+            raise TypeError(msg)
+        property_names = tuple(dict.fromkeys(property_names))
+        ids = tuple(dict.fromkeys(record_ids))
+        if not all(isinstance(record_id, int) for record_id in ids):
+            msg = "record_ids must contain only integers."
+            raise TypeError(msg)
+        if any(isinstance(record_id, bool) or record_id < 0 for record_id in ids):
+            msg = "record_ids must contain only non-negative integers."
+            raise ValueError(msg)
+        if not ids:
+            return
+
+        normalized_filter = normalize_property_filter(property_filter)
+        has_area = "area" in self.table_columns
+        columns = [
+            "annotations.id",
+            "annotations.[key]",
+            "annotations.objtype",
+            "annotations.cx",
+            "annotations.cy",
+            "rtree.min_x",
+            "rtree.min_y",
+            "rtree.max_x",
+            "rtree.max_y",
+            "annotations.area" if has_area else "NULL",
+        ]
+        if include_geometry:
+            columns.append("annotations.geometry")
+        if property_names:
+            columns.append("annotations.properties")
+
+        query = (
+            "SELECT "  # noqa: S608 - all column names are fixed above
+            + ", ".join(columns)
+            + """
+                FROM annotations
+                JOIN rtree ON rtree.id = annotations.id
+                WHERE annotations.id IN (
+                    SELECT CAST(value AS INTEGER) FROM json_each(:record_ids)
+                )
+            """
+        )
+        parameters: dict[str, object] = {
+            "record_ids": json.dumps(ids, separators=(",", ":")),
+        }
+        if normalized_filter is not None:
+            query += " AND " + _compile_property_filter_sql(
+                normalized_filter,
+                parameters,
+            )
+
+        cur = self.con.execute(query, parameters)
+        try:
+            for row in cur:
+                yield self._annotation_record_from_row(
+                    row,
+                    property_names,
+                    include_geometry=include_geometry,
+                )
+        finally:
+            cur.close()
+
     @staticmethod
     def _query_record_bounds(
         geometry: QueryGeometry,

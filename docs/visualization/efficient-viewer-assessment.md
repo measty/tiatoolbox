@@ -65,10 +65,13 @@ The principal design properties are:
   modification time alone. Successful immutable manifests, feature details,
   and tiles support conditional ETags; temporary `building` responses are not
   cached as immutable content.
-- The automatic path uses one immutable geometry family per store and source
-  zoom. For the supplied max-zoom-9 slide this is aggregate z0-z3, centroid
-  z4-z6, and polygon z7-z9; tile density, style fields, and filters cannot turn
-  individual tiles into a different family.
+- The automatic path uses one immutable base geometry family and deterministic
+  feature-area rule per store and source zoom. For the supplied max-zoom-9
+  slide the base schedule is aggregate z0-z3, centroid z4-z6, and polygon
+  z7-z9; tile density, style fields, and filters cannot alter it. In the first
+  two ranges, polygons projecting to at least 36 CSS pixels squared remain
+  simplified polygons, preserving larger tissue structures without turning
+  dense and sparse tiles into different LOD regimes or duplicating features.
 - Pathology-calibrated operating targets are 32,000 centroid features and 256
   KiB compressed. Larger absolute feature, vertex, and byte limits remain as
   safety stops. Exceeding one produces an explicit error instead of silently
@@ -111,7 +114,8 @@ The current viewer supports:
 - loading multiple annotation stores and raster overlays;
 - independent layer visibility and opacity;
 - constant, categorical, and numeric colour modes, category visibility,
-  numeric range filtering, fill opacity, and outline width;
+  numeric range filtering, fill opacity, polygon outline width, centroid-dot
+  sizing, and independent low-zoom aggregate suppression;
 - changing client-side presentation without replacing geometry tile sources;
 - pan, zoom, rotation, fit-to-slide, fullscreen, pointer coordinates, and a
   physical scale line where metadata allow it;
@@ -284,15 +288,29 @@ z4 begins the centroid range. An earlier tile-local policy produced 112
 centroid responses and 31 aggregate responses across the 143 z4 tiles. That
 measurement exposed a correctness problem rather than a useful optimization:
 dense and sparse neighbours formed a visually ambiguous patchwork. The current
-policy therefore makes every z4 tile a centroid tile and raises the normal
-centroid envelope to cover the observed buffered maximum of 22,096 cells (the
-z4 mean was 4,991 and p95 19,043) without adding a density pre-scan.
+policy therefore makes every z4 tile use the centroid base rule and raises the
+normal centroid envelope to cover the observed buffered maximum of 22,096
+cells (the z4 mean was 4,991 and p95 19,043) without adding a density pre-scan.
+The later screen-area promotion for larger structures is deterministic across
+the store and is not a return to tile-local density switching.
 
 A fresh complete z4 sweep after the uniform-policy change requested all 143
 tiles with the UI's `type` field. Every response reported `centroid`; none
 reported aggregate or an absolute-limit error. The largest response contained
 21,983 points and was 144,972 bytes compressed, below both the normal 32,000-
 point/256-KiB envelope and the absolute safety ceiling.
+
+The mixed-scale colorectal store
+`B-1914637_01-03_HE_20221018_ihc.db` contains 669,524 polygons. A cold LOD
+build with 36-pixel-squared promotion took 13.1 seconds and produced a 1.8-MiB
+sidecar. Only 5,718 annotations are promotion candidates at any zoom; the
+eligible count rises from 762 at z5 to 2,505 at z6 and 5,718 at z8. A sampled
+z5 tile encoded 218 aggregates and 84 structure polygons in 42 ms cold. A
+dense sampled z6 tile encoded 26,072 centroids and 67 structure polygons in
+1.28 seconds cold, then returned from memory cache in under 0.3 ms. Manual
+Canvas and WebGL checks confirmed that gland boundaries survive at both z5 and
+z6 while smaller objects follow the aggregate/centroid base schedule, with no
+browser warnings or errors.
 
 A deliberately cold 40-distinct-tile experiment showed that unconstrained
 parallelism is counterproductive on this path: representative wall times were

@@ -109,6 +109,8 @@ def test_transient_lod_tile_is_no_store_then_ready_url_changes(
             assert building["lodStatus"] == "building"
             building_url = building["urls"]["tiles"].format(z=0, x=0, y=0)
             assert "lod=building" in building_url
+            source = app.viewer_services._sources[store_id]
+            assert f"tileVersion={source.tile_revision}" in building_url
 
             transient = client.get(building_url)
             assert transient.status_code == 200
@@ -154,11 +156,11 @@ def test_source_identity_versions_annotation_pipeline_semantics(
             f"{source.matrix.width}:{source.matrix.height}:{source.matrix.tile_size}:"
         )
         current_id = hashlib.blake2b(
-            f"{identity}pipeline-5".encode(),
+            f"{identity}pipeline-8".encode(),
             digest_size=12,
         ).hexdigest()
         former_id = hashlib.blake2b(
-            f"{identity}pipeline-4".encode(),
+            f"{identity}pipeline-7".encode(),
             digest_size=12,
         ).hexdigest()
 

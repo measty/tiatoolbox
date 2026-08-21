@@ -6,6 +6,7 @@ import {
   aggregateOverviewMaxZoom,
   annotationLayerMinZoom,
   annotationRepresentationSummary,
+  centroidRepresentationRange,
   defaultPresentation,
   matchesPresentation,
   presentationForProperty,
@@ -50,7 +51,7 @@ describe("portable annotation presentation", () => {
     expect(colorForValue(presentation.colorBy, { type: 1 })).toMatch(/^#/);
   });
 
-  it("can suppress only the bounded aggregate overview range", () => {
+  it("keeps the layer active when aggregate primitives are suppressed", () => {
     const overviewStore: StoreManifest = {
       ...store,
       representations: [
@@ -69,7 +70,7 @@ describe("portable annotation presentation", () => {
         ...presentation,
         overviewMode: "hidden",
       }),
-    ).toBeCloseTo(4, 8);
+    ).toBe(-Infinity);
     expect(
       annotationLayerMinZoom(store, {
         ...presentation,
@@ -89,6 +90,12 @@ describe("portable annotation presentation", () => {
           urlTemplate: "/auto/{z}/{x}/{y}",
           policy: {
             scope: "store-zoom",
+            geometryPromotion: {
+              metric: "projected-area",
+              minimumPixelsSquared: 36,
+              maximumZoom: 6,
+              representation: "polygon",
+            },
             ranges: [
               { minZoom: 0, maxZoom: 3, representation: "aggregate" },
               { minZoom: 4, maxZoom: 6, representation: "centroid" },
@@ -106,9 +113,15 @@ describe("portable annotation presentation", () => {
     expect(zoomRepresentationAt(policyStore, 4)).toBe("centroid");
     expect(zoomRepresentationAt(policyStore, 7)).toBe("polygon");
     expect(annotationRepresentationSummary(policyStore)).toBe(
-      "Rendering schedule: aggregates z0-3, centroids z4-6, polygons z7-9.",
+      "Rendering schedule: aggregates + visible structures z0-3, "
+        + "centroids + visible structures z4-6, polygons z7-9.",
     );
     expect(aggregateOverviewMaxZoom(policyStore)).toBe(3);
+    expect(centroidRepresentationRange(policyStore)).toEqual({
+      minZoom: 4,
+      maxZoom: 6,
+      representation: "centroid",
+    });
 
     const overlapping: StoreManifest = {
       ...policyStore,
@@ -256,5 +269,14 @@ describe("portable annotation presentation", () => {
         { ...store, lodStatus: "ready" },
       ),
     ).toBe(intentional);
+
+    // A ready manifest can win the state-update race before its provisional
+    // presentation is reconciled. The untouched constant default must still
+    // be recognisable and upgraded in that ordering.
+    const readyStore = { ...store, lodStatus: "ready" };
+    expect(
+      refreshProvisionalPresentation(provisional, readyStore, readyStore)
+        .colorBy.mode,
+    ).toBe("categorical");
   });
 });

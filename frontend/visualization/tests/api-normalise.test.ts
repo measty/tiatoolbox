@@ -107,6 +107,12 @@ describe("API manifest normalisation", () => {
           format: "mvt",
           policy: {
             scope: "store-zoom",
+            geometryPromotion: {
+              metric: "projected-area",
+              minimumPixelsSquared: 36,
+              maximumZoom: 6,
+              representation: "polygon",
+            },
             ranges: [
               { minZoom: 0, maxZoom: 3, representation: "aggregate" },
               { minZoom: 4, maxZoom: 6, representation: "centroid" },
@@ -131,6 +137,12 @@ describe("API manifest normalisation", () => {
     expect(store.representations.find(({ kind }) => kind === "auto")?.policy)
       .toEqual({
         scope: "store-zoom",
+        geometryPromotion: {
+          metric: "projected-area",
+          minimumPixelsSquared: 36,
+          maximumZoom: 6,
+          representation: "polygon",
+        },
         ranges: [
           { minZoom: 0, maxZoom: 3, representation: "aggregate" },
           { minZoom: 4, maxZoom: 6, representation: "centroid" },

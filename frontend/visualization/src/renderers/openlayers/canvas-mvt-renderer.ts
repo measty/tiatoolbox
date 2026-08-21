@@ -4,6 +4,7 @@ import VectorTileLayer from "ol/layer/VectorTile.js";
 import type Map from "ol/Map.js";
 import { unByKey } from "ol/Observable.js";
 import type { Pixel } from "ol/pixel.js";
+import type TileGrid from "ol/tilegrid/TileGrid.js";
 
 import {
   annotationLayerMinZoom,
@@ -34,6 +35,7 @@ export class CanvasMvtRenderer implements AnnotationLayerHandle {
   private readonly managed: ManagedVectorTileSource;
   private readonly requests;
   private readonly store: StoreManifest;
+  private readonly tileGrid: TileGrid;
   private map: Map | null = null;
   private resolutionKey: EventsKey | undefined;
 
@@ -42,6 +44,7 @@ export class CanvasMvtRenderer implements AnnotationLayerHandle {
     this.managed = managed;
     this.requests = managed.requests;
     this.store = context.store;
+    this.tileGrid = context.tileGrid;
     this.layer = new VectorTileLayer({
       source: managed.source,
       renderMode: "hybrid",
@@ -49,7 +52,11 @@ export class CanvasMvtRenderer implements AnnotationLayerHandle {
       preload: 0,
       updateWhileAnimating: false,
       updateWhileInteracting: false,
-      style: createCanvasStyleFunction(context.presentation),
+      style: createCanvasStyleFunction(
+        context.presentation,
+        context.store,
+        context.tileGrid,
+      ),
       visible: context.presentation.visible,
       opacity: context.presentation.opacity,
       minZoom: annotationLayerMinZoom(context.store, context.presentation),
@@ -78,7 +85,9 @@ export class CanvasMvtRenderer implements AnnotationLayerHandle {
     this.layer.setVisible(presentation.visible);
     this.layer.setOpacity(presentation.opacity);
     this.layer.setMinZoom(annotationLayerMinZoom(this.store, presentation));
-    this.layer.setStyle(createCanvasStyleFunction(presentation));
+    this.layer.setStyle(
+      createCanvasStyleFunction(presentation, this.store, this.tileGrid),
+    );
   }
 
   async pick(

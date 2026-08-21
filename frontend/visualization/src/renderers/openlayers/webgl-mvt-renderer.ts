@@ -49,7 +49,7 @@ export class WebGlMvtRenderer implements AnnotationLayerHandle {
     this.managed = managed;
     this.requests = managed.requests;
     this.store = context.store;
-    const compiled = compileWebGlStyle(context.presentation);
+    const compiled = compileWebGlStyle(context.presentation, context.store);
     this.structureKey = compiled.structureKey;
     this.layer = new WebGLVectorTileLayer<
       VectorTileSource<RenderFeature>,
@@ -87,7 +87,7 @@ export class WebGlMvtRenderer implements AnnotationLayerHandle {
     this.layer.setVisible(presentation.visible);
     this.layer.setOpacity(presentation.opacity);
     this.layer.setMinZoom(annotationLayerMinZoom(this.store, presentation));
-    const compiled = compileWebGlStyle(presentation);
+    const compiled = compileWebGlStyle(presentation, this.store);
     this.layer.updateStyleVariables(compiled.variables);
     if (compiled.structureKey !== this.structureKey) {
       this.layer.setStyle(compiled.rules);
