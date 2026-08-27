@@ -31,6 +31,10 @@ import type {
   RendererPreference,
 } from "../renderers/annotation-renderer";
 import { createRenderer } from "../renderers/openlayers/create-renderer";
+import {
+  type ManagedLayerEntry,
+  reconcileKeyedLayers,
+} from "./keyed-layer-reconciler";
 import { renderMapToPng } from "./map-export";
 import { createSlideProjection, createSlideTileGrid, mapToSlide, slideExtent } from "./projection";
 import type { ViewLinkController } from "./view-link-controller";
@@ -40,6 +44,9 @@ export interface FeaturePick {
   storeId: string;
   fid: FeatureId;
 }
+
+const RASTER_LAYER_ORDER_BASE = 100;
+const ANNOTATION_LAYER_ORDER_BASE = 1_000;
 
 interface SlideMapProps {
   id: string;
@@ -68,8 +75,12 @@ export function SlideMap({
   const mapRef = useRef<OlMap | null>(null);
   const slideIdRef = useRef<string | null>(null);
   const pickEpochRef = useRef(0);
-  const handlesRef = useRef(new Map<string, AnnotationLayerHandle>());
-  const rasterLayersRef = useRef(new Map<string, TileLayer<Zoomify | ImageTile>>());
+  const handlesRef = useRef(
+    new Map<string, ManagedLayerEntry<AnnotationLayerHandle>>(),
+  );
+  const rasterLayersRef = useRef(
+    new Map<string, ManagedLayerEntry<TileLayer<Zoomify | ImageTile>>>(),
+  );
   const selectionLayerRef = useRef<ReturnType<typeof createSelectionLayer> | null>(
     null,
   );
@@ -82,18 +93,6 @@ export function SlideMap({
   const [exportError, setExportError] = useState<string | null>(null);
   const projection = useMemo(() => createSlideProjection(slide), [slide]);
   const tileGrid = useMemo(() => createSlideTileGrid(slide), [slide]);
-  const storesKey = stores
-    .map(
-      ({ manifest, presentation }) =>
-        `${manifest.id}@${manifest.revision}:${manifest.lodStatus ?? "unknown"}:` +
-        `${manifest.tileUrlTemplates.auto ?? ""}:` +
-        requiredTileProperties(presentation).join(","),
-    )
-    .join("|");
-  const rastersKey = rasters
-    .map(({ manifest }) => `${manifest.id}@${manifest.revision ?? "current"}`)
-    .join("|");
-
   useEffect(() => {
     const target = targetRef.current;
     if (!target) return;
@@ -155,9 +154,9 @@ export function SlideMap({
     const clickKey = map.on("singleclick", async (event) => {
       const epoch = ++pickEpochRef.current;
       const entries = [...handlesRef.current.entries()].reverse();
-      for (const [storeId, handle] of entries) {
+      for (const [storeId, entry] of entries) {
         try {
-          const result = await handle.pick(
+          const result = await entry.value.pick(
             event.pixel,
             mapToSlide(event.coordinate as [number, number]),
             view.getResolution(),
@@ -187,12 +186,12 @@ export function SlideMap({
       ++pickEpochRef.current;
       unregister();
       unByKey([pointerKey, clickKey]);
-      for (const handle of handlesRef.current.values()) {
+      for (const { value: handle } of handlesRef.current.values()) {
         handle.detach(map);
         handle.dispose();
       }
       handlesRef.current.clear();
-      for (const layer of rasterLayersRef.current.values()) {
+      for (const { value: layer } of rasterLayersRef.current.values()) {
         map.removeLayer(layer);
         layer.getSource()?.clear();
         layer.dispose();
@@ -218,90 +217,69 @@ export function SlideMap({
   ]);
 
   useEffect(() => {
-    if (!mapInstance) return;
+    if (!mapInstance || mapInstance !== mapRef.current) return;
     const layers = rasterLayersRef.current;
-    for (const layer of layers.values()) {
-      mapInstance.removeLayer(layer);
-      layer.getSource()?.clear();
-      layer.dispose();
-    }
-    layers.clear();
-    for (const raster of rasters) {
-      const layer = new TileLayer({
-        source: createOverlayRasterSource(
-          raster.manifest,
-          slide,
-          projection,
-          tileGrid,
-        ),
-        visible: raster.presentation.visible,
-        opacity: raster.presentation.opacity,
-        properties: { role: "raster-overlay", layerId: raster.manifest.id },
-      });
-      layers.set(raster.manifest.id, layer);
-      mapInstance.addLayer(layer);
-    }
-    return () => {
-      for (const layer of layers.values()) {
+    reconcileKeyedLayers(layers, rasters, {
+      key: ({ manifest }) => manifest.id,
+      identity: ({ manifest }) => rasterSourceIdentity(manifest),
+      create: (raster) => {
+        const layer = new TileLayer({
+          source: createOverlayRasterSource(
+            raster.manifest,
+            slide,
+            projection,
+            tileGrid,
+          ),
+          properties: { role: "raster-overlay", layerId: raster.manifest.id },
+        });
+        mapInstance.addLayer(layer);
+        return layer;
+      },
+      update: (layer, raster, order) => {
+        layer.setVisible(raster.presentation.visible);
+        layer.setOpacity(raster.presentation.opacity);
+        layer.setZIndex(RASTER_LAYER_ORDER_BASE + order);
+      },
+      dispose: (layer) => {
         mapInstance.removeLayer(layer);
         layer.getSource()?.clear();
         layer.dispose();
-      }
-      layers.clear();
-    };
-    // Opacity and visibility are updated without replacing tile sources.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mapInstance, projection, rastersKey, slide, tileGrid]);
+      },
+    });
+  }, [mapInstance, projection, rasters, slide, tileGrid]);
 
   useEffect(() => {
-    for (const raster of rasters) {
-      const layer = rasterLayersRef.current.get(raster.manifest.id);
-      layer?.setVisible(raster.presentation.visible);
-      layer?.setOpacity(raster.presentation.opacity);
-    }
-  }, [rasters]);
-
-  useEffect(() => {
-    if (!mapInstance) return;
+    if (!mapInstance || mapInstance !== mapRef.current) return;
     ++pickEpochRef.current;
     const handles = handlesRef.current;
-    for (const handle of handles.values()) {
-      handle.detach(mapInstance);
-      handle.dispose();
-    }
-    handles.clear();
-    const rendererKinds = new Set<string>();
-    for (const store of stores) {
-      const handle = createRenderer(rendererPreference, {
-        slide,
-        store: store.manifest,
-        projection,
-        tileGrid,
-        presentation: store.presentation,
-      });
-      handles.set(store.manifest.id, handle);
-      rendererKinds.add(handle.capabilities.kind);
-      handle.attach(mapInstance);
-    }
-    setRendererSummary([...rendererKinds].join(" + ") || "none");
-    return () => {
-      ++pickEpochRef.current;
-      for (const handle of handles.values()) {
+    reconcileKeyedLayers(handles, stores, {
+      key: ({ manifest }) => manifest.id,
+      identity: (store) => annotationSourceIdentity(store, rendererPreference),
+      create: (store) => {
+        const handle = createRenderer(rendererPreference, {
+          slide,
+          store: store.manifest,
+          projection,
+          tileGrid,
+          presentation: store.presentation,
+        });
+        handle.attach(mapInstance);
+        return handle;
+      },
+      update: (handle, store, order) => {
+        handle.setOrder(ANNOTATION_LAYER_ORDER_BASE + order);
+        handle.setPresentation(store.presentation);
+      },
+      dispose: (handle) => {
         handle.detach(mapInstance);
         handle.dispose();
-      }
-      handles.clear();
-    };
-    // Presentation changes are applied by the separate effect below and must
-    // not recreate sources or issue new tile requests.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mapInstance, projection, rendererPreference, slide, storesKey, tileGrid]);
-
-  useEffect(() => {
-    for (const store of stores) {
-      handlesRef.current.get(store.manifest.id)?.setPresentation(store.presentation);
-    }
-  }, [stores]);
+      },
+    });
+    const rendererKinds = new Set(
+      [...handles.values()].map(({ value }) => value.capabilities.kind),
+    );
+    setRendererSummary([...rendererKinds].join(" + ") || "none");
+  }, [mapInstance, projection, rendererPreference, slide, stores, tileGrid]);
 
   useEffect(() => {
     updateSelectionLayer(selectionLayer, selection);
@@ -386,6 +364,37 @@ function exportErrorMessage(error: unknown): string {
     return "PNG export was blocked by a cross-origin tile. Serve image tiles with CORS enabled.";
   }
   return error instanceof Error ? error.message : "Unable to export this view.";
+}
+
+function annotationSourceIdentity(
+  store: LoadedStore,
+  rendererPreference: RendererPreference,
+): string {
+  const autoRepresentation = store.manifest.representations.find(
+    (representation) => representation.kind === "auto",
+  );
+  return JSON.stringify({
+    rendererPreference,
+    id: store.manifest.id,
+    revision: store.manifest.revision,
+    lodStatus: store.manifest.lodStatus,
+    tileUrl: store.manifest.tileUrlTemplates.auto ?? autoRepresentation?.urlTemplate,
+    pickUrl: store.manifest.pickUrl,
+    overlaps: store.manifest.overlaps,
+    policy: autoRepresentation?.policy,
+    fields: requiredTileProperties(store.presentation),
+  });
+}
+
+function rasterSourceIdentity(raster: RasterLayerManifest): string {
+  return JSON.stringify({
+    id: raster.id,
+    revision: raster.revision,
+    layerName: raster.layerName,
+    width: raster.width,
+    height: raster.height,
+    tileUrl: raster.rasterTileUrlTemplate,
+  });
 }
 
 function createRasterSource(

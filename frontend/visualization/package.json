@@ -10,6 +10,7 @@
     "dev": "vite",
     "prebuild": "npm run verify:openlayers-patch",
     "build": "tsc -b && vite build",
+    "postbuild": "node scripts/normalize-built-html.mjs",
     "postinstall": "patch-package",
     "typecheck": "tsc -b --pretty false",
     "pretest": "npm run verify:openlayers-patch",

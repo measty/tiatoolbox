@@ -8,6 +8,8 @@ import type TileGrid from "ol/tilegrid/TileGrid.js";
 
 import {
   annotationLayerMinZoom,
+  matchesPresentation,
+  presentationAllowsPicking,
   type LayerPresentation,
 } from "../../domain/style-spec";
 import type { StoreManifest } from "../../api/types";
@@ -23,6 +25,28 @@ import {
 } from "./vector-tile-source";
 import { pickFeatureOnServer } from "./server-pick";
 
+const AGGREGATE_PROPERTY = "tiatoolbox_aggregate";
+
+/** Convert only a locally rendered, authoritative annotation into a pick. */
+export function localFeaturePickResult(
+  feature: FeatureLike,
+  presentation: LayerPresentation,
+): PickResult | null {
+  const properties = feature.getProperties();
+  if (!matchesPresentation(properties, presentation)) return null;
+  if (
+    presentation.overviewMode === "hidden" &&
+    properties[AGGREGATE_PROPERTY] === true
+  ) {
+    return null;
+  }
+  // Overview aggregate cells intentionally have no MVT feature ID and are not
+  // authoritative annotations, so never treat one of their properties as an ID.
+  const id = feature.getId();
+  if (typeof id !== "number" && typeof id !== "string") return null;
+  return { fid: id, properties };
+}
+
 export class CanvasMvtRenderer implements AnnotationLayerHandle {
   readonly capabilities = {
     kind: "canvas" as const,
@@ -36,6 +60,7 @@ export class CanvasMvtRenderer implements AnnotationLayerHandle {
   private readonly requests;
   private readonly store: StoreManifest;
   private readonly tileGrid: TileGrid;
+  private presentation: LayerPresentation;
   private map: Map | null = null;
   private resolutionKey: EventsKey | undefined;
 
@@ -45,6 +70,7 @@ export class CanvasMvtRenderer implements AnnotationLayerHandle {
     this.requests = managed.requests;
     this.store = context.store;
     this.tileGrid = context.tileGrid;
+    this.presentation = context.presentation;
     this.layer = new VectorTileLayer({
       source: managed.source,
       renderMode: "hybrid",
@@ -81,7 +107,12 @@ export class CanvasMvtRenderer implements AnnotationLayerHandle {
     if (this.map === map) this.map = null;
   }
 
+  setOrder(order: number): void {
+    this.layer.setZIndex(order);
+  }
+
   setPresentation(presentation: LayerPresentation): void {
+    this.presentation = presentation;
     this.layer.setVisible(presentation.visible);
     this.layer.setOpacity(presentation.opacity);
     this.layer.setMinZoom(annotationLayerMinZoom(this.store, presentation));
@@ -95,38 +126,33 @@ export class CanvasMvtRenderer implements AnnotationLayerHandle {
     slideCoordinate?: readonly [number, number],
     resolution?: number,
   ): Promise<PickResult | null> {
+    if (!presentationAllowsPicking(this.presentation)) return null;
     const features = (await this.layer.getFeatures(pixel)) as FeatureLike[];
-    const feature =
-      features[0] ??
+    const localResult =
+      features
+        .map((feature) => localFeaturePickResult(feature, this.presentation))
+        .find((result): result is PickResult => result !== null) ??
       this.map?.forEachFeatureAtPixel(
         pixel,
-        (candidate, layer) => (layer === this.layer ? candidate : undefined),
+        (candidate, layer) =>
+          layer === this.layer
+            ? localFeaturePickResult(candidate, this.presentation) ?? undefined
+            : undefined,
         {
           hitTolerance: 4,
           layerFilter: (layer) => layer === this.layer,
         },
       );
-    if (!feature) {
+    if (!localResult) {
       return pickFeatureOnServer(
         this.store,
         slideCoordinate,
         resolution,
+        this.presentation,
         this.requests,
       );
     }
-    const properties = feature.getProperties();
-    // Overview aggregate cells intentionally have no MVT feature ID and are not
-    // authoritative annotations, so never treat one of their properties as an ID.
-    const id = feature.getId();
-    if (typeof id !== "number" && typeof id !== "string") {
-      return pickFeatureOnServer(
-        this.store,
-        slideCoordinate,
-        resolution,
-        this.requests,
-      );
-    }
-    return { fid: id, properties };
+    return localResult;
   }
 
   dispose(): void {

@@ -27,6 +27,8 @@ export interface SlideManifest {
   id: ResourceId;
   name: string;
   revision?: Revision;
+  /** Monotone server session generation committed by the slide selection. */
+  slideGeneration?: number;
   width: number;
   height: number;
   mpp: readonly [number, number] | null;

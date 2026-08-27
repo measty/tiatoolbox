@@ -29,10 +29,11 @@ from tiatoolbox.visualization.annotation_tiles.cache import (
     SingleFlight,
     TilePayload,
 )
-from tiatoolbox.visualization.annotation_tiles.lod import LODIndex
+from tiatoolbox.visualization.annotation_tiles.lod import LODBuildCancelled, LODIndex
 from tiatoolbox.visualization.annotation_tiles.mvt import (
     DEFAULT_BUFFER,
     DEFAULT_EXTENT,
+    PointTileFeature,
     TileFeature,
     encode_empty_mvt,
     encode_mvt,
@@ -94,7 +95,7 @@ class TileBudgets:
 class AnnotationTileSource:
     """Serve one immutable store revision through renderer-neutral tiles."""
 
-    def __init__(
+    def __init__(  # noqa: PLR0913
         self,
         store: SQLiteStore,
         matrix: TileMatrix,
@@ -107,6 +108,7 @@ class AnnotationTileSource:
         category_property: str = "type",
         owns_store: bool = False,
         max_concurrent_tile_builds: int = 1,
+        memory_cache: ByteLRUCache | None = None,
     ) -> None:
         """Initialise a revisioned tile source."""
         if max_concurrent_tile_builds <= 0:
@@ -136,7 +138,8 @@ class AnnotationTileSource:
         ).hexdigest()
         revision_dir = Path(cache_dir) / store_id / revision
         revision_dir.mkdir(parents=True, exist_ok=True)
-        self.memory_cache = ByteLRUCache()
+        self.memory_cache = memory_cache if memory_cache is not None else ByteLRUCache()
+        self._owns_memory_cache = memory_cache is None
         self.persistent_cache = PersistentTileCache(revision_dir / "tiles.sqlite")
         self.lod = LODIndex(
             revision_dir / "lod.sqlite",
@@ -159,6 +162,9 @@ class AnnotationTileSource:
         self.max_concurrent_tile_builds = max_concurrent_tile_builds
         self._lod_future: Future[None] | None = None
         self._lod_lock = threading.Lock()
+        self._lod_cancel = threading.Event()
+        self._close_lock = threading.Lock()
+        self._closed = False
 
     @property
     def tile_revision(self) -> str:
@@ -175,22 +181,56 @@ class AnnotationTileSource:
             return "building"
         if future is not None and future.done():
             if future.cancelled():
-                return "failed"
-            return "failed" if future.exception() else "not-built"
+                return "not-built"
+            error = future.exception()
+            if isinstance(error, LODBuildCancelled):
+                return "not-built"
+            return "failed" if error else "not-built"
         return "not-built"
+
+    @property
+    def lod_running(self) -> bool:
+        """Return whether a queued or running overview build still owns the source."""
+        with self._lod_lock:
+            return self._lod_future is not None and not self._lod_future.done()
 
     def ensure_lod(self, executor: Executor | None = None) -> Future[None] | None:
         """Start a single background LOD build, or build synchronously."""
         if self.lod.ready:
             return self._lod_future
         with self._lod_lock:
+            if self._closed:
+                msg = "Annotation tile source is closed."
+                raise RuntimeError(msg)
             if self._lod_future is not None and not self._lod_future.done():
+                # A source can be detached and immediately reattached while its
+                # cooperative cancellation is still pending. Clearing the event
+                # rescues a build that has not yet observed the request; if it
+                # already has, the completion callback starts a fresh build.
+                self._lod_cancel.clear()
                 return self._lod_future
+            self._lod_cancel.clear()
             if executor is None:
-                self.lod.build(self.store)
+                self.lod.build(self.store, cancel_event=self._lod_cancel)
                 return None
-            self._lod_future = executor.submit(self.lod.build, self.store)
+            self._lod_future = executor.submit(
+                self.lod.build,
+                self.store,
+                self._lod_cancel,
+            )
             return self._lod_future
+
+    def cancel_lod(self) -> Future[None] | None:
+        """Request cancellation of queued or running overview preprocessing."""
+        with self._lod_lock:
+            future = self._lod_future
+            if self.lod.ready or future is None or future.done():
+                return future
+            self._lod_cancel.set()
+        # Future callbacks run synchronously from ``cancel``. Do this outside the
+        # source lock because service callbacks may reattach and call ensure_lod.
+        future.cancel()
+        return future
 
     def manifest(self) -> dict[str, Any]:
         """Return current store metadata and immutable representation contract."""
@@ -200,15 +240,16 @@ class AnnotationTileSource:
         # metadata would make clients stop polling before properties arrive.
         lod_status = self.lod_status
         persisted = self.lod.manifest()
+        # Do not perform duplicate whole-store scans while the LOD builder is
+        # already computing these summaries. Nullable values keep the response
+        # schema stable and the client polls until the persisted manifest lands.
         feature_count = (
-            int(persisted["featureCount"]) if persisted is not None else len(self.store)
+            int(persisted["featureCount"]) if persisted is not None else None
         )
-        bounds = persisted["bounds"] if persisted is not None else self._store_bounds()
-        geometry_types = (
-            persisted["geometryTypes"]
-            if persisted is not None
-            else self._geometry_types()
+        bounds = (
+            persisted["bounds"] if persisted is not None else [None, None, None, None]
         )
+        geometry_types = persisted["geometryTypes"] if persisted is not None else {}
         properties = persisted["properties"] if persisted is not None else {}
         return {
             "id": self.store_id,
@@ -279,7 +320,14 @@ class AnnotationTileSource:
             },
         }
 
-    def pick(self, x: float, y: float, tolerance: float = 0) -> int | None:
+    def pick(
+        self,
+        x: float,
+        y: float,
+        tolerance: float = 0,
+        *,
+        property_filter: Mapping[str, object] | None = None,
+    ) -> int | None:
         """Resolve a close-detail slide coordinate to an authoritative row ID.
 
         Browser renderers use local hit detection first. This bounded spatial
@@ -297,7 +345,14 @@ class AnnotationTileSource:
         # A zero-area RTree query has no overlap under strict interval tests.
         if tolerance == 0:
             bounds = (x - 1e-9, y - 1e-9, x + 1e-9, y + 1e-9)
-        records = list(self.store.query_records(bounds, (), include_geometry=True))
+        records = list(
+            self.store.query_records(
+                bounds,
+                (),
+                include_geometry=True,
+                property_filter=normalize_property_filter(property_filter),
+            ),
+        )
         if not records:
             return None
         geometries = shapely.from_wkb(
@@ -470,11 +525,22 @@ class AnnotationTileSource:
 
     def close(self) -> None:
         """Release caches, sidecars and optionally the source store."""
-        self.persistent_cache.close()
-        self.lod.close()
-        self.memory_cache.clear()
-        if self.owns_store:
-            self.store.close()
+        with self._close_lock:
+            if self._closed:
+                return
+            with self._lod_lock:
+                self._closed = True
+            future = self.cancel_lod()
+            if future is not None and not future.cancelled():
+                # ``exception`` waits for running cooperative cancellation but
+                # does not re-raise a stored build failure during teardown.
+                future.exception()
+            self.persistent_cache.close()
+            self.lod.close()
+            if self._owns_memory_cache:
+                self.memory_cache.clear()
+            if self.owns_store:
+                self.store.close()
 
     def _build_vector_tile(
         self,
@@ -635,7 +701,7 @@ class AnnotationTileSource:
         property_filter: Mapping[str, object] | None,
         *,
         promote_large: bool = False,
-    ) -> list[TileFeature]:
+    ) -> list[TileFeature | PointTileFeature]:
         if representation == "aggregate":
             if self.lod.ready and z <= self.lod.overview_max_zoom:
                 if property_filter is None:
@@ -709,9 +775,10 @@ class AnnotationTileSource:
                 if feature.feature_id is not None
             }
             return [
-                TileFeature(
+                PointTileFeature(
                     record.id,
-                    Point(record.cx, record.cy),
+                    record.cx,
+                    record.cy,
                     _normalise_tile_properties(
                         record.properties,
                         ensure_direct_color="color" in fields,
@@ -938,20 +1005,6 @@ class AnnotationTileSource:
         """Return source bounds matching the MVT encoder's seam buffer."""
         buffer_pixels = (DEFAULT_BUFFER / DEFAULT_EXTENT) * self.matrix.tile_size
         return self.matrix.tile_bounds(z, x, y, buffer_pixels=buffer_pixels)
-
-    def _store_bounds(self) -> list[float | None]:
-        row = self.store.con.execute(
-            "SELECT MIN(min_x), MIN(min_y), MAX(max_x), MAX(max_y) FROM rtree",
-        ).fetchone()
-        return [None if value is None else float(value) for value in row]
-
-    def _geometry_types(self) -> dict[str, int]:
-        return {
-            str(name): int(count)
-            for name, count in self.store.con.execute(
-                "SELECT objtype, COUNT(*) FROM annotations GROUP BY objtype",
-            )
-        }
 
     @staticmethod
     def _supports_label_tiles(geometry_types: Mapping[str, int]) -> bool:

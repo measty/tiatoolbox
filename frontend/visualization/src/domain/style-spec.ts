@@ -34,6 +34,20 @@ export interface RangeFilter {
   max: number;
 }
 
+export type PropertyFilter =
+  | {
+      op: "eq" | "ne" | "lt" | "lte" | "gt" | "gte";
+      property: string;
+      value: PropertyValue;
+    }
+  | { op: "in"; property: string; values: PropertyValue[] }
+  | { op: "and" | "or"; args: PropertyFilter[] };
+
+export interface PresentationPropertyFilter {
+  filter?: PropertyFilter;
+  matchesNothing: boolean;
+}
+
 /** How aggregate primitives behave in the precomputed overview LOD range. */
 export type OverviewMode = "aggregate" | "hidden";
 
@@ -328,9 +342,9 @@ export function matchesPresentation(
   if (presentation.colorBy.mode === "categorical") {
     const value = properties[presentation.colorBy.property];
     const category = presentation.colorBy.categories.find(
-      (entry) => String(entry.value) === String(value),
+      (entry) => entry.value === value,
     );
-    if (category && !category.visible) return false;
+    if (!category?.visible) return false;
   }
   if (presentation.rangeFilter) {
     const value = Number(properties[presentation.rangeFilter.property]);
@@ -343,6 +357,50 @@ export function matchesPresentation(
     }
   }
   return true;
+}
+
+/** Compile client presentation filters into the bounded server filter contract. */
+export function presentationPropertyFilter(
+  presentation: LayerPresentation,
+): PresentationPropertyFilter {
+  const filters: PropertyFilter[] = [];
+  if (presentation.colorBy.mode === "categorical") {
+    const values = presentation.colorBy.categories
+      .filter((category) => category.visible)
+      .map((category) => category.value);
+    if (values.length === 0) return { matchesNothing: true };
+    filters.push({
+      op: "in",
+      property: presentation.colorBy.property,
+      values,
+    });
+  }
+  if (presentation.rangeFilter) {
+    const { property, min, max } = presentation.rangeFilter;
+    if (!Number.isFinite(min) || !Number.isFinite(max) || min > max) {
+      return { matchesNothing: true };
+    }
+    filters.push(
+      { op: "gte", property, value: min },
+      { op: "lte", property, value: max },
+    );
+  }
+  if (filters.length === 0) return { matchesNothing: false };
+  return {
+    matchesNothing: false,
+    filter: filters.length === 1 ? filters[0] : { op: "and", args: filters },
+  };
+}
+
+export function presentationAllowsPicking(
+  presentation: LayerPresentation,
+): boolean {
+  return (
+    presentation.visible &&
+    Number.isFinite(presentation.opacity) &&
+    presentation.opacity > 0 &&
+    !presentationPropertyFilter(presentation).matchesNothing
+  );
 }
 
 /** Properties that must be embedded in MVTs for this presentation. */

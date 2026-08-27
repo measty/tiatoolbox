@@ -1,4 +1,9 @@
 import type { StoreManifest } from "../../api/types";
+import {
+  presentationAllowsPicking,
+  presentationPropertyFilter,
+  type LayerPresentation,
+} from "../../domain/style-spec";
 import type { PickResult } from "../annotation-renderer";
 import type { TileRequestManager } from "./tile-request-manager";
 
@@ -8,11 +13,13 @@ export async function pickFeatureOnServer(
   store: StoreManifest,
   coordinate: readonly [number, number] | undefined,
   resolution: number | undefined,
+  presentation: LayerPresentation,
   requests: TileRequestManager,
 ): Promise<PickResult | null> {
   if (
     !store.pickUrl ||
     !coordinate ||
+    !presentationAllowsPicking(presentation) ||
     resolution === undefined ||
     !Number.isFinite(resolution) ||
     resolution > MAX_PICK_RESOLUTION
@@ -25,6 +32,8 @@ export async function pickFeatureOnServer(
     y: String(coordinate[1]),
     tolerance: String(Math.min(64, Math.max(1, resolution * 4))),
   });
+  const propertyFilter = presentationPropertyFilter(presentation).filter;
+  if (propertyFilter) query.set("filter", JSON.stringify(propertyFilter));
   const url = `${store.pickUrl}${separator}${query}`;
   const requestKey = `pick:${store.id}`;
   const signal = requests.start(requestKey);

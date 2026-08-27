@@ -93,11 +93,15 @@ def test_transient_lod_tile_is_no_store_then_ready_url_changes(
     release_build = threading.Event()
     original_build = LODIndex.build
 
-    def blocked_build(index: LODIndex, store: SQLiteStore) -> None:
+    def blocked_build(
+        index: LODIndex,
+        store: SQLiteStore,
+        cancel_event: threading.Event | None = None,
+    ) -> None:
         build_started.set()
         if not release_build.wait(timeout=20):
             pytest.fail("Timed out waiting to release the test LOD build.")
-        original_build(index, store)
+        original_build(index, store, cancel_event=cancel_event)
 
     monkeypatch.setattr(LODIndex, "build", blocked_build)
     try:
@@ -178,7 +182,11 @@ def test_failed_lod_url_returns_explicit_bounded_failure(
     """A failed background index is explicit and never starts a z0 source scan."""
     app, _ = phase4_app
 
-    def fail_build(_index: LODIndex, _store: SQLiteStore) -> None:
+    def fail_build(
+        _index: LODIndex,
+        _store: SQLiteStore,
+        _cancel_event: threading.Event | None = None,
+    ) -> None:
         msg = "deliberate LOD failure"
         raise RuntimeError(msg)
 

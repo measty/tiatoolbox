@@ -9,8 +9,10 @@ import {
   centroidRepresentationRange,
   defaultPresentation,
   matchesPresentation,
+  presentationAllowsPicking,
   presentationForProperty,
   presentationForStore,
+  presentationPropertyFilter,
   refreshProvisionalPresentation,
   requiredTileProperties,
   zoomRepresentationAt,
@@ -146,6 +148,32 @@ describe("portable annotation presentation", () => {
     presentation.colorBy.categories[0]!.visible = false;
     expect(matchesPresentation({ type: 0 }, presentation)).toBe(false);
     expect(matchesPresentation({ type: 1 }, presentation)).toBe(true);
+    expect(matchesPresentation({ type: 2 }, presentation)).toBe(false);
+  });
+
+  it("compiles categorical and numeric presentation filters for server picking", () => {
+    const presentation = defaultPresentation(store);
+    if (presentation.colorBy.mode !== "categorical") throw new Error("test setup");
+    presentation.colorBy.categories[0]!.visible = false;
+    presentation.rangeFilter = { property: "prob", min: 0.25, max: 0.9 };
+
+    expect(presentationPropertyFilter(presentation)).toEqual({
+      matchesNothing: false,
+      filter: {
+        op: "and",
+        args: [
+          { op: "in", property: "type", values: [1] },
+          { op: "gte", property: "prob", value: 0.25 },
+          { op: "lte", property: "prob", value: 0.9 },
+        ],
+      },
+    });
+    expect(presentationAllowsPicking(presentation)).toBe(true);
+    expect(presentationAllowsPicking({ ...presentation, opacity: 0 })).toBe(false);
+
+    presentation.colorBy.categories[1]!.visible = false;
+    expect(presentationPropertyFilter(presentation)).toEqual({ matchesNothing: true });
+    expect(presentationAllowsPicking(presentation)).toBe(false);
   });
 
   it("interpolates numeric colours", () => {

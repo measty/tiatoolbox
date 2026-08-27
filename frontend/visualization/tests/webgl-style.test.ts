@@ -87,7 +87,18 @@ describe("OpenLayers WebGL style compiler", () => {
         numeric: { domain: [0, 1], colors: ["#2563eb", "#f59e0b"] },
       },
     }, store);
+    const updated = compileWebGlStyle({
+      ...presentation,
+      colorBy: {
+        mode: "numeric",
+        property: "prob",
+        numeric: { domain: [0.1, 0.8], colors: ["#16a34a", "#9333ea"] },
+      },
+    }, store);
     expect(() => convertStyleToShaders(compiled.rules, compiled.variables)).not.toThrow();
+    expect(updated.structureKey).toBe(compiled.structureKey);
+    expect(updated.variables.numericColorMin).toBe("#16a34a");
+    expect(updated.variables.numericDomainMax).toBe(0.8);
   });
 
   it("reads normalized feature colours as a WebGL color attribute", () => {
@@ -141,6 +152,44 @@ describe("OpenLayers WebGL style compiler", () => {
     expect(shown.variables.showAggregates).toBe(1);
     expect(hidden.variables.showAggregates).toBe(0);
     expect(hidden.structureKey).toBe(shown.structureKey);
+  });
+
+  it("updates categorical colours and visibility without rebuilding shaders", () => {
+    if (presentation.colorBy.mode !== "categorical") {
+      throw new Error("Test presentation must be categorical.");
+    }
+    const original = compileWebGlStyle(presentation, store);
+    const updated = compileWebGlStyle({
+      ...presentation,
+      colorBy: {
+        ...presentation.colorBy,
+        categories: presentation.colorBy.categories.map((category, index) => ({
+          ...category,
+          color: index === 0 ? "#22c55e" : category.color,
+          visible: true,
+        })),
+      },
+    }, store);
+
+    expect(updated.structureKey).toBe(original.structureKey);
+    expect(updated.variables.categoryColor0).toBe("#22c55e");
+    expect(updated.variables.categoryVisible1).toBe(1);
+    expect(() => convertStyleToShaders(updated.rules, updated.variables)).not.toThrow();
+  });
+
+  it("updates a constant colour without rebuilding shaders", () => {
+    const first = compileWebGlStyle({
+      ...presentation,
+      colorBy: { mode: "constant", color: "#e11d48" },
+    }, store);
+    const second = compileWebGlStyle({
+      ...presentation,
+      colorBy: { mode: "constant", color: "#2563eb" },
+    }, store);
+
+    expect(second.structureKey).toBe(first.structureKey);
+    expect(second.variables.constantColor).toBe("#2563eb");
+    expect(() => convertStyleToShaders(second.rules, second.variables)).not.toThrow();
   });
 });
 

@@ -8,6 +8,7 @@ import type VectorTileSource from "ol/source/VectorTile.js";
 
 import {
   annotationLayerMinZoom,
+  presentationAllowsPicking,
   type LayerPresentation,
 } from "../../domain/style-spec";
 import type { StoreManifest } from "../../api/types";
@@ -41,6 +42,7 @@ export class WebGlMvtRenderer implements AnnotationLayerHandle {
   private readonly managed: ManagedVectorTileSource;
   private readonly requests;
   private readonly store: StoreManifest;
+  private presentation: LayerPresentation;
   private structureKey: string;
   private resolutionKey: EventsKey | undefined;
 
@@ -49,6 +51,7 @@ export class WebGlMvtRenderer implements AnnotationLayerHandle {
     this.managed = managed;
     this.requests = managed.requests;
     this.store = context.store;
+    this.presentation = context.presentation;
     const compiled = compileWebGlStyle(context.presentation, context.store);
     this.structureKey = compiled.structureKey;
     this.layer = new WebGLVectorTileLayer<
@@ -83,7 +86,12 @@ export class WebGlMvtRenderer implements AnnotationLayerHandle {
     map.removeLayer(this.layer);
   }
 
+  setOrder(order: number): void {
+    this.layer.setZIndex(order);
+  }
+
   setPresentation(presentation: LayerPresentation): void {
+    this.presentation = presentation;
     this.layer.setVisible(presentation.visible);
     this.layer.setOpacity(presentation.opacity);
     this.layer.setMinZoom(annotationLayerMinZoom(this.store, presentation));
@@ -100,10 +108,12 @@ export class WebGlMvtRenderer implements AnnotationLayerHandle {
     slideCoordinate?: readonly [number, number],
     resolution?: number,
   ): Promise<PickResult | null> {
+    if (!presentationAllowsPicking(this.presentation)) return null;
     return pickFeatureOnServer(
       this.store,
       slideCoordinate,
       resolution,
+      this.presentation,
       this.requests,
     );
   }

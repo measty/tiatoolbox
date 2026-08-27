@@ -153,6 +153,48 @@ def test_query_records_returns_thin_streamed_records(tmp_path: Path) -> None:
     store.close()
 
 
+def test_query_records_projects_selected_json_values_without_loading_document(
+    tmp_path: Path,
+) -> None:
+    """Selected properties preserve JSON types through narrow SQL projection."""
+    path = tmp_path / "projected-properties.db"
+    writer = SQLiteStore(path)
+    expected = {
+        "integer": 4,
+        "real": 2.5,
+        "text": "[not JSON]",
+        "boolean": True,
+        "null": None,
+        "array": [1, {"nested": False}],
+        "object": {"value": "x"},
+        'quoted"name': "quoted",
+    }
+    writer.append(Annotation(Point(4, 4), {**expected, "unused": "x" * 8192}))
+    writer.close()
+    store = SQLiteStore(path, read_only=True)
+    statements: list[str] = []
+    store.con.set_trace_callback(statements.append)
+
+    records = list(
+        store.query_records(
+            (0, 0, 8, 8),
+            (*expected, "missing"),
+            include_geometry=False,
+        ),
+    )
+
+    assert len(records) == 1
+    assert records[0].properties == expected
+    record_query = next(
+        statement for statement in statements if "FROM rtree" in statement
+    )
+    select_list = record_query.split("FROM rtree", maxsplit=1)[0]
+    assert "json_type(annotations.properties" in select_list
+    assert "json_extract(annotations.properties" in select_list
+    assert ", annotations.properties" not in select_list
+    store.close()
+
+
 def test_records_by_ids_is_thin_filtered_and_parameterized(tmp_path: Path) -> None:
     """Known numeric IDs fetch only requested records without an RTree scan."""
     path = tmp_path / "annotations.db"

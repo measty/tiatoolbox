@@ -17,6 +17,8 @@ from shapely.geometry import Point
 from tiatoolbox.visualization.annotation_tiles.mvt import TileFeature
 
 if TYPE_CHECKING:  # pragma: no cover
+    from collections.abc import Iterable, Iterator
+
     from tiatoolbox.annotation.storage import SQLiteStore
     from tiatoolbox.visualization.annotation_tiles.grid import TileMatrix
 
@@ -24,7 +26,12 @@ _CATEGORY_LIMIT = 64
 _NUMERIC_SAMPLE_LIMIT = 16384
 _LOD_MANIFEST_VERSION = 3
 _DEFAULT_OVERVIEW_ZOOM_OFFSET = 6
+_CANCELLATION_CHECK_INTERVAL = 2_048
 _MACRO_ID_BATCH_SIZE = 2_048
+
+
+class LODBuildCancelled(RuntimeError):  # noqa: N818 - public lifecycle contract
+    """Raised when an in-progress LOD build is cooperatively cancelled."""
 
 
 @dataclass(slots=True)
@@ -167,69 +174,90 @@ class LODIndex:
             and self._compatible_manifest(row[1]) is not None
         )
 
-    def build(self, store: SQLiteStore) -> None:
+    def build(
+        self,
+        store: SQLiteStore,
+        cancel_event: threading.Event | None = None,
+    ) -> None:
         """Build metadata and overview aggregates in one source-table pass."""
         if self.ready:
             return
+        _raise_if_cancelled(cancel_event)
         started_ns = time.time_ns()
         density: Counter[tuple[int, int, int, str]] = Counter()
         properties: dict[str, _PropertyAccumulator] = defaultdict(_PropertyAccumulator)
+        geometry_types: Counter[str] = Counter()
+        candidate_areas: dict[int, float] = {}
 
         has_area = "area" in store.table_columns
-        area_column = "area" if has_area else "NULL"
-        source_rows = store.con.execute(
-            "SELECT id, cx, cy, properties, objtype, "
-            + area_column
-            + " FROM annotations",
+        source_query = (
+            """SELECT annotations.id, annotations.cx, annotations.cy,
+                      annotations.properties, annotations.objtype,
+                      annotations.area FROM annotations"""
+            if has_area
+            else """SELECT annotations.id, annotations.cx, annotations.cy,
+                           annotations.properties, annotations.objtype,
+                           NULL FROM annotations"""
         )
-        candidate_areas: dict[int, float] = {}
+        source_rows = store.con.execute(source_query)
         candidate_threshold = (
             self._promotion_source_area(self.promotion_max_zoom)
             if has_area and self.promotion_max_zoom >= 0
             else math.inf
         )
         feature_count = 0
-        for annotation_id, cx, cy, properties_json, object_type, area in source_rows:
-            feature_count += 1
-            annotation_properties = json.loads(properties_json or "{}")
-            for name, value in annotation_properties.items():
-                properties[name].add(value)
-            category = json.dumps(
-                annotation_properties.get(self.category_property),
-                sort_keys=True,
-                separators=(",", ":"),
-            )
-            promotable = (
-                object_type in {"Polygon", "MultiPolygon"}
-                and area is not None
-                and float(area) >= candidate_threshold
-            )
-            if promotable:
-                candidate_areas[int(annotation_id)] = float(area)
-            for z in range(self.overview_max_zoom + 1):
-                if promotable and float(area) >= self._promotion_source_area(z):
-                    continue
-                span = self._cell_span(z)
-                density[
-                    (z, math.floor(cx / span), math.floor(cy / span), category)
-                ] += 1
-
-        macro_rows = self._macro_rows(store, candidate_areas)
-
+        try:
+            for row_index, (
+                annotation_id,
+                cx,
+                cy,
+                properties_json,
+                object_type,
+                area,
+            ) in enumerate(source_rows):
+                if row_index % _CANCELLATION_CHECK_INTERVAL == 0:
+                    _raise_if_cancelled(cancel_event)
+                feature_count += 1
+                geometry_types[str(object_type)] += 1
+                annotation_properties = json.loads(properties_json or "{}")
+                for name, value in annotation_properties.items():
+                    properties[name].add(value)
+                category = json.dumps(
+                    annotation_properties.get(self.category_property),
+                    sort_keys=True,
+                    separators=(",", ":"),
+                )
+                promotable = (
+                    object_type in {"Polygon", "MultiPolygon"}
+                    and area is not None
+                    and float(area) >= candidate_threshold
+                )
+                if promotable:
+                    candidate_areas[int(annotation_id)] = float(area)
+                for z in range(self.overview_max_zoom + 1):
+                    if promotable and float(area) >= self._promotion_source_area(z):
+                        continue
+                    span = self._cell_span(z)
+                    density[
+                        (z, math.floor(cx / span), math.floor(cy / span), category)
+                    ] += 1
+        finally:
+            source_rows.close()
+        _raise_if_cancelled(cancel_event)
+        # Keep the high-volume pass sequential over the compact annotations
+        # table. A per-row RTree join regresses cold builds on the representative
+        # 628k-cell store; these C-level aggregate/sparse lookups are much cheaper.
         bounds_row = store.con.execute(
             "SELECT MIN(min_x), MIN(min_y), MAX(max_x), MAX(max_y) FROM rtree",
         ).fetchone()
-        geometry_types = {
-            str(name): int(count)
-            for name, count in store.con.execute(
-                "SELECT objtype, COUNT(*) FROM annotations GROUP BY objtype",
-            )
-        }
+        macro_rows = self._macro_rows(store, candidate_areas, cancel_event)
+        _raise_if_cancelled(cancel_event)
+
         manifest = {
             "version": _LOD_MANIFEST_VERSION,
             "featureCount": feature_count,
             "bounds": [None if value is None else float(value) for value in bounds_row],
-            "geometryTypes": geometry_types,
+            "geometryTypes": dict(geometry_types),
             "properties": {
                 name: accumulator.as_dict() for name, accumulator in properties.items()
             },
@@ -247,6 +275,7 @@ class LODIndex:
         }
 
         with self._lock, self._con:
+            _raise_if_cancelled(cancel_event)
             self._con.execute(
                 """
                 INSERT OR REPLACE INTO build(revision, status, manifest)
@@ -267,9 +296,12 @@ class LODIndex:
                 INSERT INTO density(revision, z, cell_x, cell_y, category, count)
                 VALUES (?, ?, ?, ?, ?, ?)
                 """,
-                (
-                    (self.revision, z, cell_x, cell_y, category, count)
-                    for (z, cell_x, cell_y, category), count in density.items()
+                _cancellable_rows(
+                    (
+                        (self.revision, z, cell_x, cell_y, category, count)
+                        for (z, cell_x, cell_y, category), count in density.items()
+                    ),
+                    cancel_event,
                 ),
             )
             self._con.executemany(
@@ -278,8 +310,12 @@ class LODIndex:
                     revision, id, area, min_x, min_y, max_x, max_y
                 ) VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
-                ((self.revision, *row) for row in macro_rows),
+                _cancellable_rows(
+                    ((self.revision, *row) for row in macro_rows),
+                    cancel_event,
+                ),
             )
+            _raise_if_cancelled(cancel_event)
             self._con.execute(
                 "UPDATE build SET status = ?, manifest = ? WHERE revision = ?",
                 (
@@ -468,11 +504,13 @@ class LODIndex:
     def _macro_rows(
         store: SQLiteStore,
         candidate_areas: dict[int, float],
+        cancel_event: threading.Event | None,
     ) -> list[tuple[int, float, float, float, float, float]]:
-        """Fetch bounds only for the small set of promotion candidates."""
+        """Fetch RTree bounds only for sparse large-geometry candidates."""
         candidate_ids = list(candidate_areas)
         output: list[tuple[int, float, float, float, float, float]] = []
         for offset in range(0, len(candidate_ids), _MACRO_ID_BATCH_SIZE):
+            _raise_if_cancelled(cancel_event)
             batch = candidate_ids[offset : offset + _MACRO_ID_BATCH_SIZE]
             rows = store.con.execute(
                 """
@@ -484,17 +522,20 @@ class LODIndex:
                 """,
                 (json.dumps(batch, separators=(",", ":")),),
             )
-            output.extend(
-                (
-                    int(annotation_id),
-                    candidate_areas[int(annotation_id)],
-                    float(min_x),
-                    float(min_y),
-                    float(max_x),
-                    float(max_y),
+            try:
+                output.extend(
+                    (
+                        int(annotation_id),
+                        candidate_areas[int(annotation_id)],
+                        float(min_x),
+                        float(min_y),
+                        float(max_x),
+                        float(max_y),
+                    )
+                    for annotation_id, min_x, min_y, max_x, max_y in rows
                 )
-                for annotation_id, min_x, min_y, max_x, max_y in rows
-            )
+            finally:
+                rows.close()
         output.sort(key=lambda row: row[0])
         return output
 
@@ -578,3 +619,20 @@ def _histogram(
 
 def _category_key(value: Any) -> str:  # noqa: ANN401
     return json.dumps(value, sort_keys=True, separators=(",", ":"))
+
+
+def _raise_if_cancelled(cancel_event: threading.Event | None) -> None:
+    if cancel_event is not None and cancel_event.is_set():
+        msg = "LOD build cancelled."
+        raise LODBuildCancelled(msg)
+
+
+def _cancellable_rows(
+    rows: Iterable[tuple[Any, ...]],
+    cancel_event: threading.Event | None,
+) -> Iterator[tuple[Any, ...]]:
+    """Yield publication rows while retaining transaction rollback semantics."""
+    for row_index, row in enumerate(rows):
+        if row_index % _CANCELLATION_CHECK_INTERVAL == 0:
+            _raise_if_cancelled(cancel_event)
+        yield row

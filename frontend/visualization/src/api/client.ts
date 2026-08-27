@@ -53,21 +53,33 @@ export class ApiClient {
     );
   }
 
-  async addOverlay(resourceId: string): Promise<AddedOverlay> {
+  async addOverlay(
+    resourceId: string,
+    slideGeneration?: number,
+  ): Promise<AddedOverlay> {
     return normaliseAddedOverlay(
       await this.json("/api/v1/session/overlays", {
         scope: `add-overlay:${resourceId}`,
         method: "POST",
-        body: { resourceId },
+        body: {
+          resourceId,
+          ...(slideGeneration === undefined ? {} : { slideGeneration }),
+        },
       }),
     );
   }
 
-  async removeOverlay(layerId: string): Promise<void> {
-    await this.json(`/api/v1/session/overlays/${encodeURIComponent(layerId)}`, {
-      scope: `remove-overlay:${layerId}`,
-      method: "DELETE",
-    });
+  async removeOverlay(layerId: string, slideGeneration?: number): Promise<void> {
+    const generationQuery = slideGeneration === undefined
+      ? ""
+      : `?slideGeneration=${encodeURIComponent(String(slideGeneration))}`;
+    await this.json(
+      `/api/v1/session/overlays/${encodeURIComponent(layerId)}${generationQuery}`,
+      {
+        scope: `remove-overlay:${layerId}`,
+        method: "DELETE",
+      },
+    );
   }
 
   async store(id: string): Promise<StoreManifest> {
@@ -92,6 +104,12 @@ export class ApiClient {
   abort(scope: string): void {
     this.controllers.get(scope)?.abort();
     this.controllers.delete(scope);
+  }
+
+  abortPrefix(prefix: string): void {
+    for (const scope of [...this.controllers.keys()]) {
+      if (scope.startsWith(prefix)) this.abort(scope);
+    }
   }
 
   dispose(): void {

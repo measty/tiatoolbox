@@ -40,6 +40,22 @@ describe("ApiClient", () => {
     await expect(request).rejects.toSatisfy(isAbortError);
   });
 
+  it("aborts all in-flight requests under a scope prefix", async () => {
+    const fetchImplementation = ((_url: string, init?: RequestInit) =>
+      new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => {
+          reject(new DOMException("Aborted", "AbortError"));
+        });
+      })) as typeof fetch;
+    const api = new ApiClient(fetchImplementation);
+    const requests = [api.addOverlay("overlay-a"), api.addOverlay("overlay-b")];
+    const combined = Promise.all(requests);
+
+    api.abortPrefix("add-overlay:");
+
+    await expect(combined).rejects.toSatisfy(isAbortError);
+  });
+
   it("escapes values inserted into server URL templates", () => {
     expect(expandUrlTemplate("/features/{featureId}", { featureId: "a/b" })).toBe(
       "/features/a%2Fb",
@@ -85,5 +101,36 @@ describe("ApiClient", () => {
       new Response(null, { status: 204 })) as typeof fetch;
     const api = new ApiClient(fetchImplementation);
     await expect(api.removeOverlay("loaded/store")).resolves.toBeUndefined();
+  });
+
+  it("sends the selected slide generation with overlay mutations", async () => {
+    const requests: Array<{ url: string; init?: RequestInit }> = [];
+    const fetchImplementation = (async (url: string, init?: RequestInit) => {
+      requests.push({ url, init });
+      if (init?.method === "DELETE") return new Response(null, { status: 204 });
+      return new Response(
+        JSON.stringify({
+          kind: "raster",
+          layer: {
+            id: "overlay-a",
+            width: 1024,
+            height: 512,
+            tileUrl: "/overlay/{z}/{x}/{y}.png",
+          },
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    }) as typeof fetch;
+    const api = new ApiClient(fetchImplementation);
+
+    await api.addOverlay("overlay/a", 12);
+    await api.removeOverlay("loaded/store", 12);
+
+    expect(requests[0]?.init?.body).toBe(
+      JSON.stringify({ resourceId: "overlay/a", slideGeneration: 12 }),
+    );
+    expect(requests[1]?.url).toBe(
+      "/api/v1/session/overlays/loaded%2Fstore?slideGeneration=12",
+    );
   });
 });

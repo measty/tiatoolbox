@@ -33,6 +33,7 @@ export interface AnnotationLayerHandle {
   readonly capabilities: RendererCapabilities;
   attach(map: Map): void;
   detach(map: Map): void;
+  setOrder(order: number): void;
   setPresentation(presentation: LayerPresentation): void;
   pick(
     pixel: Pixel,

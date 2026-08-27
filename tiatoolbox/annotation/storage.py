@@ -492,6 +492,7 @@ PROPERTY_FILTER_MAX_NODES = 64
 PROPERTY_FILTER_MAX_IN_VALUES = 64
 _PROPERTY_FILTER_MAX_ARGS = 16
 _PROPERTY_FILTER_MAX_STRING_LENGTH = 1024
+_THIN_RECORD_PROPERTY_PROJECTION_LIMIT = 16
 _PROPERTY_FILTER_NAME_PATTERN = re.compile(r'^[^\x00-\x1f"\\]{1,128}$')
 _PROPERTY_FILTER_COMPARISONS = frozenset(
     {"eq", "ne", "lt", "lte", "gt", "gte", "in"},
@@ -701,11 +702,8 @@ def _compile_property_filter_sql(
         parameters[name] = value
         return f":{name}"
 
-    def json_path(property_name: str) -> str:
-        return f'$."{property_name}"'
-
     def equality(property_name: str, value: object) -> str:
-        path = json_path(property_name)
+        path = _json_property_path(property_name)
         if value is None:
             return f"json_type(annotations.properties, {bind(path)}) = 'null'"
         if isinstance(value, bool):
@@ -747,13 +745,13 @@ def _compile_property_filter_sql(
         if op == "eq":
             return equality(property_name, value)
         if op == "ne":
-            exists = bind(json_path(property_name))
+            exists = bind(_json_property_path(property_name))
             return (
                 f"(json_type(annotations.properties, {exists}) IS NOT NULL AND "
                 f"NOT ({equality(property_name, value)}))"
             )
 
-        path = json_path(property_name)
+        path = _json_property_path(property_name)
         type_parameter = bind(path)
         extract_parameter = bind(path)
         value_parameter = bind(value)
@@ -770,6 +768,33 @@ def _compile_property_filter_sql(
         )
 
     return visit(property_filter)
+
+
+def _json_property_path(property_name: str) -> str:
+    """Return a quoted JSON path for one top-level property name."""
+    return "$." + json.dumps(property_name, ensure_ascii=False)
+
+
+def _projected_property_columns(
+    property_names: tuple[str, ...],
+    parameters: dict[str, object],
+) -> list[str]:
+    """Return narrow JSON scalar columns for selected annotation properties."""
+    if not property_names:
+        return []
+    if len(property_names) > _THIN_RECORD_PROPERTY_PROJECTION_LIMIT:
+        return ["annotations.properties"]
+    columns: list[str] = []
+    for index, property_name in enumerate(property_names):
+        parameter = f"selected_property_{index}"
+        parameters[parameter] = _json_property_path(property_name)
+        columns.extend(
+            (
+                f"json_type(annotations.properties, :{parameter})",
+                f"json_extract(annotations.properties, :{parameter})",
+            ),
+        )
+    return columns
 
 
 class AnnotationStore(ABC, MutableMapping[str, Annotation]):
@@ -3585,6 +3610,12 @@ class SQLiteStore(AnnotationStore):
             raise ValueError(msg)
 
         min_x, min_y, max_x, max_y = self._query_record_bounds(geometry)
+        parameters: dict[str, object] = {
+            "min_x": min_x,
+            "min_y": min_y,
+            "max_x": max_x,
+            "max_y": max_y,
+        }
 
         has_area = "area" in self.table_columns
         if min_area is not None and not has_area:
@@ -3608,8 +3639,7 @@ class SQLiteStore(AnnotationStore):
         ]
         if include_geometry:
             columns.append("annotations.geometry")
-        if property_names:
-            columns.append("annotations.properties")
+        columns.extend(_projected_property_columns(property_names, parameters))
 
         query = (
             "SELECT "  # noqa: S608 - all column names are fixed above
@@ -3623,12 +3653,6 @@ class SQLiteStore(AnnotationStore):
                   AND rtree.min_y <= :max_y
             """
         )
-        parameters: dict[str, object] = {
-            "min_x": min_x,
-            "min_y": min_y,
-            "max_x": max_x,
-            "max_y": max_y,
-        }
         if min_area is not None:
             query += " AND annotations.area > :min_area"
             parameters["min_area"] = min_area
@@ -3699,6 +3723,9 @@ class SQLiteStore(AnnotationStore):
 
         normalized_filter = normalize_property_filter(property_filter)
         has_area = "area" in self.table_columns
+        parameters: dict[str, object] = {
+            "record_ids": json.dumps(ids, separators=(",", ":")),
+        }
         columns = [
             "annotations.id",
             "annotations.[key]",
@@ -3713,8 +3740,7 @@ class SQLiteStore(AnnotationStore):
         ]
         if include_geometry:
             columns.append("annotations.geometry")
-        if property_names:
-            columns.append("annotations.properties")
+        columns.extend(_projected_property_columns(property_names, parameters))
 
         query = (
             "SELECT "  # noqa: S608 - all column names are fixed above
@@ -3727,9 +3753,6 @@ class SQLiteStore(AnnotationStore):
                 )
             """
         )
-        parameters: dict[str, object] = {
-            "record_ids": json.dumps(ids, separators=(",", ":")),
-        }
         if normalized_filter is not None:
             query += " AND " + _compile_property_filter_sql(
                 normalized_filter,
@@ -3792,10 +3815,25 @@ class SQLiteStore(AnnotationStore):
             *optional,
         ) = row
         serialised_geometry = optional.pop(0) if include_geometry else None
-        serialised_properties = optional.pop(0) if property_names else None
         properties = {}
-        if serialised_properties is not None:
-            all_properties = json.loads(serialised_properties)
+        if len(property_names) <= _THIN_RECORD_PROPERTY_PROJECTION_LIMIT:
+            for name in property_names:
+                value_type = optional.pop(0)
+                value = optional.pop(0)
+                if value_type is None:
+                    continue
+                if value_type == "null":
+                    properties[name] = None
+                elif value_type == "true":
+                    properties[name] = True
+                elif value_type == "false":
+                    properties[name] = False
+                elif value_type in {"array", "object"}:
+                    properties[name] = json.loads(value)
+                else:
+                    properties[name] = value
+        elif property_names:
+            all_properties = json.loads(optional.pop(0))
             properties = {
                 name: all_properties[name]
                 for name in property_names

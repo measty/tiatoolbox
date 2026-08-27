@@ -6,12 +6,17 @@ import gzip
 from itertools import pairwise
 from typing import TYPE_CHECKING
 
+import pytest
 from shapely.geometry import Point, Polygon
 
 from tests.visualization._mvt_decode import decode_mvt
 from tiatoolbox.annotation import Annotation, SQLiteStore
 from tiatoolbox.visualization.annotation_tiles.grid import TileMatrix
-from tiatoolbox.visualization.annotation_tiles.mvt import TileFeature, encode_mvt
+from tiatoolbox.visualization.annotation_tiles.mvt import (
+    PointTileFeature,
+    TileFeature,
+    encode_mvt,
+)
 from tiatoolbox.visualization.annotation_tiles.source import AnnotationTileSource
 
 if TYPE_CHECKING:
@@ -51,6 +56,39 @@ def test_independent_mvt_decode_preserves_y_orientation_and_holes() -> None:
     decoded_polygon = Polygon(exterior, [hole])
     assert decoded_polygon.contains(Point(512, 512))
     assert not decoded_polygon.contains(Point(1536, 1400))
+
+
+def test_scalar_point_encoding_matches_generic_points_without_shapely(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The centroid hot path clips and encodes coordinate columns directly."""
+    import tiatoolbox.visualization.annotation_tiles.mvt as mvt_module  # noqa: PLC0415
+
+    expected = encode_mvt(
+        "annotations",
+        [
+            TileFeature(7, Point(32, 48), {"type": 2}),
+            TileFeature(8, Point(-4, 16), {"type": 1}),
+        ],
+        tile_bounds=(0, 0, 256, 256),
+    )
+
+    def fail_shapely(*_args, **_kwargs):  # noqa: ANN002, ANN003, ANN202
+        pytest.fail("scalar point path invoked Shapely", pytrace=False)
+
+    monkeypatch.setattr(mvt_module.shapely, "from_wkb", fail_shapely)
+    monkeypatch.setattr(mvt_module.shapely, "bounds", fail_shapely)
+    encoded = encode_mvt(
+        "annotations",
+        [
+            PointTileFeature(7, 32, 48, {"type": 2}),
+            PointTileFeature(8, -4, 16, {"type": 1}),
+        ],
+        tile_bounds=(0, 0, 256, 256),
+    )
+
+    assert encoded.data == expected.data
+    assert encoded.output_features == encoded.output_vertices == 2
 
 
 def test_source_buffer_repeats_shared_edge_geometry(tmp_path: Path) -> None:

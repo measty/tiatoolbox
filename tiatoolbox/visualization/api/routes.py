@@ -80,6 +80,25 @@ def create_viewer_blueprint(  # noqa: C901, PLR0915
             max_in_values=PROPERTY_FILTER_MAX_IN_VALUES,
         )
 
+    def parse_slide_generation(value: object | None) -> int | None:
+        """Parse an optional optimistic-concurrency token from JSON or query text."""
+        if value is None:
+            return None
+        if isinstance(value, bool):
+            msg = "slideGeneration must be a non-negative integer."
+            raise ValueError(msg)  # noqa: TRY004
+        if isinstance(value, int):
+            generation = value
+        elif isinstance(value, str) and value.isdecimal():
+            generation = int(value)
+        else:
+            msg = "slideGeneration must be a non-negative integer."
+            raise ValueError(msg)
+        if generation < 0:
+            msg = "slideGeneration must be a non-negative integer."
+            raise ValueError(msg)
+        return generation
+
     @blueprint.get("/viewer")
     def viewer_redirect() -> Response:
         return redirect("/viewer/", code=308)
@@ -146,12 +165,29 @@ def create_viewer_blueprint(  # noqa: C901, PLR0915
                 {"error": "resourceId must be a string."},
                 status=400,
             )
-        return json_response(services.add_overlay(current, resource_id), status=201)
+        return json_response(
+            services.add_overlay(
+                current,
+                resource_id,
+                slide_generation=parse_slide_generation(body.get("slideGeneration")),
+            ),
+            status=201,
+        )
 
     @blueprint.delete("/api/v1/session/overlays/<layer_id>")
     def remove_overlay(layer_id: str) -> Response:
         current, _ = session()
-        services.remove_overlay(current, layer_id)
+        generations = request.args.getlist("slideGeneration")
+        if len(generations) > 1:
+            msg = "slideGeneration may be supplied only once."
+            raise ValueError(msg)
+        services.remove_overlay(
+            current,
+            layer_id,
+            slide_generation=parse_slide_generation(
+                generations[0] if generations else None,
+            ),
+        )
         return Response(status=204)
 
     @blueprint.get("/api/v1/slides/<resource_id>")
@@ -161,19 +197,19 @@ def create_viewer_blueprint(  # noqa: C901, PLR0915
     @blueprint.get("/api/v1/stores/<store_id>")
     def current_store(store_id: str) -> Response:
         current, _ = session()
-        source = services.get_source(current, store_id)
-        return json_response(services.store_manifest(source.store_id))
+        with services.source_lease(current, store_id) as source:
+            return json_response(services.store_manifest(source.store_id))
 
     @blueprint.get("/api/v1/stores/<store_id>/revisions/<revision>")
     def immutable_store(store_id: str, revision: str) -> Response:
         current, _ = session()
-        source = services.get_source(current, store_id)
-        if source.revision != revision:
-            return json_response({"error": "Unknown store revision."}, status=404)
-        # Geometry is revisioned from the outset, but the derived schema/LOD
-        # document changes once while its background sidecar is published.
-        cache = _IMMUTABLE_CACHE if source.lod.ready else _NO_CACHE
-        return json_response(services.store_manifest(store_id), cache=cache)
+        with services.source_lease(current, store_id) as source:
+            if source.revision != revision:
+                return json_response({"error": "Unknown store revision."}, status=404)
+            # Geometry is revisioned from the outset, but the derived schema/LOD
+            # document changes once while its background sidecar is published.
+            cache = _IMMUTABLE_CACHE if source.lod.ready else _NO_CACHE
+            return json_response(services.store_manifest(store_id), cache=cache)
 
     @blueprint.get(
         "/api/v1/stores/<store_id>/revisions/<revision>/tiles/"
@@ -188,25 +224,28 @@ def create_viewer_blueprint(  # noqa: C901, PLR0915
         y: int,
     ) -> Response:
         current, _ = session()
-        source = services.get_source(current, store_id)
-        if source.revision != revision:
-            return json_response({"error": "Unknown store revision."}, status=404)
-        if representation not in {"auto", "aggregate", "centroid", "polygon"}:
-            return json_response({"error": "Unknown tile representation."}, status=404)
-        fields = tuple(
-            field.strip()
-            for field in request.args.get("fields", "").split(",")
-            if field.strip()
-        )
-        payload = source.vector_tile(
-            cast("Representation", representation),
-            z,
-            x,
-            y,
-            fields=fields,
-            property_filter=request_property_filter(),
-        )
-        return tile_response(payload)
+        with services.source_lease(current, store_id) as source:
+            if source.revision != revision:
+                return json_response({"error": "Unknown store revision."}, status=404)
+            if representation not in {"auto", "aggregate", "centroid", "polygon"}:
+                return json_response(
+                    {"error": "Unknown tile representation."},
+                    status=404,
+                )
+            fields = tuple(
+                field.strip()
+                for field in request.args.get("fields", "").split(",")
+                if field.strip()
+            )
+            payload = source.vector_tile(
+                cast("Representation", representation),
+                z,
+                x,
+                y,
+                fields=fields,
+                property_filter=request_property_filter(),
+            )
+            return tile_response(payload)
 
     @blueprint.get(
         "/api/v1/stores/<store_id>/revisions/<revision>/tiles/"
@@ -220,38 +259,43 @@ def create_viewer_blueprint(  # noqa: C901, PLR0915
         y: int,
     ) -> Response:
         current, _ = session()
-        source = services.get_source(current, store_id)
-        if source.revision != revision:
-            return json_response({"error": "Unknown store revision."}, status=404)
-        payload = source.label_tile(
-            z,
-            x,
-            y,
-            category_property=request.args.get("property"),
-        )
-        return tile_response(payload)
+        with services.source_lease(current, store_id) as source:
+            if source.revision != revision:
+                return json_response({"error": "Unknown store revision."}, status=404)
+            payload = source.label_tile(
+                z,
+                x,
+                y,
+                category_property=request.args.get("property"),
+            )
+            return tile_response(payload)
 
     @blueprint.get(
         "/api/v1/stores/<store_id>/revisions/<revision>/features/pick",
     )
     def pick_feature(store_id: str, revision: str) -> Response:
         current, _ = session()
-        source = services.get_source(current, store_id)
-        if source.revision != revision:
-            return json_response({"error": "Unknown store revision."}, status=404)
-        try:
-            x = float(request.args["x"])
-            y = float(request.args["y"])
-            tolerance = float(request.args.get("tolerance", "0"))
-        except (KeyError, TypeError, ValueError):
-            return json_response(
-                {"error": "x, y, and tolerance must be finite numbers."},
-                status=400,
+        with services.source_lease(current, store_id) as source:
+            if source.revision != revision:
+                return json_response({"error": "Unknown store revision."}, status=404)
+            try:
+                x = float(request.args["x"])
+                y = float(request.args["y"])
+                tolerance = float(request.args.get("tolerance", "0"))
+            except (KeyError, TypeError, ValueError):
+                return json_response(
+                    {"error": "x, y, and tolerance must be finite numbers."},
+                    status=400,
+                )
+            feature_id = source.pick(
+                x,
+                y,
+                tolerance,
+                property_filter=request_property_filter(),
             )
-        feature_id = source.pick(x, y, tolerance)
-        if feature_id is None:
-            return Response(status=204)
-        return json_response({"featureId": feature_id}, cache="no-store")
+            if feature_id is None:
+                return Response(status=204)
+            return json_response({"featureId": feature_id}, cache="no-store")
 
     @blueprint.get(
         "/api/v1/stores/<store_id>/revisions/<revision>/features/<int:feature_id>",
@@ -262,13 +306,13 @@ def create_viewer_blueprint(  # noqa: C901, PLR0915
         feature_id: int,
     ) -> Response:
         current, _ = session()
-        source = services.get_source(current, store_id)
-        if source.revision != revision:
-            return json_response({"error": "Unknown store revision."}, status=404)
-        document = source.feature(feature_id)
-        if document is None:
-            return json_response({"error": "Unknown feature."}, status=404)
-        return json_response(document, cache=_IMMUTABLE_CACHE)
+        with services.source_lease(current, store_id) as source:
+            if source.revision != revision:
+                return json_response({"error": "Unknown store revision."}, status=404)
+            document = source.feature(feature_id)
+            if document is None:
+                return json_response({"error": "Unknown feature."}, status=404)
+            return json_response(document, cache=_IMMUTABLE_CACHE)
 
     @blueprint.errorhandler(KeyError)
     def handle_key_error(_error: KeyError) -> Response:

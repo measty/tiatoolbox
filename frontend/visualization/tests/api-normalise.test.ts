@@ -48,6 +48,7 @@ describe("API manifest normalisation", () => {
     const slide = normaliseSlide({
       id: "slide-a",
       name: "Slide A",
+      slide_generation: 7,
       dimensions: [106_496, 85_248],
       mpp: [0.227, 0.228],
       tileMatrix: {
@@ -65,6 +66,7 @@ describe("API manifest normalisation", () => {
     expect(slide.width).toBe(106_496);
     expect(slide.height).toBe(85_248);
     expect(slide.maxZoom).toBe(9);
+    expect(slide.slideGeneration).toBe(7);
     expect(slide.resolutions.at(-1)).toBe(1);
     expect(slide.mapExtent).toEqual([0, -85_248, 106_496, 0]);
     expect(slide.associatedOverlays[0]?.id).toBe("cells");

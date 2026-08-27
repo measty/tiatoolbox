@@ -215,12 +215,22 @@ export function normaliseSlide(value: unknown): SlideManifest {
     "associatedOverlays",
     "associated_overlays",
   );
+  const slideGeneration = optionalFiniteNumber(
+    first(raw, "slideGeneration", "slide_generation"),
+  );
+  if (
+    slideGeneration !== undefined &&
+    (!Number.isSafeInteger(slideGeneration) || slideGeneration < 0)
+  ) {
+    throw new TypeError("slide.slide_generation must be a non-negative integer.");
+  }
   return {
     id,
     name: String(first(raw, "name", "label", "title") ?? id),
     ...(first(raw, "revision", "rev") === undefined
       ? {}
       : { revision: String(first(raw, "revision", "rev")) }),
+    ...(slideGeneration === undefined ? {} : { slideGeneration }),
     width,
     height,
     mpp: mpp(raw),

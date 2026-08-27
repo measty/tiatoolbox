@@ -111,12 +111,24 @@ class PersistentTileCache:
         path: str | Path,
         *,
         max_bytes: int = 2 * 1024 * 1024 * 1024,
+        touch_batch_size: int = 128,
     ) -> None:
         """Open or create a cache sidecar."""
+        if max_bytes <= 0:
+            msg = "Cache byte limit must be positive."
+            raise ValueError(msg)
+        if touch_batch_size <= 0:
+            msg = "Cache touch batch size must be positive."
+            raise ValueError(msg)
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.max_bytes = int(max_bytes)
+        self.touch_batch_size = int(touch_batch_size)
         self._lock = threading.RLock()
+        # Repeated hits coalesce by key. Recency is deliberately approximate:
+        # losing a few unflushed touches on process termination can only affect
+        # eviction order, never payload or byte-accounting correctness.
+        self._pending_touches: dict[str, int] = {}
         self._con = sqlite3.connect(self.path, check_same_thread=False)
         self._con.execute("PRAGMA journal_mode=WAL")
         self._con.execute("PRAGMA synchronous=NORMAL")
@@ -136,7 +148,49 @@ class PersistentTileCache:
             )
             """,
         )
+        self._con.execute(
+            """
+            CREATE INDEX IF NOT EXISTS tiles_accessed_ns
+                ON tiles(accessed_ns, cache_key)
+            """,
+        )
+        self._con.execute(
+            """
+            CREATE TABLE IF NOT EXISTS cache_metadata(
+                singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
+                logical_bytes INTEGER NOT NULL CHECK(logical_bytes >= 0)
+            )
+            """,
+        )
+        # Reconcile once when opening an existing/old-format sidecar. All normal
+        # writes maintain this total incrementally in the same transaction as
+        # their tile mutations.
+        self._con.execute(
+            """
+            INSERT INTO cache_metadata(singleton, logical_bytes)
+            VALUES (1, (SELECT COALESCE(SUM(byte_size), 0) FROM tiles))
+            ON CONFLICT(singleton) DO UPDATE SET
+                logical_bytes = excluded.logical_bytes
+            """,
+        )
+        row = self._con.execute(
+            "SELECT logical_bytes FROM cache_metadata WHERE singleton = 1",
+        ).fetchone()
+        total = self._evict(int(row[0]))
+        self._con.execute(
+            "UPDATE cache_metadata SET logical_bytes = ? WHERE singleton = 1",
+            (total,),
+        )
         self._con.commit()
+
+    @property
+    def size(self) -> int:
+        """Return the persisted logical payload size in bytes."""
+        with self._lock:
+            row = self._con.execute(
+                "SELECT logical_bytes FROM cache_metadata WHERE singleton = 1",
+            ).fetchone()
+        return int(row[0])
 
     def get(self, key: str) -> TilePayload | None:
         """Return a cached payload."""
@@ -152,11 +206,9 @@ class PersistentTileCache:
             ).fetchone()
             if row is None:
                 return None
-            self._con.execute(
-                "UPDATE tiles SET accessed_ns = ? WHERE cache_key = ?",
-                (time.time_ns(), key),
-            )
-            self._con.commit()
+            self._pending_touches[key] = time.time_ns()
+            if len(self._pending_touches) >= self.touch_batch_size:
+                self._flush_touches()
         return TilePayload(
             data=bytes(row[0]),
             content_type=row[1],
@@ -173,66 +225,124 @@ class PersistentTileCache:
         if payload.size > self.max_bytes:
             return
         with self._lock:
-            self._con.execute(
-                """
-                INSERT INTO tiles(
-                    cache_key, payload, content_type, content_encoding, etag,
-                    representation, feature_count, vertex_count, byte_size,
-                    accessed_ns
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(cache_key) DO UPDATE SET
-                    payload=excluded.payload,
-                    content_type=excluded.content_type,
-                    content_encoding=excluded.content_encoding,
-                    etag=excluded.etag,
-                    representation=excluded.representation,
-                    feature_count=excluded.feature_count,
-                    vertex_count=excluded.vertex_count,
-                    byte_size=excluded.byte_size,
-                    accessed_ns=excluded.accessed_ns
-                """,
-                (
-                    key,
-                    payload.data,
-                    payload.content_type,
-                    payload.content_encoding,
-                    payload.etag,
-                    payload.representation,
-                    payload.feature_count,
-                    payload.vertex_count,
-                    payload.size,
-                    time.time_ns(),
-                ),
-            )
-            self._evict()
-            self._con.commit()
+            touches = tuple(self._pending_touches.items())
+            try:
+                # A write lock makes the persisted byte counter authoritative
+                # even when multiple viewer processes share the sidecar.
+                self._con.execute("BEGIN IMMEDIATE")
+                self._apply_touches(touches)
+                previous = self._con.execute(
+                    "SELECT byte_size FROM tiles WHERE cache_key = ?",
+                    (key,),
+                ).fetchone()
+                row = self._con.execute(
+                    "SELECT logical_bytes FROM cache_metadata WHERE singleton = 1",
+                ).fetchone()
+                total = int(row[0]) + payload.size
+                if previous is not None:
+                    total -= int(previous[0])
+                self._con.execute(
+                    """
+                    INSERT INTO tiles(
+                        cache_key, payload, content_type, content_encoding, etag,
+                        representation, feature_count, vertex_count, byte_size,
+                        accessed_ns
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(cache_key) DO UPDATE SET
+                        payload=excluded.payload,
+                        content_type=excluded.content_type,
+                        content_encoding=excluded.content_encoding,
+                        etag=excluded.etag,
+                        representation=excluded.representation,
+                        feature_count=excluded.feature_count,
+                        vertex_count=excluded.vertex_count,
+                        byte_size=excluded.byte_size,
+                        accessed_ns=excluded.accessed_ns
+                    """,
+                    (
+                        key,
+                        payload.data,
+                        payload.content_type,
+                        payload.content_encoding,
+                        payload.etag,
+                        payload.representation,
+                        payload.feature_count,
+                        payload.vertex_count,
+                        payload.size,
+                        time.time_ns(),
+                    ),
+                )
+                total = self._evict(total)
+                self._con.execute(
+                    """
+                    UPDATE cache_metadata
+                       SET logical_bytes = ?
+                     WHERE singleton = 1
+                    """,
+                    (total,),
+                )
+                self._con.commit()
+            except BaseException:
+                self._con.rollback()
+                raise
+            else:
+                self._discard_applied_touches(touches)
 
     def close(self) -> None:
         """Close the sidecar connection."""
         with self._lock:
+            self._flush_touches()
             self._con.close()
 
-    def _evict(self) -> None:
-        row = self._con.execute(
-            "SELECT COALESCE(SUM(byte_size), 0) FROM tiles",
-        ).fetchone()
-        total = int(row[0])
+    def _flush_touches(self) -> None:
+        """Persist coalesced LRU touches in one small transaction."""
+        touches = tuple(self._pending_touches.items())
+        if not touches:
+            return
+        try:
+            self._apply_touches(touches)
+            self._con.commit()
+        except BaseException:
+            self._con.rollback()
+            raise
+        else:
+            self._discard_applied_touches(touches)
+
+    def _apply_touches(self, touches: tuple[tuple[str, int], ...]) -> None:
+        self._con.executemany(
+            "UPDATE tiles SET accessed_ns = ? WHERE cache_key = ?",
+            ((accessed_ns, key) for key, accessed_ns in touches),
+        )
+
+    def _discard_applied_touches(self, touches: tuple[tuple[str, int], ...]) -> None:
+        for key, accessed_ns in touches:
+            if self._pending_touches.get(key) == accessed_ns:
+                self._pending_touches.pop(key, None)
+
+    def _evict(self, total: int) -> int:
+        """Evict the indexed oldest entries and return the new logical size."""
         while total > self.max_bytes:
             victims = self._con.execute(
                 """
                 SELECT cache_key, byte_size
                   FROM tiles
-                 ORDER BY accessed_ns
+                 ORDER BY accessed_ns, cache_key
                  LIMIT 64
                 """,
             ).fetchall()
             if not victims:
                 break
+            selected: list[tuple[str, int]] = []
+            for victim_key, byte_size in victims:
+                selected.append((str(victim_key), int(byte_size)))
+                total -= int(byte_size)
+                if total <= self.max_bytes:
+                    break
             self._con.executemany(
                 "DELETE FROM tiles WHERE cache_key = ?",
-                ((victim[0],) for victim in victims),
+                ((victim[0],) for victim in selected),
             )
-            total -= sum(int(victim[1]) for victim in victims)
+        return total
 
 
 class SingleFlight:

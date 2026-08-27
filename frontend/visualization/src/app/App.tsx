@@ -105,10 +105,18 @@ export function App() {
   const [selectionError, setSelectionError] = useState<string | null>(null);
   const selectionGenerationRef = useRef(0);
   const slideGenerationRef = useRef(0);
+  const overlayMutationEpochRef = useRef(0);
   const configInputRef = useRef<HTMLInputElement>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [configNotice, setConfigNotice] = useState<string | null>(null);
+
+  const invalidateOverlayMutations = useCallback(() => {
+    overlayMutationEpochRef.current += 1;
+    api.abortPrefix("add-overlay:");
+    api.abortPrefix("remove-overlay:");
+    setPendingOverlayIds([]);
+  }, [api]);
 
   const storesRef = useRef<Record<string, StoreManifest>>({});
   storesRef.current = Object.fromEntries(
@@ -176,6 +184,7 @@ export function App() {
   useEffect(() => {
     if (!bootstrap || !slideId || slide?.id === slideId) return;
     const generation = ++slideGenerationRef.current;
+    invalidateOverlayMutations();
     setLoading(true);
     setError(null);
     clearSelectionState(api, selectionGenerationRef, {
@@ -205,7 +214,7 @@ export function App() {
       .finally(() => {
         if (generation === slideGenerationRef.current) setLoading(false);
       });
-  }, [api, bootstrap, slide?.id, slideId]);
+  }, [api, bootstrap, invalidateOverlayMutations, slide?.id, slideId]);
 
   useEffect(() => {
     linkController.setEnabled(linked);
@@ -414,6 +423,7 @@ export function App() {
   }, [api]);
 
   const applyConfiguration = async (config: ViewerConfigV1) => {
+    invalidateOverlayMutations();
     slideGenerationRef.current += 1;
     clearSelection();
     setPendingOverlayIds(config.overlayResourceIds);
@@ -422,7 +432,10 @@ export function App() {
     const failures: string[] = [];
     for (const resourceId of config.overlayResourceIds) {
       try {
-        const result = await api.addOverlay(resourceId);
+        const result = await api.addOverlay(
+          resourceId,
+          nextSlide.slideGeneration,
+        );
         nextLoaded[resourceId] =
           result.kind === "annotation"
             ? {
@@ -532,6 +545,12 @@ export function App() {
   };
 
   const toggleAvailableOverlay = async (resourceId: string) => {
+    const mutationEpoch = overlayMutationEpochRef.current;
+    const slideRequestEpoch = slideGenerationRef.current;
+    const expectedSlideGeneration = slide?.slideGeneration;
+    const isCurrentMutation = () =>
+      mutationEpoch === overlayMutationEpochRef.current &&
+      slideRequestEpoch === slideGenerationRef.current;
     const activeIds =
       activeLayerView === "primary" ? primaryOverlayIds : secondaryOverlayIds;
     const otherIds =
@@ -553,7 +572,8 @@ export function App() {
       if (!overlay) return;
       setPendingOverlayIds((current) => [...current, resourceId]);
       try {
-        await api.removeOverlay(overlay.layerId);
+        await api.removeOverlay(overlay.layerId, expectedSlideGeneration);
+        if (!isCurrentMutation()) return;
         setPrimaryOverlayIds((current) =>
           current.filter((id) => id !== resourceId),
         );
@@ -572,11 +592,15 @@ export function App() {
           setSecondaryRasterPresentations,
         });
       } catch (reason) {
-        if (!isAbortError(reason)) setError(errorMessage(reason));
+        if (!isAbortError(reason) && isCurrentMutation()) {
+          setError(errorMessage(reason));
+        }
       } finally {
-        setPendingOverlayIds((current) =>
-          current.filter((id) => id !== resourceId),
-        );
+        if (isCurrentMutation()) {
+          setPendingOverlayIds((current) =>
+            current.filter((id) => id !== resourceId),
+          );
+        }
       }
       return;
     }
@@ -601,7 +625,8 @@ export function App() {
     setPendingOverlayIds((current) => [...current, resourceId]);
     setError(null);
     try {
-      const result = await api.addOverlay(resourceId);
+      const result = await api.addOverlay(resourceId, expectedSlideGeneration);
+      if (!isCurrentMutation()) return;
       const overlay: SessionOverlay =
         result.kind === "annotation"
           ? {
@@ -632,11 +657,15 @@ export function App() {
         },
       );
     } catch (reason) {
-      if (!isAbortError(reason)) setError(errorMessage(reason));
+      if (!isAbortError(reason) && isCurrentMutation()) {
+        setError(errorMessage(reason));
+      }
     } finally {
-      setPendingOverlayIds((current) =>
-        current.filter((id) => id !== resourceId),
-      );
+      if (isCurrentMutation()) {
+        setPendingOverlayIds((current) =>
+          current.filter((id) => id !== resourceId),
+        );
+      }
     }
   };
 

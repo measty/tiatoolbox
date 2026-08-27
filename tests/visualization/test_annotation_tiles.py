@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import gzip
 import json
+import sqlite3
 import struct
 import threading
 from concurrent.futures import Future, ThreadPoolExecutor
@@ -17,6 +18,7 @@ from tests.visualization._mvt_decode import decode_mvt
 from tiatoolbox.annotation import Annotation, SQLiteStore
 from tiatoolbox.visualization.annotation_tiles.cache import (
     ByteLRUCache,
+    PersistentTileCache,
     SingleFlight,
     TilePayload,
 )
@@ -162,6 +164,50 @@ def test_default_auto_lod_is_uniform_for_each_zoom(
         polygon = source.vector_tile("auto", 7, 0, 0)
         assert polygon.representation == "polygon"
     finally:
+        source.close()
+
+
+def test_provisional_manifest_avoids_duplicate_whole_store_scans(
+    synthetic_store: SQLiteStore,
+    tmp_path: Path,
+) -> None:
+    """Metadata is provisional until the single sequential LOD pass publishes it."""
+    source = AnnotationTileSource(
+        synthetic_store,
+        TileMatrix(1024, 768),
+        store_id="provisional-manifest",
+        revision="revision",
+        name="synthetic",
+        cache_dir=tmp_path / "provisional-manifest-cache",
+    )
+    statements: list[str] = []
+    synthetic_store.con.set_trace_callback(statements.append)
+    try:
+        provisional = source.manifest()
+        assert provisional["featureCount"] is None
+        assert provisional["bounds"] == [None, None, None, None]
+        assert provisional["geometryTypes"] == {}
+        assert provisional["properties"] == {}
+        assert not any("FROM annotations" in statement for statement in statements)
+        assert not any("FROM rtree" in statement for statement in statements)
+
+        statements.clear()
+        source.ensure_lod()
+        annotation_scans = [
+            statement
+            for statement in statements
+            if statement.lstrip().upper().startswith("SELECT")
+            and "FROM annotations" in statement
+        ]
+        assert len(annotation_scans) == 1
+        assert "GROUP BY" not in annotation_scans[0]
+        ready = source.manifest()
+        assert ready["featureCount"] == 16
+        assert ready["bounds"] == pytest.approx([16, 16, 184, 184])
+        assert ready["geometryTypes"] == {"Polygon": 16}
+        assert set(ready["properties"]) == {"prob", "type"}
+    finally:
+        synthetic_store.con.set_trace_callback(None)
         source.close()
 
 
@@ -509,6 +555,59 @@ def test_byte_cache_and_single_flight_are_bounded() -> None:
     assert calls == 1
 
 
+def test_persistent_cache_batches_touches_and_tracks_incremental_bytes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Persistent hits avoid per-hit commits while eviction stays byte-bounded."""
+    timestamps = iter(range(1, 20))
+    monkeypatch.setattr(
+        "tiatoolbox.visualization.annotation_tiles.cache.time.time_ns",
+        lambda: next(timestamps),
+    )
+    path = tmp_path / "tiles.sqlite"
+    cache = PersistentTileCache(path, max_bytes=6, touch_batch_size=2)
+    cache.put("a", TilePayload(b"123", "x/test"))
+    cache.put("b", TilePayload(b"456", "x/test"))
+    accessed_before = cache._con.execute(
+        "SELECT accessed_ns FROM tiles WHERE cache_key = 'a'",
+    ).fetchone()[0]
+
+    assert cache.get("a") is not None
+    assert cache.get("a") is not None
+    assert (
+        cache._con.execute(
+            "SELECT accessed_ns FROM tiles WHERE cache_key = 'a'",
+        ).fetchone()[0]
+        == accessed_before
+    )
+
+    # The pending touch is committed together with the next payload write, so
+    # the genuinely older entry is the one evicted.
+    cache.put("c", TilePayload(b"789", "x/test"))
+    assert cache.get("a") is not None
+    assert cache.get("b") is None
+    assert cache.get("c") is not None
+    assert cache.size == 6
+    cache.close()
+
+    con = sqlite3.connect(path)
+    logical_bytes = con.execute(
+        "SELECT logical_bytes FROM cache_metadata WHERE singleton = 1",
+    ).fetchone()[0]
+    payload_bytes = con.execute(
+        "SELECT COALESCE(SUM(byte_size), 0) FROM tiles",
+    ).fetchone()[0]
+    indexes = {row[1] for row in con.execute("PRAGMA index_list(tiles)")}
+    con.close()
+    assert logical_bytes == payload_bytes == 6
+    assert "tiles_accessed_ns" in indexes
+
+    reopened = PersistentTileCache(path, max_bytes=6)
+    assert reopened.size == 6
+    reopened.close()
+
+
 def test_cold_tile_builds_are_bounded_per_source(
     synthetic_store: SQLiteStore,
     tmp_path: Path,
@@ -700,14 +799,17 @@ def test_failed_lod_overview_is_explicit_and_never_scans_source(
     else:
         future.set_exception(RuntimeError("LOD build failed"))
 
-    assert source.lod_status == "failed"
-
     def fail_query(*_args, **_kwargs):  # noqa: ANN002, ANN003, ANN202
         pytest.fail("failed overview requested raw annotation records")
 
     monkeypatch.setattr(synthetic_store, "query_records", fail_query)
-    with pytest.raises(RuntimeError, match="LOD preprocessing failed"):
-        source.vector_tile("auto", 0, 0, 0)
+    if failure == "cancelled":
+        assert source.lod_status == "not-built"
+        assert source.vector_tile("auto", 0, 0, 0).representation == "building"
+    else:
+        assert source.lod_status == "failed"
+        with pytest.raises(RuntimeError, match="LOD preprocessing failed"):
+            source.vector_tile("auto", 0, 0, 0)
     source.close()
 
 

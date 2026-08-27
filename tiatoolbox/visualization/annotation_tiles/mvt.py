@@ -56,6 +56,19 @@ class TileFeature:
 
 
 @dataclass(frozen=True, slots=True)
+class PointTileFeature:
+    """A point feature stored as scalar columns, without a Shapely object."""
+
+    feature_id: int | None
+    x: float
+    y: float
+    properties: Mapping[str, Any]
+
+
+VectorTileFeature = TileFeature | PointTileFeature
+
+
+@dataclass(frozen=True, slots=True)
 class MVTEncodeResult:
     """Encoded MVT bytes and budget/diagnostic counters."""
 
@@ -83,9 +96,9 @@ class _Envelope:
         return self.extent / (self.max_y - self.min_y)
 
 
-def encode_mvt(  # noqa: PLR0912
+def encode_mvt(  # noqa: C901, PLR0912
     layer_name: str,
-    features: Sequence[TileFeature] | Iterable[TileFeature],
+    features: Sequence[VectorTileFeature] | Iterable[VectorTileFeature],
     *,
     tile_bounds: tuple[float, float, float, float],
     extent: int = DEFAULT_EXTENT,
@@ -131,16 +144,27 @@ def encode_mvt(  # noqa: PLR0912
     for feature_index, (tile_feature, geometry) in enumerate(
         zip(feature_list, geometries, strict=True),
     ):
-        batched = polygon_batch.get(feature_index)
-        if batched is not None:
-            encoded_parts = [batched]
-        else:
-            if geometry is None or geometry.is_empty:
+        if isinstance(tile_feature, PointTileFeature):
+            encoded_point = _encode_scalar_point(
+                tile_feature.x,
+                tile_feature.y,
+                envelope,
+                buffer=buffer,
+            )
+            if encoded_point is None:
                 continue
-            encoded_parts = [
-                _encode_geometry(simple_geometry, envelope)
-                for simple_geometry in _homogeneous_parts(geometry)
-            ]
+            encoded_parts = [encoded_point]
+        else:
+            batched = polygon_batch.get(feature_index)
+            if batched is not None:
+                encoded_parts = [batched]
+            else:
+                if geometry is None or geometry.is_empty:
+                    continue
+                encoded_parts = [
+                    _encode_geometry(simple_geometry, envelope)
+                    for simple_geometry in _homogeneous_parts(geometry)
+                ]
         for part_index, (commands, geometry_type, vertex_count) in enumerate(
             encoded_parts,
         ):
@@ -215,7 +239,7 @@ def encode_empty_mvt(layer_name: str = "annotations") -> bytes:
 
 
 def _prepare_geometries(
-    features: Sequence[TileFeature],
+    features: Sequence[VectorTileFeature],
     envelope: _Envelope,
     *,
     buffer: int,
@@ -223,7 +247,15 @@ def _prepare_geometries(
 ) -> list[BaseGeometry | None]:
     if not features:
         return []
-    raw_geometries = [feature.geometry for feature in features]
+    prepared: list[BaseGeometry | None] = [None] * len(features)
+    geometry_indices = [
+        index
+        for index, feature in enumerate(features)
+        if isinstance(feature, TileFeature)
+    ]
+    if not geometry_indices:
+        return prepared
+    raw_geometries = [features[index].geometry for index in geometry_indices]
     if all(isinstance(geometry, bytes) for geometry in raw_geometries):
         # Shapely's array ufunc avoids one Python wrapper call per annotation.
         array = shapely.from_wkb(np.asarray(raw_geometries, dtype=object))
@@ -269,7 +301,9 @@ def _prepare_geometries(
                 # and comes from the feature endpoint.
                 preserve_topology=False,
             )
-    return [None if item is None else item for item in array.tolist()]
+    for index, item in zip(geometry_indices, array.tolist(), strict=True):
+        prepared[index] = None if item is None else item
+    return prepared
 
 
 def _homogeneous_parts(geometry: BaseGeometry) -> Iterator[BaseGeometry]:
@@ -330,6 +364,34 @@ def _encode_points(
         commands.extend((_zigzag(x - cursor_x), _zigzag(y - cursor_y)))
         cursor_x, cursor_y = x, y
     return commands, _GEOM_POINT, len(points)
+
+
+def _encode_scalar_point(
+    x: float,
+    y: float,
+    envelope: _Envelope,
+    *,
+    buffer: int,
+) -> tuple[list[int], int, int] | None:
+    """Clip, quantize and encode one scalar point without invoking GEOS."""
+    x = float(x)
+    y = float(y)
+    if not math.isfinite(x) or not math.isfinite(y):
+        return None
+    buffer_x = buffer / envelope.scale_x
+    buffer_y = buffer / envelope.scale_y
+    if not (
+        envelope.min_x - buffer_x <= x <= envelope.max_x + buffer_x
+        and envelope.min_y - buffer_y <= y <= envelope.max_y + buffer_y
+    ):
+        return None
+    tile_x = round((x - envelope.min_x) * envelope.scale_x)
+    tile_y = round((y - envelope.min_y) * envelope.scale_y)
+    return (
+        [_command(_MOVE_TO, 1), _zigzag(tile_x), _zigzag(tile_y)],
+        _GEOM_POINT,
+        1,
+    )
 
 
 def _encode_lines(

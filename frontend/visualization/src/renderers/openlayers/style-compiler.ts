@@ -3,6 +3,7 @@ import CircleStyle from "ol/style/Circle.js";
 import Fill from "ol/style/Fill.js";
 import Stroke from "ol/style/Stroke.js";
 import Style from "ol/style/Style.js";
+import type { StyleVariables } from "ol/style/flat.js";
 import type TileGrid from "ol/tilegrid/TileGrid.js";
 
 import type { StoreManifest, ZoomRepresentationRange } from "../../api/types";
@@ -17,7 +18,7 @@ type WebGlRule = { filter?: Expression; style: Record<string, unknown> };
 
 export interface CompiledWebGlStyle {
   rules: WebGlRule[];
-  variables: Record<string, number>;
+  variables: StyleVariables;
   structureKey: string;
 }
 
@@ -112,7 +113,7 @@ export function compileWebGlStyle(
       filter: polygonFilter,
       style: {
         "fill-color": color,
-        "stroke-color": presentation.strokeColor,
+        "stroke-color": ["var", "strokeColor"],
         "stroke-width": ["var", "strokeWidth"],
       },
     },
@@ -133,17 +134,9 @@ export function compileWebGlStyle(
   ];
   return {
     rules,
-    variables: {
-      fillOpacity: presentation.fillOpacity,
-      strokeWidth: presentation.strokeWidth,
-      pointRadius: presentation.pointRadius,
-      showAggregates: presentation.overviewMode === "aggregate" ? 1 : 0,
-      rangeMin: presentation.rangeFilter?.min ?? -Number.MAX_VALUE,
-      rangeMax: presentation.rangeFilter?.max ?? Number.MAX_VALUE,
-    },
+    variables: webGlVariables(presentation),
     structureKey: JSON.stringify({
-      colorBy: presentation.colorBy,
-      strokeColor: presentation.strokeColor,
+      colorBy: webGlColorStructure(presentation.colorBy),
       rangeProperty: presentation.rangeFilter?.property,
       hasRange: Boolean(presentation.rangeFilter),
       centroidRange: centroidRange
@@ -199,7 +192,7 @@ export function colorForValue(
   if (colorBy.mode === "categorical") {
     const value = properties[colorBy.property];
     return (
-      colorBy.categories.find((category) => String(category.value) === String(value))
+      colorBy.categories.find((category) => category.value === value)
         ?.color ?? "#9ca3af"
     );
   }
@@ -212,14 +205,18 @@ export function colorForValue(
 function webGlFilter(presentation: LayerPresentation): Expression {
   const parts: Expression[] = [];
   if (presentation.colorBy.mode === "categorical") {
-    const visible = presentation.colorBy.categories.filter((entry) => entry.visible);
-    if (visible.length === 0) parts.push(["==", 1, 0]);
+    const { categories, property } = presentation.colorBy;
+    if (categories.length === 0) parts.push(["==", 1, 0]);
     else {
-      const predicates: Expression[] = visible.map((entry) => [
+      const predicates: Expression[] = categories.map((entry, index) => [
+        "all",
+        [
           "==",
-          ["get", presentation.colorBy.mode === "categorical" ? presentation.colorBy.property : ""],
+          ["get", property],
           entry.value,
-        ]);
+        ],
+        ["==", ["var", categoryVisibleVariable(index)], 1],
+      ]);
       parts.push(predicates.length === 1 ? predicates[0]! : ["any", ...predicates]);
     }
   }
@@ -235,39 +232,96 @@ function webGlFilter(presentation: LayerPresentation): Expression {
 }
 
 function webGlColor(colorBy: ColorBy): Expression {
-  if (colorBy.mode === "constant") return colorExpression(colorBy.color);
+  const opacity = ["color", 255, 255, 255, ["var", "fillOpacity"]];
+  if (colorBy.mode === "constant") {
+    return ["*", ["var", "constantColor"], opacity];
+  }
   if (colorBy.mode === "direct") {
     return [
       "*",
       ["get", colorBy.property],
-      ["color", 255, 255, 255, ["var", "fillOpacity"]],
+      opacity,
     ];
   }
   if (colorBy.mode === "categorical") {
     return [
-      "match",
-      ["get", colorBy.property],
-      ...colorBy.categories.flatMap((category) => [
-        category.value,
-        colorExpression(category.color),
-      ]),
-      colorExpression("#9ca3af"),
+      "*",
+      [
+        "match",
+        ["get", colorBy.property],
+        ...colorBy.categories.flatMap((category, index) => [
+          category.value,
+          ["var", categoryColorVariable(index)],
+        ]),
+        ["var", "fallbackColor"],
+      ],
+      opacity,
     ];
   }
   return [
-    "interpolate",
-    ["linear"],
-    ["get", colorBy.property],
-    colorBy.numeric.domain[0],
-    colorExpression(colorBy.numeric.colors[0]),
-    colorBy.numeric.domain[1],
-    colorExpression(colorBy.numeric.colors[1]),
+    "*",
+    [
+      "interpolate",
+      ["linear"],
+      ["get", colorBy.property],
+      ["var", "numericDomainMin"],
+      ["var", "numericColorMin"],
+      ["var", "numericDomainMax"],
+      ["var", "numericColorMax"],
+    ],
+    opacity,
   ];
 }
 
-function colorExpression(color: string): Expression {
-  const [r, g, b] = parseHex(color);
-  return ["color", r, g, b, ["var", "fillOpacity"]];
+function webGlVariables(presentation: LayerPresentation): StyleVariables {
+  const variables: StyleVariables = {
+    fillOpacity: presentation.fillOpacity,
+    strokeColor: presentation.strokeColor,
+    strokeWidth: presentation.strokeWidth,
+    pointRadius: presentation.pointRadius,
+    showAggregates: presentation.overviewMode === "aggregate" ? 1 : 0,
+    rangeMin: presentation.rangeFilter?.min ?? -Number.MAX_VALUE,
+    rangeMax: presentation.rangeFilter?.max ?? Number.MAX_VALUE,
+  };
+  const { colorBy } = presentation;
+  if (colorBy.mode === "constant") variables.constantColor = colorBy.color;
+  if (colorBy.mode === "categorical") {
+    variables.fallbackColor = "#9ca3af";
+    colorBy.categories.forEach((category, index) => {
+      variables[categoryColorVariable(index)] = category.color;
+      variables[categoryVisibleVariable(index)] = category.visible ? 1 : 0;
+    });
+  }
+  if (colorBy.mode === "numeric") {
+    variables.numericDomainMin = colorBy.numeric.domain[0];
+    variables.numericDomainMax = colorBy.numeric.domain[1];
+    variables.numericColorMin = colorBy.numeric.colors[0];
+    variables.numericColorMax = colorBy.numeric.colors[1];
+  }
+  return variables;
+}
+
+function webGlColorStructure(colorBy: ColorBy): unknown {
+  if (colorBy.mode === "constant") return { mode: colorBy.mode };
+  if (colorBy.mode === "direct") {
+    return { mode: colorBy.mode, property: colorBy.property };
+  }
+  if (colorBy.mode === "categorical") {
+    return {
+      mode: colorBy.mode,
+      property: colorBy.property,
+      values: colorBy.categories.map((category) => category.value),
+    };
+  }
+  return { mode: colorBy.mode, property: colorBy.property };
+}
+
+function categoryColorVariable(index: number): string {
+  return `categoryColor${index}`;
+}
+
+function categoryVisibleVariable(index: number): string {
+  return `categoryVisible${index}`;
 }
 
 function colorWithAlpha(color: string, alpha: number): string {
